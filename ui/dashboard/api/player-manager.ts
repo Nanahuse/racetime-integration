@@ -1,8 +1,11 @@
 import {
 	BUNDLE_NAME,
 	operationMessageName,
+	playerEditUrl,
 } from "@nanahuse/player-manager-protocol";
 import {getNodeCG} from "./nodecg-client";
+
+export {playerEditUrl};
 
 export type RegistrationSession = {registrationId: string; url: string};
 
@@ -15,15 +18,6 @@ export type PlayerManagerStatus =
 type Envelope<T> =
 	| {ok: true; data: T}
 	| {ok: false; error: {code: string; message: string}};
-
-/** Links to the read-only Player Directory panel shipped by player-manager. */
-export function playerDirectoryUrl(): string {
-	return `/bundles/${BUNDLE_NAME}/dashboard/PlayerMapping.html`;
-}
-
-export function playerEditUrl(playerId: string): string {
-	return `${playerDirectoryUrl()}?playerId=${encodeURIComponent(playerId)}`;
-}
 
 /**
  * Uses player-manager's public registration API to obtain a one-time,

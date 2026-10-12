@@ -143,7 +143,8 @@ it("shows participant actions by resolution status and RaceTime names from entra
 	expect(screen.getByText("Runner Two")).toBeTruthy();
 	expect(screen.getByText("Runner Three")).toBeTruthy();
 	const edit = screen.getByRole("link", {name: /編集/});
-	expect(edit.getAttribute("href")).toContain("PlayerMapping.html?playerId=p1");
+	expect(edit.getAttribute("href")).toContain("PlayerMapping.html");
+	expect(edit.getAttribute("href")).toContain("playerId=p1");
 	expect(screen.getAllByRole("button", {name: "登録・紐付け"})).toHaveLength(1);
 	expect(screen.getByText("Player Manager timed out")).toBeTruthy();
 });

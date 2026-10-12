@@ -30,7 +30,6 @@ type Session = {
 export class RaceService {
 	private readonly sessions = new Map<string, Session>();
 	private readonly watches = new Map<string, string>();
-	private directoryRevision = -1;
 	private disposed = false;
 	constructor(
 		private readonly client: RaceTimeClient,
@@ -153,14 +152,10 @@ export class RaceService {
 	}
 
 	directoryChanged(revision: number): void {
-		if (
-			!Number.isSafeInteger(revision) ||
-			revision < 0 ||
-			revision <= this.directoryRevision ||
-			this.disposed
-		)
+		// Player Manager v3 may change Directory contents without bumping the
+		// revision, so any well-formed notification re-resolves monitored races.
+		if (!Number.isSafeInteger(revision) || revision < 0 || this.disposed)
 			return;
-		this.directoryRevision = revision;
 		for (const session of this.sessions.values())
 			if (session.state.race) void this.requestResolution(session);
 	}

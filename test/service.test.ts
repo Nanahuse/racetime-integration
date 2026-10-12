@@ -1,4 +1,8 @@
-import type {Player, PlayerManagerAPI} from "@nanahuse/player-manager-protocol";
+import type {
+	DirectoryAccount,
+	Player,
+	PlayerManagerAPI,
+} from "@nanahuse/player-manager-protocol";
 import {afterEach, expect, it, vi} from "vitest";
 import {createAPI} from "../src/api";
 import {ParticipantResolver} from "../src/integrations/players";
@@ -7,58 +11,111 @@ import {RaceService} from "../src/service";
 import {deferred, dto, FakeSocket, flush, mapping, url} from "./fixtures";
 
 afterEach(() => vi.useRealTimers());
-const player = (name = "Runner", revision = 1): Player => ({
+
+function raceTimeAccount(
+	userId: string,
+	role: "primary" | "secondary",
+	name = "RaceTime name",
+): DirectoryAccount {
+	return {
+		id: `acct-${userId}`,
+		service: "racetime",
+		role,
+		identity: {userId, name},
+	};
+}
+
+const player = (
+	name = "Runner",
+	revision = 1,
+	userIds: readonly string[] = ["user1"],
+): Player => ({
 	playerId: "p1",
 	revision,
 	manualDisplayName: name,
-	racetime: {userId: "user1", name: "RaceTime name"},
+	racetime: {userId: userIds[0]!, name: "RaceTime name"},
 	speedrunCom: null,
 	twitch: null,
 	youtube: null,
+	accounts: userIds.map((userId, index) =>
+		raceTimeAccount(userId, index === 0 ? "primary" : "secondary"),
+	),
 });
+
+function entrant(userId: string) {
+	return {...dto().entrants[0]!, userId};
+}
+
 function playerAPI() {
-	const directory = {revision: 1, player: player() as Player | null};
-	const request = vi.fn(async (op: string) => ({
-		ok: true,
-		data:
-			op === "list"
-				? {
-						schemaVersion: 1,
-						revision: directory.revision,
-						players: directory.player ? [directory.player] : [],
-					}
-				: structuredClone(directory.player),
-	}));
+	const directory = {revision: 1, players: [player()] as Player[]};
+	const request = vi.fn(async (op: string) => {
+		if (op === "list")
+			return {
+				ok: true,
+				data: {
+					schemaVersion: 2,
+					revision: directory.revision,
+					players: directory.players,
+				},
+			};
+		return {ok: true, data: null};
+	});
 	const api = {
-		apiVersion: 2,
+		apiVersion: 3,
 		ready: Promise.resolve(),
 		request,
 	} as unknown as PlayerManagerAPI;
 	return {api, request, directory};
 }
 
-it("uses v2 find with the RaceTime ID and publishes a display-ready Player snapshot", async () => {
-	const {api, request} = playerAPI();
-	const result = await new ParticipantResolver(() => api).resolve(
-		dto().entrants,
-	);
+it("resolves Primary and Secondary RaceTime accounts from one directory snapshot", async () => {
+	const {api, request, directory} = playerAPI();
+	directory.players = [player("Runner", 1, ["user1", "user2"])];
+	const result = await new ParticipantResolver(() => api).resolve([
+		entrant("user1"),
+		entrant("user2"),
+	]);
 	expect(result.directoryRevision).toBe(1);
+	expect(result.participants.map((p) => p.status)).toEqual([
+		"matched",
+		"matched",
+	]);
 	expect(result.participants[0]).toMatchObject({
-		status: "matched",
+		racetimeUserId: "user1",
 		playerId: "p1",
 		player: {displayName: "Runner", revision: 1},
 	});
-	expect(request.mock.calls).toContainEqual([
-		"find",
-		{provider: "racetime", value: "user1"},
-	]);
-	expect(
-		request.mock.calls.every(([op]) => op === "find" || op === "list"),
-	).toBe(true);
+	expect(result.participants[1]).toMatchObject({
+		racetimeUserId: "user2",
+		playerId: "p1",
+	});
+	expect(request.mock.calls.every(([op]) => op === "list")).toBe(true);
 });
-it("distinguishes unmatched accounts, v1 API incompatibility, directory failures and timeout", async () => {
+
+it("publishes v3-compatible snapshots with accounts and Twitch without a userId", async () => {
 	const {api, directory} = playerAPI();
-	directory.player = null;
+	directory.players = [
+		{
+			...player("Runner", 3, ["user1"]),
+			speedrunCom: {userId: "src1", name: "SRC Name"},
+			twitch: {login: "runner", displayName: "RunnerTV"},
+			youtube: "https://youtube.com/@runner",
+		},
+	];
+	const result = await new ParticipantResolver(() => api).resolve(
+		dto().entrants,
+	);
+	expect(result.participants[0]?.player).toMatchObject({
+		displayName: "Runner",
+		speedrunCom: {userId: "src1", name: "SRC Name"},
+		twitch: {userId: null, login: "runner", displayName: "RunnerTV"},
+		youtube: "https://youtube.com/@runner",
+	});
+});
+
+it("distinguishes unresolved accounts, incompatible APIs, invalid data, failures and timeout", async () => {
+	const {api, directory} = playerAPI();
+	directory.players = [];
 	expect(
 		(await new ParticipantResolver(() => api).resolve(dto().entrants))
 			.participants[0]?.status,
@@ -66,7 +123,7 @@ it("distinguishes unmatched accounts, v1 API incompatibility, directory failures
 	expect(
 		(
 			await new ParticipantResolver(
-				() => ({...api, apiVersion: 1}) as never,
+				() => ({...api, apiVersion: 2}) as never,
 			).resolve(dto().entrants)
 		).participants[0]?.status,
 	).toBe("unavailable");
@@ -80,6 +137,17 @@ it("distinguishes unmatched accounts, v1 API incompatibility, directory failures
 		(await new ParticipantResolver(() => bad).resolve(dto().entrants))
 			.participants[0],
 	).toMatchObject({status: "unavailable", message: "offline"});
+	const invalid = {
+		...api,
+		request: vi.fn().mockResolvedValue({
+			ok: true,
+			data: {schemaVersion: 2, revision: 1, players: "nope"},
+		}),
+	} as PlayerManagerAPI;
+	expect(
+		(await new ParticipantResolver(() => invalid).resolve(dto().entrants))
+			.participants[0]?.status,
+	).toBe("unavailable");
 	vi.useFakeTimers();
 	const wait = deferred<void>();
 	const pendingAPI = {...api, ready: wait.promise};
@@ -92,24 +160,73 @@ it("distinguishes unmatched accounts, v1 API incompatibility, directory failures
 		message: "Player Manager timed out",
 	});
 });
-it("retries the entire find batch if the directory changes during resolution", async () => {
-	const {api, request, directory} = playerAPI();
-	const original = request.getMockImplementation()!;
-	let change = true;
-	request.mockImplementation(async (op) => {
-		const result = await original(op);
-		if (op === "find" && change) {
-			change = false;
-			directory.revision = 2;
-			directory.player = player("Renamed", 2);
-		}
-		return result;
-	});
+
+it("refuses to assign a RaceTime ID claimed by two Players", async () => {
+	const {api, directory} = playerAPI();
+	directory.players = [
+		{...player("Runner", 1, ["user1"]), playerId: "p1"},
+		{...player("Other", 1, ["user1"]), playerId: "p2"},
+	];
 	const result = await new ParticipantResolver(() => api).resolve(
 		dto().entrants,
 	);
-	expect(result.directoryRevision).toBe(2);
-	expect(result.participants[0]?.player?.displayName).toBe("Renamed");
+	expect(result.participants[0]).toMatchObject({
+		status: "unavailable",
+		playerId: null,
+	});
+});
+
+it("ignores account entries without a usable RaceTime userId", async () => {
+	const {api, directory} = playerAPI();
+	directory.players = [
+		{
+			...player("Runner", 1, ["user1"]),
+			racetime: null,
+			accounts: [
+				{
+					id: "acct-string",
+					service: "racetime",
+					role: "primary",
+					identity: "user1",
+				},
+				{
+					id: "acct-twitch",
+					service: "twitch",
+					role: "secondary",
+					identity: {login: "runner"},
+				},
+			],
+		},
+	];
+	const result = await new ParticipantResolver(() => api).resolve(
+		dto().entrants,
+	);
+	expect(result.participants[0]).toMatchObject({
+		status: "unresolved",
+		playerId: null,
+	});
+});
+
+it("reflects an account moving to another Player on the next snapshot", async () => {
+	const {api, directory} = playerAPI();
+	directory.players = [player("Runner", 1, ["user1", "user2"])];
+	expect(
+		(await new ParticipantResolver(() => api).resolve([entrant("user2")]))
+			.participants[0],
+	).toMatchObject({playerId: "p1"});
+	directory.players = [
+		{...player("Runner", 2, ["user1"]), playerId: "p1"},
+		{...player("Moved", 1, ["user2"]), playerId: "p9"},
+	];
+	expect(
+		(await new ParticipantResolver(() => api).resolve([entrant("user2")]))
+			.participants[0],
+	).toMatchObject({playerId: "p9", status: "matched"});
+	directory.players = [{...player("Runner", 2, ["user1"]), playerId: "p1"}];
+	expect(
+		(await new ParticipantResolver(() => api).resolve([entrant("user2")]))
+			.participants[0]?.status,
+	).toBe("unresolved");
 });
 function setup() {
 	vi.useFakeTimers();
@@ -188,7 +305,7 @@ it("aborts pending startup on shutdown without leaving a socket or watch", async
 	expect(service.snapshot().races).toEqual([]);
 	expect(sockets).toHaveLength(0);
 });
-it("directoryChanged automatically refreshes names and account removals with revisions", async () => {
+it("re-resolves on directoryChanged even when the revision is unchanged", async () => {
 	const {service, directory, request} = setup();
 	await service.watch(url);
 	await flush();
@@ -197,9 +314,8 @@ it("directoryChanged automatically refreshes names and account removals with rev
 		state: "ready",
 		directoryRevision: 1,
 	});
-	directory.player = player("New name", 2);
-	directory.revision = 2;
-	service.directoryChanged(2);
+	directory.players = [player("New name", 2, ["user1", "user2"])];
+	service.directoryChanged(1);
 	expect(service.get(url)?.resolution.state).toBe("pending");
 	await flush();
 	const changed = service.get(url)!;
@@ -210,11 +326,10 @@ it("directoryChanged automatically refreshes names and account removals with rev
 	);
 	expect(changed.revision).toBeGreaterThan(before.revision);
 	const count = request.mock.calls.length;
-	service.directoryChanged(2);
-	service.directoryChanged(1);
+	service.directoryChanged(0);
 	await flush();
-	expect(request).toHaveBeenCalledTimes(count);
-	directory.player = null;
+	expect(request.mock.calls.length).toBeGreaterThan(count);
+	directory.players = [];
 	directory.revision = 3;
 	service.directoryChanged(3);
 	await flush();
@@ -230,7 +345,7 @@ it("coalesces directory events and discards outdated resolutions and post-releas
 	const original = request.getMockImplementation()!;
 	let waiting = true;
 	request.mockImplementation(async (op) => {
-		if (op === "find" && waiting) {
+		if (op === "list" && waiting) {
 			waiting = false;
 			return (await wait.promise) as never;
 		}
@@ -239,11 +354,18 @@ it("coalesces directory events and discards outdated resolutions and post-releas
 	const watch = await service.watch(url);
 	await flush();
 	expect(service.get(url)?.resolution.state).toBe("pending");
-	directory.player = player("Newest", 3);
+	directory.players = [player("Newest", 3)];
 	directory.revision = 3;
 	service.directoryChanged(2);
 	service.directoryChanged(3);
-	wait.resolve({ok: true, data: player("Old")});
+	wait.resolve({
+		ok: true,
+		data: {
+			schemaVersion: 2,
+			revision: 2,
+			players: [player("Old")],
+		},
+	});
 	await flush();
 	await flush();
 	await vi.waitFor(() =>
@@ -290,7 +412,7 @@ it("handles a directory change queued as the previous resolution completes", asy
 		if (!queued && snapshot.races[0]?.resolution.state === "ready") {
 			queued = true;
 			queueMicrotask(() => {
-				directory.player = player("Latest", 2);
+				directory.players = [player("Latest", 2)];
 				directory.revision = 2;
 				service.directoryChanged(2);
 			});

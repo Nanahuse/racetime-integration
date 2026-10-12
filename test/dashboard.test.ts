@@ -57,12 +57,13 @@ it("navigates to Player Manager through its public registration API and URLs", a
 	});
 	const session = await beginRegistration("user1");
 	expect(sendMessageToBundle).toHaveBeenCalledWith(
-		"player-manager.v2.beginRegistration",
+		"player-manager.v3.beginRegistration",
 		"player-manager",
 		{input: {racetime: "user1"}, createPlayerOnEmpty: true},
 	);
 	expect(session.url).toContain("Registration.html");
-	expect(playerEditUrl("p1")).toContain("PlayerMapping.html?playerId=p1");
+	expect(playerEditUrl("p1")).toContain("PlayerMapping.html");
+	expect(playerEditUrl("p1")).toContain("playerId=p1");
 });
 
 it("normalizes spreadsheet URLs and IDs", () => {
@@ -106,7 +107,7 @@ it("maps the public Player Manager status to dashboard states", async () => {
 		message: "no bundle",
 	});
 	expect(sendMessageToBundle).toHaveBeenCalledWith(
-		"player-manager.v2.status",
+		"player-manager.v3.status",
 		"player-manager",
 		undefined,
 	);

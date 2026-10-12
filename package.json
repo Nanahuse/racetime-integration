@@ -22,7 +22,7 @@
 	"nodecg": {
 		"compatibleRange": "^2.8.0",
 		"bundleDependencies": {
-			"player-manager": "^2.2.1"
+			"player-manager": "^3.0.0"
 		},
 		"dashboardPanels": [
 			{
@@ -35,7 +35,7 @@
 	},
 	"dependencies": {
 		"@googleapis/sheets": "^18.0.0",
-		"@nanahuse/player-manager-protocol": "github:Nanahuse/player-manager#85ef6e5f78503f443b61627fc08c4a9675850cb0&path:/packages/player-manager-protocol",
+		"@nanahuse/player-manager-protocol": "github:Nanahuse/player-manager#v3.0.0&path:/packages/player-manager-protocol",
 		"@nanahuse/racetime-protocol": "workspace:*",
 		"google-auth-library": "^11.1.0",
 		"react": "^19.0.0",

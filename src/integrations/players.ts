@@ -1,14 +1,93 @@
 import {
 	API_VERSION,
+	type Directory,
+	type DirectoryAccount,
+	type Player,
 	type PlayerManagerAPI,
 	resolveDisplayName,
 } from "@nanahuse/player-manager-protocol";
-import type {Entrant, Participant} from "@nanahuse/racetime-protocol";
+import type {
+	Entrant,
+	Participant,
+	PlayerSnapshot,
+} from "@nanahuse/racetime-protocol";
 
 export type ResolutionBatch = {
 	participants: Participant[];
 	directoryRevision: number | null;
 };
+
+function identityUserId(identity: DirectoryAccount["identity"]): string | null {
+	if (!identity || typeof identity !== "object") return null;
+	const userId = (identity as {userId?: unknown}).userId;
+	return typeof userId === "string" && userId !== "" ? userId : null;
+}
+
+/**
+ * Every RaceTime userId a Player is associated with, including Secondary
+ * accounts. The Primary account is always included even if `accounts` omits it.
+ */
+function racetimeUserIds(player: Player): string[] {
+	const ids: string[] = [];
+	if (player.racetime?.userId) ids.push(player.racetime.userId);
+	for (const account of player.accounts ?? []) {
+		if (account.service !== "racetime") continue;
+		const userId = identityUserId(account.identity);
+		if (userId) ids.push(userId);
+	}
+	return ids;
+}
+
+function buildIndex(directory: Directory): {
+	index: Map<string, Player>;
+	ambiguous: Set<string>;
+} {
+	const index = new Map<string, Player>();
+	const ambiguous = new Set<string>();
+	for (const player of directory.players) {
+		for (const userId of racetimeUserIds(player)) {
+			const existing = index.get(userId);
+			if (existing && existing.playerId !== player.playerId) {
+				ambiguous.add(userId);
+				continue;
+			}
+			index.set(userId, player);
+		}
+	}
+	for (const userId of ambiguous) index.delete(userId);
+	return {index, ambiguous};
+}
+
+function isDirectory(value: unknown): value is Directory {
+	if (!value || typeof value !== "object") return false;
+	const candidate = value as {revision?: unknown; players?: unknown};
+	return (
+		typeof candidate.revision === "number" && Array.isArray(candidate.players)
+	);
+}
+
+function toSnapshot(player: Player): PlayerSnapshot {
+	return {
+		playerId: player.playerId,
+		revision: player.revision,
+		displayName: resolveDisplayName(player),
+		racetime: player.racetime
+			? {userId: player.racetime.userId, name: player.racetime.name}
+			: null,
+		speedrunCom: player.speedrunCom
+			? {userId: player.speedrunCom.userId, name: player.speedrunCom.name}
+			: null,
+		twitch: player.twitch
+			? {
+					userId: null,
+					login: player.twitch.login,
+					displayName: player.twitch.displayName,
+				}
+			: null,
+		youtube: player.youtube,
+	};
+}
+
 export class ParticipantResolver {
 	constructor(
 		private readonly getAPI: () => PlayerManagerAPI | undefined,
@@ -26,54 +105,40 @@ export class ParticipantResolver {
 			if (signal?.aborted) throw new Error("Participant resolution cancelled");
 			const api = this.getAPI();
 			if (api?.apiVersion !== API_VERSION)
-				throw new Error("Player Manager v2 is unavailable");
+				throw new Error("Player Manager v3 is unavailable");
 			const work = async (): Promise<ResolutionBatch> => {
 				await api.ready;
-				for (let attempt = 0; attempt < 3; attempt++) {
-					if (expired) throw new Error("Player Manager timed out");
-					const before = await api.request("list", undefined);
-					if (!before.ok) throw new Error(before.error.message);
-					const participants: Participant[] = [];
-					for (const entrant of entrants) {
-						if (expired) throw new Error("Player Manager timed out");
-						const found = await api.request("find", {
-							provider: "racetime",
-							value: entrant.userId,
-						});
-						if (!found.ok) throw new Error(found.error.message);
-						const player = found.data;
-						participants.push({
-							racetimeUserId: entrant.userId,
-							status: player ? "matched" : "unresolved",
-							playerId: player?.playerId ?? null,
-							player: player
-								? {
-										playerId: player.playerId,
-										revision: player.revision,
-										displayName: resolveDisplayName(player),
-										racetime: player.racetime,
-										speedrunCom: player.speedrunCom,
-										twitch: player.twitch,
-										youtube: player.youtube,
-									}
-								: null,
-							message: player
-								? ""
-								: "No Player is linked to this RaceTime account",
-						});
-					}
-					if (expired) throw new Error("Player Manager timed out");
-					const after = await api.request("list", undefined);
-					if (!after.ok) throw new Error(after.error.message);
-					if (before.data.revision === after.data.revision)
+				if (expired) throw new Error("Player Manager timed out");
+				const listed = await api.request("list", undefined);
+				if (!listed.ok) throw new Error(listed.error.message);
+				if (expired) throw new Error("Player Manager timed out");
+				if (!isDirectory(listed.data))
+					throw new Error("Player Manager returned an invalid directory");
+				const {index, ambiguous} = buildIndex(listed.data);
+				const participants: Participant[] = entrants.map((entrant) => {
+					if (ambiguous.has(entrant.userId))
 						return {
-							participants: structuredClone(participants),
-							directoryRevision: after.data.revision,
+							racetimeUserId: entrant.userId,
+							status: "unavailable",
+							playerId: null,
+							player: null,
+							message: "RaceTime account is assigned to multiple Players",
 						};
-				}
-				throw new Error(
-					"Player directory changed repeatedly during resolution",
-				);
+					const player = index.get(entrant.userId) ?? null;
+					return {
+						racetimeUserId: entrant.userId,
+						status: player ? "matched" : "unresolved",
+						playerId: player?.playerId ?? null,
+						player: player ? toSnapshot(player) : null,
+						message: player
+							? ""
+							: "No Player is linked to this RaceTime account",
+					};
+				});
+				return {
+					participants: structuredClone(participants),
+					directoryRevision: listed.data.revision,
+				};
 			};
 			return await Promise.race([
 				work(),

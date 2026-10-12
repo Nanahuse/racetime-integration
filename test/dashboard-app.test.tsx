@@ -91,7 +91,7 @@ it("shows the public Player Manager readiness in the header", async () => {
 	render(<App />);
 	expect(await screen.findByText("Ready")).toBeTruthy();
 	expect(sendMessageToBundle).toHaveBeenCalledWith(
-		"player-manager.v2.status",
+		"player-manager.v3.status",
 		"player-manager",
 		undefined,
 	);

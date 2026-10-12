@@ -170,8 +170,8 @@ importers:
         specifier: ^18.0.0
         version: 18.1.0(supports-color@5.5.0)
       '@nanahuse/player-manager-protocol':
-        specifier: github:Nanahuse/player-manager#85ef6e5f78503f443b61627fc08c4a9675850cb0&path:/packages/player-manager-protocol
-        version: https://codeload.github.com/Nanahuse/player-manager/tar.gz/85ef6e5f78503f443b61627fc08c4a9675850cb0#path:/packages/player-manager-protocol
+        specifier: github:Nanahuse/player-manager#v3.0.0&path:/packages/player-manager-protocol
+        version: https://codeload.github.com/Nanahuse/player-manager/tar.gz/da0f1303b9a7f3d3c2af1bd0d7c32c661c570573#path:/packages/player-manager-protocol
       '@nanahuse/racetime-protocol':
         specifier: workspace:*
         version: link:packages/racetime-protocol
@@ -887,9 +887,9 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@nanahuse/player-manager-protocol@https://codeload.github.com/Nanahuse/player-manager/tar.gz/85ef6e5f78503f443b61627fc08c4a9675850cb0#path:/packages/player-manager-protocol':
-    resolution: {gitHosted: true, integrity: sha512-PDmBetj5x6l/HLDsKp8oE3AB9APfnU/HXoo7mo7Id0akFI4R1R1lbdJ3LSCCTlU/lOEDaH9+gqcFqBa00tUZkQ==, path: /packages/player-manager-protocol, tarball: https://codeload.github.com/Nanahuse/player-manager/tar.gz/85ef6e5f78503f443b61627fc08c4a9675850cb0}
-    version: 2.2.1
+  '@nanahuse/player-manager-protocol@https://codeload.github.com/Nanahuse/player-manager/tar.gz/da0f1303b9a7f3d3c2af1bd0d7c32c661c570573#path:/packages/player-manager-protocol':
+    resolution: {gitHosted: true, integrity: sha512-q7ATlPzthqTjGS3wedZRgGD+eqP46J/lq+f9FDEPmpK7F9uUmbnGsyGjjSCucu7wNCLEuhmJibUOUhzd/D60Qw==, path: /packages/player-manager-protocol, tarball: https://codeload.github.com/Nanahuse/player-manager/tar.gz/da0f1303b9a7f3d3c2af1bd0d7c32c661c570573}
+    version: 3.0.0
 
   '@nodecg/cli@2.8.0':
     resolution: {integrity: sha512-tu2Ix8V5X3k1HaGoKJMAn6BxxoIXl/bLdC9vbJ+isr1aNPsOHA1wFejchMeWSKBJv33MyKM/2gMXn9khTAebEg==}
@@ -4343,7 +4343,7 @@ snapshots:
   '@msgpackr-extract/msgpackr-extract-win32-x64@3.0.4':
     optional: true
 
-  '@nanahuse/player-manager-protocol@https://codeload.github.com/Nanahuse/player-manager/tar.gz/85ef6e5f78503f443b61627fc08c4a9675850cb0#path:/packages/player-manager-protocol': {}
+  '@nanahuse/player-manager-protocol@https://codeload.github.com/Nanahuse/player-manager/tar.gz/da0f1303b9a7f3d3c2af1bd0d7c32c661c570573#path:/packages/player-manager-protocol': {}
 
   '@nodecg/cli@2.8.0(@types/node@20.19.43)':
     dependencies:

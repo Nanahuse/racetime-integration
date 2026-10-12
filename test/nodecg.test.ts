@@ -78,7 +78,7 @@ function loadExtension(
 }
 
 afterEach(() => vi.unstubAllGlobals());
-it("loads the built extension, subscribes to the v2 event, and refreshes its public Player snapshot", async () => {
+it("loads the built extension, subscribes to the v3 event, and refreshes its public Player snapshot", async () => {
 	const extension = createRequire(import.meta.url)("../extension/index.js") as (
 		nodecg: unknown,
 	) => RaceTimeAPI;
@@ -94,6 +94,14 @@ it("loads the built extension, subscribes to the v2 event, and refreshes its pub
 		speedrunCom: null,
 		twitch: null,
 		youtube: null,
+		accounts: [
+			{
+				id: "acct-user1",
+				service: "racetime",
+				role: "primary",
+				identity: {userId: "user1", name: "Runner"},
+			},
+		],
 	});
 	const sockets: FakeSocket[] = [];
 	vi.stubGlobal(
@@ -113,13 +121,20 @@ it("loads the built extension, subscribes to the v2 event, and refreshes its pub
 		bundleConfig: {},
 		extensions: {
 			"player-manager": {
-				apiVersion: 2,
+				apiVersion: 3,
 				ready: Promise.resolve(),
-				request: vi.fn(async (operation: string) => ({
-					ok: true,
-					data:
-						operation === "list" ? {revision, players: [player()]} : player(),
-				})),
+				request: vi.fn(async (operation: string) => {
+					if (operation !== "list")
+						throw new Error(`unexpected operation ${operation}`);
+					return {
+						ok: true,
+						data: {
+							schemaVersion: 2,
+							revision,
+							players: [player()],
+						},
+					};
+				}),
 			},
 		},
 		once: (event: string, callback: () => void) => events.set(event, callback),
@@ -145,7 +160,7 @@ it("loads the built extension, subscribes to the v2 event, and refreshes its pub
 	};
 	const api = extension(nodecg);
 	expect([...handlers.keys()]).toEqual([
-		"player-manager:player-manager.v2.directoryChanged",
+		"player-manager:player-manager.v3.directoryChanged",
 		...OPERATIONS.map(operationMessageName),
 	]);
 	expect(nodecg.Replicant).toHaveBeenCalledWith("racetime-settings", {
@@ -182,7 +197,7 @@ it("loads the built extension, subscribes to the v2 event, and refreshes its pub
 	});
 	revision = 2;
 	name = "Changed";
-	handlers.get("player-manager:player-manager.v2.directoryChanged")!({
+	handlers.get("player-manager:player-manager.v3.directoryChanged")!({
 		directoryRevision: 2,
 	});
 	await flush();
@@ -200,7 +215,7 @@ it("loads the built extension, subscribes to the v2 event, and refreshes its pub
 	events.get("serverStopping")!();
 	expect(sockets[0]!.close).toHaveBeenCalledOnce();
 	expect(nodecg.unlisten).toHaveBeenCalledWith(
-		"player-manager.v2.directoryChanged",
+		"player-manager.v3.directoryChanged",
 		"player-manager",
 		expect.any(Function),
 	);
