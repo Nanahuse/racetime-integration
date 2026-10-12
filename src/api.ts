@@ -4,6 +4,8 @@ import {
 	type Operations,
 	type RaceTimeAPI,
 	type Response,
+	type Settings,
+	type SettingsState,
 } from "@nanahuse/racetime-protocol";
 import {IntegrationError} from "./errors";
 import {RaceTimeError} from "./integrations/racetime/errors";
@@ -15,23 +17,54 @@ import type {MappingService} from "./mappings";
 import type {RaceService} from "./service";
 
 class RequestError extends IntegrationError {}
-function object(raw: unknown): Record<string, unknown> {
+function object(raw: unknown, field?: string): Record<string, unknown> {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw))
-		throw new RequestError("invalid_input", "Expected an object");
+		throw new RequestError(
+			"invalid_input",
+			field ? `Invalid ${field}` : "Expected an object",
+		);
 	return raw as Record<string, unknown>;
 }
-function text(value: unknown): string {
+function text(value: unknown, field?: string): string {
 	if (typeof value !== "string" || !value.trim() || value.length > 2048)
 		throw new RequestError(
 			"invalid_input",
-			"Expected a non-empty string (max 2048 characters)",
+			field
+				? `Invalid ${field}`
+				: "Expected a non-empty string (max 2048 characters)",
 		);
 	return value.trim();
 }
-function revision(value: unknown): number {
+function revision(value: unknown, field?: string): number {
 	if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
-		throw new RequestError("invalid_input", "Expected a non-negative revision");
+		throw new RequestError(
+			"invalid_input",
+			field ? `Invalid ${field}` : "Expected a non-negative revision",
+		);
 	return value;
+}
+export function parseSettings(raw: unknown): Settings {
+	const input = object(raw, "settings");
+	const spreadsheetId =
+		input.spreadsheetId === null
+			? null
+			: text(input.spreadsheetId, "spreadsheetId");
+	if (spreadsheetId !== null && !/^[A-Za-z0-9_-]+$/.test(spreadsheetId))
+		throw new RequestError("invalid_input", "Invalid spreadsheetId");
+	return {
+		spreadsheetId,
+		categoryMappingsSheet: text(
+			input.categoryMappingsSheet,
+			"categoryMappingsSheet",
+		),
+	};
+}
+export function parseSettingsState(raw: unknown): SettingsState {
+	const input = object(raw, "settings state");
+	return {
+		revision: revision(input.revision, "revision"),
+		settings: parseSettings(input.settings),
+	};
 }
 function mapping(raw: unknown): CategoryMapping {
 	const input = object(raw),
@@ -109,23 +142,12 @@ export function createAPI(
 				case "getSettings":
 					value = mappings.settings();
 					break;
-				case "updateSettings": {
-					const settings = object(data.settings);
-					const spreadsheetId =
-						settings.spreadsheetId === null
-							? null
-							: text(settings.spreadsheetId);
-					if (spreadsheetId !== null && !/^[A-Za-z0-9_-]+$/.test(spreadsheetId))
-						throw new RequestError("invalid_input", "Invalid spreadsheetId");
+				case "updateSettings":
 					value = await mappings.update(
-						{
-							spreadsheetId,
-							categoryMappingsSheet: text(settings.categoryMappingsSheet),
-						},
+						parseSettings(data.settings),
 						revision(data.expectedRevision),
 					);
 					break;
-				}
 				case "listCategoryMappings":
 					value = await mappings.list();
 					break;

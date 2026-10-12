@@ -13,7 +13,7 @@ import {
 	type SettingsState,
 } from "@nanahuse/racetime-protocol";
 import type NodeCG from "@nodecg/types";
-import {createAPI} from "../api";
+import {createAPI, parseSettingsState} from "../api";
 import {ParticipantResolver} from "../integrations/players";
 import {HttpRaceTimeClient} from "../integrations/racetime/client";
 import {SpreadsheetCategoryMappingsRepository} from "../integrations/spreadsheet/category-mappings-repository";
@@ -52,8 +52,9 @@ export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 			},
 		},
 	});
+	const initialSettings = parseSettingsState(settings.value);
 	const mappings = new MappingService(
-		settings.value,
+		initialSettings,
 		(next) => {
 			settings.value = next;
 		},

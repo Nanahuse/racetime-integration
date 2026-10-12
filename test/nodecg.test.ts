@@ -4,17 +4,84 @@ import {
 	OPERATIONS,
 	operationMessageName,
 	type RaceTimeAPI,
+	SETTINGS_REPLICANT,
+	type SettingsState,
 } from "@nanahuse/racetime-protocol";
 import {afterEach, expect, it, vi} from "vitest";
 import {FakeSocket, flush, payload, url} from "./fixtures";
+
+type Ack = ((error: unknown, result: unknown) => void) & {handled?: boolean};
+type Handler = (data: unknown, ack?: Ack) => void;
+
+function deepProxy<T>(value: T): T {
+	if (value === null || typeof value !== "object") return value;
+	return new Proxy(value as object, {
+		get: (target, property, receiver) =>
+			deepProxy(Reflect.get(target, property, receiver)),
+	}) as T;
+}
+
+class FakeReplicant {
+	private current: unknown;
+	constructor(defaultValue: unknown, stored?: unknown) {
+		this.current = stored === undefined ? defaultValue : stored;
+	}
+	get value(): unknown {
+		return deepProxy(this.current);
+	}
+	set value(next: unknown) {
+		this.current = next;
+	}
+	stored(): unknown {
+		return this.current;
+	}
+}
+
+function loadExtension(
+	stored?: SettingsState,
+): [RaceTimeAPI, Map<string, FakeReplicant>] {
+	const handlers = new Map<string, Handler>();
+	const events = new Map<string, () => void>();
+	const replicants = new Map<string, FakeReplicant>();
+	const nodecg = {
+		bundleConfig: {},
+		extensions: {},
+		once: (event: string, callback: () => void) => events.set(event, callback),
+		unlisten: vi.fn(),
+		Replicant: vi.fn(
+			(name: string, options: {persistent: boolean; defaultValue: unknown}) => {
+				const replicant = new FakeReplicant(
+					options.defaultValue,
+					name === SETTINGS_REPLICANT ? stored : undefined,
+				);
+				replicants.set(name, replicant);
+				return replicant;
+			},
+		),
+		listenFor: (
+			name: string,
+			bundleOrHandler: string | Handler,
+			handler?: Handler,
+		) => {
+			handlers.set(
+				typeof bundleOrHandler === "string"
+					? `${bundleOrHandler}:${name}`
+					: name,
+				typeof bundleOrHandler === "function" ? bundleOrHandler : handler!,
+			);
+		},
+	};
+	const extension = createRequire(import.meta.url)("../extension/index.js") as (
+		nodecg: unknown,
+	) => RaceTimeAPI;
+	return [extension(nodecg), replicants];
+}
 
 afterEach(() => vi.unstubAllGlobals());
 it("loads the built extension, subscribes to the v2 event, and refreshes its public Player snapshot", async () => {
 	const extension = createRequire(import.meta.url)("../extension/index.js") as (
 		nodecg: unknown,
 	) => RaceTimeAPI;
-	type Ack = ((error: unknown, result: unknown) => void) & {handled?: boolean};
-	type Handler = (data: unknown, ack?: Ack) => void;
 	const handlers = new Map<string, Handler>();
 	const events = new Map<string, () => void>();
 	let revision = 1,
@@ -151,4 +218,118 @@ it("exports the protocol from ESM and CommonJS without server dependencies", () 
 		],
 		{cwd: process.cwd()},
 	);
+});
+it("initializes from a Proxy-backed settings Replicant and reads the defaults", async () => {
+	const [api] = loadExtension();
+	expect(await api.request("getSettings", undefined)).toEqual({
+		ok: true,
+		data: {
+			revision: 0,
+			settings: {
+				spreadsheetId: null,
+				categoryMappingsSheet: "CategoryMappings",
+			},
+		},
+	});
+});
+it("loads persisted settings exposed through a Proxy-backed Replicant", async () => {
+	const [api] = loadExtension({
+		revision: 4,
+		settings: {
+			spreadsheetId: "abc_123-XYZ",
+			categoryMappingsSheet: "Mappings",
+		},
+	});
+	expect(await api.request("getSettings", undefined)).toEqual({
+		ok: true,
+		data: {
+			revision: 4,
+			settings: {
+				spreadsheetId: "abc_123-XYZ",
+				categoryMappingsSheet: "Mappings",
+			},
+		},
+	});
+});
+it("persists updates through the Replicant and restarts from the saved settings", async () => {
+	const [api, replicants] = loadExtension();
+	expect(
+		await api.request("updateSettings", {
+			settings: {spreadsheetId: null, categoryMappingsSheet: "Other"},
+			expectedRevision: 0,
+		}),
+	).toEqual({
+		ok: true,
+		data: {
+			revision: 1,
+			settings: {spreadsheetId: null, categoryMappingsSheet: "Other"},
+		},
+	});
+	const saved = replicants.get(SETTINGS_REPLICANT)?.stored();
+	expect(saved).toEqual({
+		revision: 1,
+		settings: {spreadsheetId: null, categoryMappingsSheet: "Other"},
+	});
+	const [restarted] = loadExtension(saved as SettingsState);
+	expect(await restarted.request("getSettings", undefined)).toEqual({
+		ok: true,
+		data: {
+			revision: 1,
+			settings: {spreadsheetId: null, categoryMappingsSheet: "Other"},
+		},
+	});
+});
+it("rejects invalid persisted settings with an identifiable error", () => {
+	const invalid: Array<[RegExp, SettingsState]> = [
+		[
+			/revision/,
+			{
+				revision: -1,
+				settings: {
+					spreadsheetId: null,
+					categoryMappingsSheet: "CategoryMappings",
+				},
+			},
+		],
+		[
+			/revision/,
+			{
+				revision: 1.5,
+				settings: {
+					spreadsheetId: null,
+					categoryMappingsSheet: "CategoryMappings",
+				},
+			},
+		],
+		[
+			/spreadsheetId/,
+			{
+				revision: 0,
+				settings: {
+					spreadsheetId: "not a valid id",
+					categoryMappingsSheet: "CategoryMappings",
+				},
+			},
+		],
+		[
+			/spreadsheetId/,
+			{
+				revision: 0,
+				settings: {
+					spreadsheetId: "",
+					categoryMappingsSheet: "CategoryMappings",
+				},
+			},
+		],
+		[
+			/categoryMappingsSheet/,
+			{
+				revision: 0,
+				settings: {spreadsheetId: null, categoryMappingsSheet: ""},
+			},
+		],
+		[/settings/, {revision: 0, settings: null as never}],
+	];
+	for (const [message, stored] of invalid)
+		expect(() => loadExtension(stored)).toThrow(message);
 });
