@@ -34,21 +34,24 @@
 		]
 	},
 	"dependencies": {
-		"@nanahuse/racetime-protocol": "workspace:*",
 		"@googleapis/sheets": "^18.0.0",
-		"google-auth-library": "^11.1.0",
 		"@nanahuse/player-manager-protocol": "github:Nanahuse/player-manager#85ef6e5f78503f443b61627fc08c4a9675850cb0&path:/packages/player-manager-protocol",
+		"@nanahuse/racetime-protocol": "workspace:*",
+		"google-auth-library": "^11.1.0",
 		"react": "^19.0.0",
 		"react-dom": "^19.0.0"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.12",
 		"@nodecg/types": "^2.8.0",
+		"@testing-library/dom": "^10.4.2",
+		"@testing-library/react": "^16.3.3",
 		"@types/node": "^24.13.6",
 		"@types/react": "^19.0.0",
 		"@types/react-dom": "^19.0.0",
 		"@vitejs/plugin-react": "^6.0.0",
 		"esbuild": "^0.27.0",
+		"jsdom": "^30.1.2",
 		"nodecg": "^2.8.0",
 		"typescript": "^5.9.3",
 		"vite": "^8.0.0",

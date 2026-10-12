@@ -122,6 +122,27 @@ it("returns category variables with their selectable values and resolves the own
 	expect(await client.getCategoryGameId("c1")).toBe("g1");
 });
 
+it("requests only the initial page for game search", async () => {
+	const many = Array.from({length: 20}, (_, index) => ({
+		id: `g${index}`,
+		names: {international: `Game ${index}`},
+		abbreviation: `G${index}`,
+	}));
+	const fetchImpl = vi.fn(async (_url: string) =>
+		Response.json({data: many, pagination: {size: 20}}),
+	);
+	const client = new HttpSpeedrunClient({
+		fetchImpl: fetchImpl as never,
+		userAgent: "test",
+	});
+	const games = await client.searchGames("mario");
+	expect(games).toHaveLength(20);
+	expect(fetchImpl).toHaveBeenCalledOnce();
+	const requested = new URL(fetchImpl.mock.calls[0]![0]);
+	expect(requested.searchParams.get("max")).toBe("20");
+	expect(requested.searchParams.get("offset")).toBe("0");
+});
+
 it("maps user-defined variables without offered values", async () => {
 	const {client} = clientWith(routes);
 	expect(await client.getCategoryVariables("c3")).toEqual([

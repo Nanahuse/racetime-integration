@@ -17,6 +17,7 @@ import {SpeedrunError, SpeedrunNotFoundError} from "./errors";
 export const SPEEDRUN_API_BASE_URL = "https://www.speedrun.com/api/v1";
 const PAGE_SIZE = 200;
 const MAX_PAGES = 5;
+const SEARCH_LIMIT = 20;
 const DEFAULT_TIMEOUT_MS = 10_000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -256,14 +257,16 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 		path: string,
 		map: (value: unknown) => R,
 		query: Record<string, string | number> = {},
+		limit = Number.POSITIVE_INFINITY,
 	): Promise<R[]> {
 		const results: R[] = [];
-		for (let page = 0; page < MAX_PAGES; page += 1) {
+		for (let page = 0; page < MAX_PAGES && results.length < limit; page += 1) {
+			const pageSize = Math.min(PAGE_SIZE, limit - results.length);
 			const envelope = requireRecord(
 				await this.request(path, {
 					...query,
-					max: PAGE_SIZE,
-					offset: page * PAGE_SIZE,
+					max: pageSize,
+					offset: results.length,
 				}),
 				"response",
 			);
@@ -272,13 +275,12 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 					"invalid_payload",
 					"response.data must be an array.",
 				);
-			const pageItems = envelope.data.map(map);
-			results.push(...pageItems);
+			results.push(...envelope.data.slice(0, pageSize).map(map));
 			const pagination = isRecord(envelope.pagination)
 				? envelope.pagination
 				: {};
 			const size = pagination.size;
-			if (typeof size !== "number" || size < PAGE_SIZE) break;
+			if (typeof size !== "number" || size < pageSize) break;
 		}
 		return results;
 	}
@@ -298,8 +300,11 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 	}
 
 	searchGames(query: string): Promise<SpeedrunGameSummary[]> {
-		return this.collection(`/games`, mapGameSummary, {name: query}).then(
-			(games) => games.slice(0, 20),
+		return this.collection(
+			`/games`,
+			mapGameSummary,
+			{name: query},
+			SEARCH_LIMIT,
 		);
 	}
 
