@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type {Race, RaceState, RacesState} from "@nanahuse/racetime-protocol";
 import {
+	act,
 	cleanup,
 	fireEvent,
 	render,
@@ -145,4 +146,53 @@ it("shows participant actions by resolution status and RaceTime names from entra
 	expect(edit.getAttribute("href")).toContain("PlayerMapping.html?playerId=p1");
 	expect(screen.getAllByRole("button", {name: "登録・紐付け"})).toHaveLength(1);
 	expect(screen.getByText("Player Manager timed out")).toBeTruthy();
+});
+
+const fetchedRace: Race = {...race, raceId: "other/race"};
+
+it("keeps a monitored selection when a pending fetch resolves later", async () => {
+	let resolveFetch: (value: unknown) => void = () => {};
+	sendMessage.mockImplementation((name: string) => {
+		if (name === "racetime.v2.fetchRace")
+			return new Promise((resolve) => {
+				resolveFetch = resolve;
+			});
+		return Promise.resolve({ok: true, data: fetchedRace});
+	});
+	render(<Overview races={races} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: "https://racetime.gg/other/race"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
+	await act(async () => {
+		resolveFetch({ok: true, data: fetchedRace});
+	});
+	expect(screen.getByText("Player One")).toBeTruthy();
+	expect(screen.queryByText("other/race")).toBeNull();
+	expect(
+		(screen.getByRole("button", {name: "取得"}) as HTMLButtonElement).disabled,
+	).toBe(false);
+});
+
+it("ignores a failed fetch that settles after selecting a monitored race", async () => {
+	let rejectFetch: (reason: unknown) => void = () => {};
+	sendMessage.mockImplementation((name: string) => {
+		if (name === "racetime.v2.fetchRace")
+			return new Promise((_resolve, reject) => {
+				rejectFetch = reject;
+			});
+		return Promise.resolve({ok: true, data: fetchedRace});
+	});
+	render(<Overview races={races} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: "https://racetime.gg/other/race"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
+	await act(async () => {
+		rejectFetch(new Error("boom"));
+	});
+	await waitFor(() => expect(screen.queryByText(/boom/)).toBeNull());
+	expect(screen.getByText("Player One")).toBeTruthy();
 });

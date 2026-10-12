@@ -6,13 +6,25 @@ import {
 	isSettingsChanged,
 	request,
 } from "../api/client";
+import type {EditorState} from "../model/editor";
 import {spreadsheetEditUrl, spreadsheetIdFromInput} from "../model/spreadsheet";
 import {Badge, Callout, Field} from "./common";
+import {DiffTable} from "./DiffTable";
 
 type Validation = "unknown" | "ok" | "error";
 
-export function Settings() {
-	const [settings, setSettings] = useState<SettingsState | null>(null);
+type SettingsInput = {
+	spreadsheetId: string | null;
+	gameMappingsSheet: string;
+	categoryMappingsSheet: string;
+};
+
+export function Settings({
+	onStateChange,
+}: {
+	onStateChange?: (state: EditorState) => void;
+}) {
+	const [baseline, setBaseline] = useState<SettingsState | null>(null);
 	const [urlInput, setUrlInput] = useState("");
 	const [gameSheet, setGameSheet] = useState("GameMappings");
 	const [categorySheet, setCategorySheet] = useState("CategoryMappings");
@@ -20,38 +32,55 @@ export function Settings() {
 	const [message, setMessage] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [validation, setValidation] = useState<Validation>("unknown");
-	const [conflict, setConflict] = useState(false);
+	const [conflict, setConflict] = useState<SettingsState | null>(null);
+	const [comparison, setComparison] = useState<SettingsInput | null>(null);
 
-	const load = useCallback(async () => {
-		const state = await request("getSettings", undefined);
-		setSettings(state);
+	const currentInput = (): SettingsInput => ({
+		spreadsheetId: spreadsheetIdFromInput(urlInput),
+		gameMappingsSheet: gameSheet.trim(),
+		categoryMappingsSheet: categorySheet.trim(),
+	});
+
+	const applySettings = useCallback((state: SettingsState) => {
+		setBaseline(state);
 		setUrlInput(state.settings.spreadsheetId ?? "");
 		setGameSheet(state.settings.gameMappingsSheet);
 		setCategorySheet(state.settings.categoryMappingsSheet);
-		setValidation("unknown");
-		setConflict(false);
 	}, []);
+
+	const load = useCallback(async () => {
+		const state = await request("getSettings", undefined);
+		applySettings(state);
+		setValidation("unknown");
+		setConflict(null);
+		setComparison(null);
+	}, [applySettings]);
 
 	useEffect(() => {
 		void load().catch((cause) => setError(errorMessage(cause)));
 	}, [load]);
 
+	const inputsDirty = baseline
+		? JSON.stringify(currentInput()) !== JSON.stringify(baseline.settings)
+		: false;
+
+	useEffect(() => {
+		onStateChange?.({dirty: inputsDirty, busy});
+	}, [inputsDirty, busy, onStateChange]);
+
 	const save = async () => {
-		if (!settings || conflict) return;
+		if (!baseline || conflict) return;
 		setBusy(true);
 		setError(null);
 		setMessage(null);
 		try {
 			const next = await request("updateSettings", {
-				settings: {
-					spreadsheetId: spreadsheetIdFromInput(urlInput),
-					gameMappingsSheet: gameSheet.trim(),
-					categoryMappingsSheet: categorySheet.trim(),
-				},
-				expectedRevision: settings.revision,
+				settings: currentInput(),
+				expectedRevision: baseline.revision,
 			});
-			setSettings(next);
-			setConflict(false);
+			applySettings(next);
+			setConflict(null);
+			setComparison(null);
 			if (next.settings.spreadsheetId === null) {
 				setValidation("unknown");
 				setMessage(
@@ -65,10 +94,15 @@ export function Settings() {
 			}
 		} catch (cause) {
 			if (isSettingsChanged(cause) || isConflict(cause)) {
-				setConflict(true);
+				try {
+					const latest = await request("getSettings", undefined);
+					setConflict(latest);
+				} catch (reloadError) {
+					setError(errorMessage(reloadError));
+				}
 				setValidation("unknown");
 				setError(
-					"設定が別の場所で更新されました。最新設定を再取得してから保存してください。入力内容は保持しています。",
+					"設定が別の場所で更新されました。最新設定を採用するか、最新設定から再編集してください。入力内容は保持しています。",
 				);
 			} else {
 				setValidation("error");
@@ -79,53 +113,34 @@ export function Settings() {
 		}
 	};
 
-	/** Refreshes only the expected revision, keeping the user's input intact. */
-	const refreshRevision = async () => {
-		setBusy(true);
+	/** Replaces the form with the latest saved settings. */
+	const adoptLatest = () => {
+		if (!conflict) return;
+		applySettings(conflict);
+		setConflict(null);
+		setComparison(null);
+		setValidation("unknown");
 		setError(null);
-		try {
-			const latest = await request("getSettings", undefined);
-			setSettings(latest);
-			setConflict(false);
-			setValidation("unknown");
-			setMessage(
-				"最新の設定Revisionを取得しました。内容を確認して保存してください。",
-			);
-		} catch (cause) {
-			setError(errorMessage(cause));
-		} finally {
-			setBusy(false);
-		}
+		setMessage("最新の設定を読み込みました。");
 	};
 
-	/** Explicitly replaces the form with the latest saved settings. */
-	const adoptLatest = async () => {
-		setBusy(true);
+	/** Rebases on the latest settings, keeping the previous input for comparison. */
+	const reEditLatest = () => {
+		if (!conflict) return;
+		const previous = currentInput();
+		applySettings(conflict);
+		setComparison(previous);
+		setConflict(null);
+		setValidation("unknown");
 		setError(null);
-		try {
-			const latest = await request("getSettings", undefined);
-			setSettings(latest);
-			setUrlInput(latest.settings.spreadsheetId ?? "");
-			setGameSheet(latest.settings.gameMappingsSheet);
-			setCategorySheet(latest.settings.categoryMappingsSheet);
-			setConflict(false);
-			setValidation("unknown");
-			setMessage("最新の設定を読み込みました。");
-		} catch (cause) {
-			setError(errorMessage(cause));
-		} finally {
-			setBusy(false);
-		}
+		setMessage(
+			"最新設定を編集の基準にしました。以前の入力内容は比較用に保持しています。",
+		);
 	};
 
-	const applied = settings?.settings ?? null;
+	const applied = baseline?.settings ?? null;
 	const spreadsheetId = applied?.spreadsheetId ?? null;
 	const hasInput = spreadsheetIdFromInput(urlInput) !== null;
-	const inputsDirty = applied
-		? spreadsheetIdFromInput(urlInput) !== applied.spreadsheetId ||
-			gameSheet.trim() !== applied.gameMappingsSheet ||
-			categorySheet.trim() !== applied.categoryMappingsSheet
-		: false;
 	const connection = ((): {
 		state: string;
 		tone: "success" | "warning" | "error" | "neutral";
@@ -154,23 +169,44 @@ export function Settings() {
 						<button
 							type='button'
 							disabled={busy}
-							onClick={() => void refreshRevision()}
+							onClick={adoptLatest}
 						>
-							最新設定を再取得（入力を保持）
+							最新設定を採用
 						</button>
 						<button
 							type='button'
 							disabled={busy}
-							onClick={() => void adoptLatest()}
+							onClick={reEditLatest}
 						>
-							最新設定で入力を置き換える
+							最新設定から再編集
 						</button>
 					</div>
+					<DiffTable
+						before={conflict.settings}
+						after={currentInput()}
+					/>
 				</div>
 			) : (
 				error && <Callout tone='error'>{error}</Callout>
 			)}
 			{message && <Callout tone='success'>{message}</Callout>}
+			{comparison && baseline && (
+				<div className='subpanel'>
+					<h3>以前の入力内容（比較用・自動適用しません）</h3>
+					<DiffTable
+						before={baseline.settings}
+						after={comparison}
+					/>
+					<div className='button-row'>
+						<button
+							type='button'
+							onClick={() => setComparison(null)}
+						>
+							比較を閉じる
+						</button>
+					</div>
+				</div>
+			)}
 			<form
 				className='settings-form'
 				onSubmit={(event) => {
@@ -200,7 +236,7 @@ export function Settings() {
 				<div className='button-row'>
 					<button
 						type='submit'
-						disabled={busy || !settings || conflict}
+						disabled={busy || !baseline || conflict !== null}
 					>
 						{busy ? "検証中…" : "保存"}
 					</button>

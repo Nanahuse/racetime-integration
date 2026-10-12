@@ -5,7 +5,7 @@ import type {
 	RaceState,
 	RacesState,
 } from "@nanahuse/racetime-protocol";
-import {useState} from "react";
+import {useRef, useState} from "react";
 import {errorMessage, request} from "../api/client";
 import {beginRegistration, playerEditUrl} from "../api/player-manager";
 import {Callout} from "./common";
@@ -221,6 +221,7 @@ export function Overview({races}: {races: RacesState | undefined}) {
 	const [registrationUrl, setRegistrationUrl] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const fetchGen = useRef(0);
 
 	const list = races?.races ?? [];
 	const monitored =
@@ -228,19 +229,30 @@ export function Overview({races}: {races: RacesState | undefined}) {
 			? null
 			: (list.find((race) => race.url === selectedUrl) ?? null);
 
+	const selectMonitored = (url: string) => {
+		fetchGen.current++;
+		setSelectedUrl(url);
+		setFetched(null);
+		setError(null);
+		setBusy(false);
+	};
+
 	const runFetch = async () => {
+		const gen = ++fetchGen.current;
 		setBusy(true);
 		setError(null);
 		setRegistrationUrl(null);
 		try {
 			const race = await request("fetchRace", {url: urlInput.trim()});
+			if (gen !== fetchGen.current) return;
 			setFetched(race);
 			setSelectedUrl(null);
 		} catch (cause) {
+			if (gen !== fetchGen.current) return;
 			setFetched(null);
 			setError(errorMessage(cause));
 		} finally {
-			setBusy(false);
+			if (gen === fetchGen.current) setBusy(false);
 		}
 	};
 
@@ -271,11 +283,7 @@ export function Overview({races}: {races: RacesState | undefined}) {
 							<button
 								type='button'
 								className={selectedUrl === race.url ? "active" : ""}
-								onClick={() => {
-									setSelectedUrl(race.url);
-									setFetched(null);
-									setError(null);
-								}}
+								onClick={() => selectMonitored(race.url)}
 							>
 								<strong>{race.race?.raceId ?? race.url}</strong>
 								<small>

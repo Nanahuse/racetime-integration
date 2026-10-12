@@ -98,7 +98,7 @@ it("does not claim validation when the spreadsheet is disabled", async () => {
 	expect(screen.queryByText(/両シートを確認しました/)).toBeNull();
 });
 
-it("keeps input, blocks further saves, and offers refetch on a settings conflict", async () => {
+it("keeps input, blocks further saves, and offers recovery on a settings conflict", async () => {
 	updateResult = () => ({
 		ok: false,
 		error: {code: "settings_changed", message: "stale"},
@@ -114,5 +114,26 @@ it("keeps input, blocks further saves, and offers refetch on a settings conflict
 	expect(
 		(screen.getByRole("button", {name: "保存"}) as HTMLButtonElement).disabled,
 	).toBe(true);
-	expect(screen.getByRole("button", {name: /最新設定を再取得/})).toBeTruthy();
+	expect(screen.getByRole("button", {name: /最新設定を採用/})).toBeTruthy();
+	expect(screen.getByRole("button", {name: /最新設定から再編集/})).toBeTruthy();
+	expect(screen.queryByRole("button", {name: /再取得/})).toBeNull();
+	expect(screen.getByText("spreadsheetId")).toBeTruthy();
+});
+
+it("adopts the latest saved settings after a conflict", async () => {
+	render(<Settings />);
+	await screen.findByText("未設定");
+	fireEvent.change(screen.getByLabelText("Spreadsheet URL または ID"), {
+		target: {value: "mine"},
+	});
+	updateResult = () => ({
+		ok: false,
+		error: {code: "settings_changed", message: "stale"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "保存"}));
+	await screen.findByText(/別の場所で更新されました/);
+	updateResult = () => ({ok: true, data: initial});
+	fireEvent.click(screen.getByRole("button", {name: /最新設定を採用/}));
+	expect(await screen.findByDisplayValue("GameMappings")).toBeTruthy();
+	expect(screen.queryByDisplayValue("mine")).toBeNull();
 });

@@ -17,8 +17,9 @@ import {
 	isSettingsChanged,
 	request,
 } from "../api/client";
-import {diffValues} from "../model/diff";
+import type {EditorState} from "../model/editor";
 import {Callout, Field} from "./common";
+import {DiffTable} from "./DiffTable";
 
 const TIMING_LABELS: Record<TimingMethod, string> = {
 	realtime: "Real Time",
@@ -27,10 +28,27 @@ const TIMING_LABELS: Record<TimingMethod, string> = {
 };
 
 type Kind = "game" | "category";
+type SessionStatus = "normal" | "conflict" | "invalid";
 
-type Conflict =
-	| {kind: "game"; latest: GameMappingRecord | null}
-	| {kind: "category"; latest: CategoryMappingRecord | null};
+type GameSession = {
+	status: SessionStatus;
+	baseline: GameMapping | null;
+	baselineRevision: string | null;
+	draft: GameMapping;
+	settingsRevision: number;
+	conflict: GameMappingRecord | null;
+	comparison: GameMapping | null;
+};
+
+type CategorySession = {
+	status: SessionStatus;
+	baseline: CategoryMapping | null;
+	baselineRevision: string | null;
+	draft: CategoryMapping;
+	settingsRevision: number;
+	conflict: CategoryMappingRecord | null;
+	comparison: CategoryMapping | null;
+};
 
 function blankGame(): GameMapping {
 	return {
@@ -59,51 +77,174 @@ function stringify(value: unknown): string {
 	return JSON.stringify(value ?? null);
 }
 
-function DiffTable({before, after}: {before: unknown; after: unknown}) {
-	const entries = diffValues(before, after);
-	if (entries.length === 0)
-		return <p className='muted'>保存済みの最新内容と同じです。</p>;
+function findGame(
+	records: readonly GameMappingRecord[],
+	slug: string,
+): GameMappingRecord | null {
+	const key = slug.trim();
 	return (
-		<table className='participants'>
-			<thead>
-				<tr>
-					<th>項目</th>
-					<th>最新（保存済み）</th>
-					<th>編集中</th>
-				</tr>
-			</thead>
-			<tbody>
-				{entries.map((entry) => (
-					<tr key={entry.path}>
-						<td>{entry.path}</td>
-						<td>{entry.before}</td>
-						<td>{entry.after}</td>
-					</tr>
-				))}
-			</tbody>
-		</table>
+		records.find(
+			(record) => record.mapping.racetime.categorySlug.trim() === key,
+		) ?? null
 	);
 }
 
-export function Mappings() {
+function findCategory(
+	records: readonly CategoryMappingRecord[],
+	draft: CategoryMapping,
+): CategoryMappingRecord | null {
+	const key = `${draft.racetime.categorySlug.trim()}\u0000${draft.racetime.goal.trim()}`;
+	return (
+		records.find(
+			(record) =>
+				`${record.mapping.racetime.categorySlug.trim()}\u0000${record.mapping.racetime.goal.trim()}` ===
+				key,
+		) ?? null
+	);
+}
+
+function gameIsDirty(session: GameSession): boolean {
+	return (
+		stringify(session.draft) !== stringify(session.baseline ?? blankGame())
+	);
+}
+
+function categoryIsDirty(session: CategorySession): boolean {
+	return (
+		stringify(session.draft) !==
+		stringify(
+			session.baseline ?? blankCategory(session.draft.racetime.categorySlug),
+		)
+	);
+}
+
+function reconcileGame(
+	session: GameSession,
+	latest: GameMappingRecord | null,
+	settingsRevision: number,
+): GameSession {
+	if (settingsRevision !== session.settingsRevision)
+		return {
+			status: "normal",
+			baseline: latest ? structuredClone(latest.mapping) : null,
+			baselineRevision: latest?.revision ?? null,
+			draft: latest ? structuredClone(latest.mapping) : blankGame(),
+			settingsRevision,
+			conflict: null,
+			comparison: session.comparison ?? structuredClone(session.draft),
+		};
+	if (
+		(latest?.revision ?? null) === session.baselineRevision &&
+		(latest !== null) === (session.baseline !== null)
+	)
+		return session;
+	if (!gameIsDirty(session)) {
+		if (latest)
+			return {
+				status: "normal",
+				baseline: structuredClone(latest.mapping),
+				baselineRevision: latest.revision,
+				draft: structuredClone(latest.mapping),
+				settingsRevision: session.settingsRevision,
+				conflict: null,
+				comparison: null,
+			};
+		return {
+			...session,
+			status: "invalid",
+			baseline: null,
+			baselineRevision: null,
+			draft: blankGame(),
+			conflict: null,
+			comparison: null,
+		};
+	}
+	return {...session, status: "conflict", conflict: latest, comparison: null};
+}
+
+function reconcileCategory(
+	session: CategorySession,
+	latest: CategoryMappingRecord | null,
+	settingsRevision: number,
+): CategorySession {
+	if (settingsRevision !== session.settingsRevision)
+		return {
+			status: "normal",
+			baseline: latest ? structuredClone(latest.mapping) : null,
+			baselineRevision: latest?.revision ?? null,
+			draft: latest
+				? structuredClone(latest.mapping)
+				: blankCategory(session.draft.racetime.categorySlug),
+			settingsRevision,
+			conflict: null,
+			comparison: session.comparison ?? structuredClone(session.draft),
+		};
+	if (
+		(latest?.revision ?? null) === session.baselineRevision &&
+		(latest !== null) === (session.baseline !== null)
+	)
+		return session;
+	if (!categoryIsDirty(session)) {
+		if (latest)
+			return {
+				status: "normal",
+				baseline: structuredClone(latest.mapping),
+				baselineRevision: latest.revision,
+				draft: structuredClone(latest.mapping),
+				settingsRevision: session.settingsRevision,
+				conflict: null,
+				comparison: null,
+			};
+		return {
+			...session,
+			status: "invalid",
+			baseline: null,
+			baselineRevision: null,
+			draft: blankCategory(session.draft.racetime.categorySlug),
+			conflict: null,
+			comparison: null,
+		};
+	}
+	return {...session, status: "conflict", conflict: latest, comparison: null};
+}
+
+async function loadLists(): Promise<{
+	games: GameMappingRecord[];
+	categories: CategoryMappingRecord[];
+	settingsRevision: number;
+}> {
+	for (let attempt = 0; attempt < 3; attempt += 1) {
+		const [gameList, categoryList] = await Promise.all([
+			request("listGameMappings", undefined),
+			request("listCategoryMappings", undefined),
+		]);
+		if (gameList.settingsRevision === categoryList.settingsRevision)
+			return {
+				games: gameList.records,
+				categories: categoryList.records,
+				settingsRevision: gameList.settingsRevision,
+			};
+	}
+	throw new Error(
+		"Game MappingとCategory Mappingの設定Revisionが一致しません。再取得してください。",
+	);
+}
+
+export function Mappings({
+	onStateChange,
+}: {
+	onStateChange?: (state: EditorState) => void;
+}) {
 	const [games, setGames] = useState<GameMappingRecord[]>([]);
 	const [categories, setCategories] = useState<CategoryMappingRecord[]>([]);
-	const [settingsRevision, setSettingsRevision] = useState(0);
+	const [listSettingsRevision, setListSettingsRevision] = useState<
+		number | null
+	>(null);
 	const [gameQuery, setGameQuery] = useState("");
 
-	const [gameSelected, setGameSelected] = useState<string | null>(null);
-	const [gameSaved, setGameSaved] = useState<GameMapping | null>(null);
-	const [gameDraft, setGameDraft] = useState<GameMapping>(blankGame());
-	const [gameExpected, setGameExpected] = useState<string | null>(null);
-
-	const [categorySelected, setCategorySelected] = useState<string | null>(null);
-	const [categorySaved, setCategorySaved] = useState<CategoryMapping | null>(
-		null,
-	);
-	const [categoryDraft, setCategoryDraft] = useState<CategoryMapping | null>(
-		null,
-	);
-	const [categoryExpected, setCategoryExpected] = useState<string | null>(null);
+	const [gameSession, setGameSession] = useState<GameSession | null>(null);
+	const [categorySession, setCategorySession] =
+		useState<CategorySession | null>(null);
 
 	const [srcQuery, setSrcQuery] = useState("");
 	const [srcResults, setSrcResults] = useState<SpeedrunGameSummary[]>([]);
@@ -116,50 +257,26 @@ export function Mappings() {
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [message, setMessage] = useState<string | null>(null);
-	const [conflict, setConflict] = useState<Conflict | null>(null);
-	const [diffVisible, setDiffVisible] = useState(false);
 	const [confirmDelete, setConfirmDelete] = useState<Kind | null>(null);
 	const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
 
 	const optionsGen = useRef(0);
 	const variablesGen = useRef(0);
 	const searchGen = useRef(0);
+	const requestedOptions = useRef<string | null>(null);
+	const requestedVariables = useRef<string | null>(null);
 
-	const gameDirty =
-		stringify(gameDraft) !== stringify(gameSaved ?? blankGame());
-	const categoryDirty = categoryDraft
-		? stringify(categoryDraft) !==
-			stringify(categorySaved ?? blankCategory(gameSelected ?? ""))
+	const gameDirty = gameSession ? gameIsDirty(gameSession) : false;
+	const categoryDirty = categorySession
+		? categoryIsDirty(categorySession)
 		: false;
-	const conflictBlocking = conflict !== null && !diffVisible;
-
-	const reloadLists = useCallback(async () => {
-		const [gameList, categoryList] = await Promise.all([
-			request("listGameMappings", undefined),
-			request("listCategoryMappings", undefined),
-		]);
-		setGames(gameList.records);
-		setCategories(categoryList.records);
-		setSettingsRevision(gameList.settingsRevision);
-		return {gameList, categoryList};
-	}, []);
+	const dirty = gameDirty || categoryDirty;
 
 	useEffect(() => {
-		void (async () => {
-			try {
-				await reloadLists();
-			} catch (cause) {
-				setError(errorMessage(cause));
-			}
-		})();
-	}, [reloadLists]);
+		onStateChange?.({dirty, busy});
+	}, [dirty, busy, onStateChange]);
 
-	const guard = (action: () => void) => {
-		if (gameDirty || categoryDirty) setPendingAction(() => action);
-		else action();
-	};
-
-	const loadOptions = async (gameId: string) => {
+	const loadOptions = useCallback(async (gameId: string) => {
 		const gen = ++optionsGen.current;
 		if (!gameId) {
 			setOptions(null);
@@ -177,9 +294,9 @@ export function Mappings() {
 			setOptionsFor(null);
 			setError(errorMessage(cause));
 		}
-	};
+	}, []);
 
-	const loadVariables = async (categoryId: string) => {
+	const loadVariables = useCallback(async (categoryId: string) => {
 		const gen = ++variablesGen.current;
 		if (!categoryId) {
 			setVariables([]);
@@ -205,110 +322,124 @@ export function Mappings() {
 			setVariablesLoading(false);
 			setError(errorMessage(cause));
 		}
+	}, []);
+
+	const refreshLists = useCallback(async () => {
+		const result = await loadLists();
+		setGames(result.games);
+		setCategories(result.categories);
+		setListSettingsRevision(result.settingsRevision);
+		setGameSession((session) =>
+			session
+				? reconcileGame(
+						session,
+						findGame(result.games, session.draft.racetime.categorySlug),
+						result.settingsRevision,
+					)
+				: session,
+		);
+		setCategorySession((session) =>
+			session
+				? reconcileCategory(
+						session,
+						findCategory(result.categories, session.draft),
+						result.settingsRevision,
+					)
+				: session,
+		);
+		return result;
+	}, []);
+
+	useEffect(() => {
+		void refreshLists().catch((cause) => setError(errorMessage(cause)));
+	}, [refreshLists]);
+
+	const activeGameId = gameSession?.draft.speedrunCom.gameId ?? "";
+	useEffect(() => {
+		if (requestedOptions.current === activeGameId) return;
+		requestedOptions.current = activeGameId;
+		void loadOptions(activeGameId);
+	}, [activeGameId, loadOptions]);
+
+	const activeCategoryId = categorySession?.draft.speedrunCom.categoryId ?? "";
+	useEffect(() => {
+		if (requestedVariables.current === activeCategoryId) return;
+		requestedVariables.current = activeCategoryId;
+		void loadVariables(activeCategoryId);
+	}, [activeCategoryId, loadVariables]);
+
+	const guard = (action: () => void) => {
+		if (gameDirty || categoryDirty) setPendingAction(() => action);
+		else action();
 	};
 
-	const applyGameSelection = (record: GameMappingRecord | null) => {
-		optionsGen.current++;
-		variablesGen.current++;
+	const startGameSession = (record: GameMappingRecord | null) => {
 		searchGen.current++;
-		const mapping = record ? structuredClone(record.mapping) : blankGame();
-		setGameSelected(record?.mapping.racetime.categorySlug ?? null);
-		setGameSaved(record?.mapping ?? null);
-		setGameDraft(mapping);
-		setGameExpected(record?.revision ?? null);
-		setCategorySelected(null);
-		setCategorySaved(null);
-		setCategoryDraft(null);
-		setCategoryExpected(null);
-		setVariables([]);
-		setVariablesFor(null);
-		setVariablesLoading(false);
-		setOptions(null);
-		setOptionsFor(null);
+		setCategorySession(null);
 		setSrcResults([]);
 		setSrcQuery("");
 		setMessage(null);
 		setError(null);
-		setConflict(null);
-		setDiffVisible(false);
-		if (mapping.speedrunCom.gameId)
-			void loadOptions(mapping.speedrunCom.gameId);
-	};
-
-	const selectGame = (record: GameMappingRecord | null) => {
-		guard(() => applyGameSelection(record));
-	};
-
-	const gameCategories = categories.filter(
-		(record) => record.mapping.racetime.categorySlug === gameSelected,
-	);
-	const gameHasChildren = gameSaved !== null && gameCategories.length > 0;
-
-	const selectCategory = (record: CategoryMappingRecord | null) => {
-		guard(() => {
-			variablesGen.current++;
-			const mapping = record
-				? structuredClone(record.mapping)
-				: blankCategory(gameSelected ?? "");
-			setCategorySelected(record ? record.mapping.racetime.goal : null);
-			setCategorySaved(record?.mapping ?? null);
-			setCategoryDraft(mapping);
-			setCategoryExpected(record?.revision ?? null);
-			setVariables([]);
-			setVariablesFor(null);
-			setVariablesLoading(false);
-			setMessage(null);
-			setError(null);
-			setConflict(null);
-			setDiffVisible(false);
-			void loadVariables(mapping.speedrunCom.categoryId);
+		setGameSession({
+			status: "normal",
+			baseline: record?.mapping ?? null,
+			baselineRevision: record?.revision ?? null,
+			draft: record ? structuredClone(record.mapping) : blankGame(),
+			settingsRevision: listSettingsRevision ?? 0,
+			conflict: null,
+			comparison: null,
 		});
 	};
 
-	const reloadAndFind = async (kind: Kind) => {
-		const {gameList, categoryList} = await reloadLists();
-		if (kind === "game") {
-			const key = gameDraft.racetime.categorySlug.trim();
-			return (
-				gameList.records.find(
-					(record) => record.mapping.racetime.categorySlug.trim() === key,
-				) ?? null
-			);
-		}
-		const slug = categoryDraft?.racetime.categorySlug.trim() ?? "";
-		const goal = categoryDraft?.racetime.goal.trim() ?? "";
-		return (
-			categoryList.records.find(
-				(record) =>
-					record.mapping.racetime.categorySlug.trim() === slug &&
-					record.mapping.racetime.goal.trim() === goal,
-			) ?? null
-		);
+	const selectGame = (record: GameMappingRecord | null) => {
+		guard(() => startGameSession(record));
 	};
 
-	const handleSaveFailure = async (kind: Kind, cause: unknown) => {
+	const gameCategories = categories.filter(
+		(record) =>
+			record.mapping.racetime.categorySlug ===
+			(gameSession?.draft.racetime.categorySlug ?? ""),
+	);
+	const gameHasChildren =
+		(gameSession?.baseline ?? null) !== null && gameCategories.length > 0;
+
+	const startCategorySession = (record: CategoryMappingRecord | null) => {
+		const slug = gameSession?.draft.racetime.categorySlug ?? "";
+		setMessage(null);
+		setError(null);
+		setCategorySession({
+			status: "normal",
+			baseline: record?.mapping ?? null,
+			baselineRevision: record?.revision ?? null,
+			draft: record ? structuredClone(record.mapping) : blankCategory(slug),
+			settingsRevision:
+				listSettingsRevision ?? gameSession?.settingsRevision ?? 0,
+			conflict: null,
+			comparison: null,
+		});
+	};
+
+	const selectCategory = (record: CategoryMappingRecord | null) => {
+		guard(() => startCategorySession(record));
+	};
+
+	const handleSaveFailure = async (cause: unknown) => {
 		if (isConflict(cause)) {
-			const latest = await reloadAndFind(kind);
-			setConflict({kind, latest} as Conflict);
-			setDiffVisible(false);
+			await refreshLists();
 			setError(
-				latest === null
-					? "選択中のレコードは保存先から削除されています。最新状態へ戻すか、編集内容を確認してやり直してください。"
-					: "他の変更と競合しました。最新状態へ戻すか、編集内容を確認してやり直してください。",
+				"他の変更と競合しました。最新状態を採用するか、最新状態から再編集してください。",
 			);
 			return;
 		}
 		if (isSettingsChanged(cause)) {
-			await reloadLists();
-			setConflict(null);
-			setDiffVisible(false);
+			await refreshLists();
 			setError(
-				"Spreadsheet設定が変更されました。新しい保存先の内容を再読込しました。編集を再開してください。",
+				"Spreadsheet設定が変更されました。新しい保存先を読み込みました。内容を確認して再編集してください。",
 			);
 			return;
 		}
 		if (isGameMappingConflict(cause)) {
-			await reloadLists();
+			await refreshLists();
 			setError(
 				"子Category Mappingが存在するため、この操作はできません。先に子Category Mappingを整理してください。",
 			);
@@ -317,145 +448,178 @@ export function Mappings() {
 		setError(errorMessage(cause));
 	};
 
-	const adoptLatest = () => {
-		if (!conflict) return;
-		if (conflict.kind === "game") {
-			const latest = conflict.latest;
-			setGameSaved(latest?.mapping ?? null);
-			setGameDraft(latest ? structuredClone(latest.mapping) : blankGame());
-			setGameExpected(latest?.revision ?? null);
-			if (latest) setGameSelected(latest.mapping.racetime.categorySlug);
-			setMessage(
-				latest
-					? "最新のGame Mappingを読み込みました。"
-					: "保存先のGame Mappingは削除されています。",
-			);
-		} else {
-			const latest = conflict.latest;
-			setCategorySaved(latest?.mapping ?? null);
-			setCategoryDraft(
-				latest
-					? structuredClone(latest.mapping)
-					: blankCategory(gameSelected ?? ""),
-			);
-			setCategoryExpected(latest?.revision ?? null);
-			if (latest) void loadVariables(latest.mapping.speedrunCom.categoryId);
-			setMessage(
-				latest
-					? "最新のCategory Mappingを読み込みました。"
-					: "保存先のCategory Mappingは削除されています。",
-			);
-		}
-		setConflict(null);
-		setDiffVisible(false);
+	const adoptGameLatest = () => {
+		setGameSession((session) => {
+			if (session?.status !== "conflict") return session;
+			const latest = session.conflict;
+			return {
+				status: "normal",
+				baseline: latest ? structuredClone(latest.mapping) : null,
+				baselineRevision: latest?.revision ?? null,
+				draft: latest ? structuredClone(latest.mapping) : blankGame(),
+				settingsRevision: session.settingsRevision,
+				conflict: null,
+				comparison: null,
+			};
+		});
 		setError(null);
 	};
 
-	const confirmRedo = () => {
-		if (!conflict) return;
-		if (conflict.kind === "game")
-			setGameExpected(conflict.latest?.revision ?? null);
-		else setCategoryExpected(conflict.latest?.revision ?? null);
-		setDiffVisible(true);
+	const reEditGameLatest = () => {
+		setGameSession((session) => {
+			if (session?.status !== "conflict") return session;
+			const latest = session.conflict;
+			return {
+				status: "normal",
+				baseline: latest ? structuredClone(latest.mapping) : null,
+				baselineRevision: latest?.revision ?? null,
+				draft: latest ? structuredClone(latest.mapping) : blankGame(),
+				settingsRevision: session.settingsRevision,
+				conflict: null,
+				comparison: structuredClone(session.draft),
+			};
+		});
+		setError(null);
+	};
+
+	const adoptCategoryLatest = () => {
+		setCategorySession((session) => {
+			if (session?.status !== "conflict") return session;
+			const latest = session.conflict;
+			return {
+				status: "normal",
+				baseline: latest ? structuredClone(latest.mapping) : null,
+				baselineRevision: latest?.revision ?? null,
+				draft: latest
+					? structuredClone(latest.mapping)
+					: blankCategory(session.draft.racetime.categorySlug),
+				settingsRevision: session.settingsRevision,
+				conflict: null,
+				comparison: null,
+			};
+		});
+		setError(null);
+	};
+
+	const reEditCategoryLatest = () => {
+		setCategorySession((session) => {
+			if (session?.status !== "conflict") return session;
+			const latest = session.conflict;
+			return {
+				status: "normal",
+				baseline: latest ? structuredClone(latest.mapping) : null,
+				baselineRevision: latest?.revision ?? null,
+				draft: latest
+					? structuredClone(latest.mapping)
+					: blankCategory(session.draft.racetime.categorySlug),
+				settingsRevision: session.settingsRevision,
+				conflict: null,
+				comparison: structuredClone(session.draft),
+			};
+		});
 		setError(null);
 	};
 
 	const saveGame = async () => {
+		if (!gameSession || gameSession.status !== "normal") return;
 		setBusy(true);
 		setError(null);
 		setMessage(null);
 		try {
 			const result = await request("saveGameMapping", {
-				mapping: gameDraft,
-				expectedRevision: gameExpected,
-				settingsRevision,
+				mapping: gameSession.draft,
+				expectedRevision: gameSession.baselineRevision,
+				settingsRevision: gameSession.settingsRevision,
 			});
-			setGameSaved(result.record.mapping);
-			setGameDraft(structuredClone(result.record.mapping));
-			setGameSelected(result.record.mapping.racetime.categorySlug);
-			setGameExpected(result.record.revision);
-			setConflict(null);
-			setDiffVisible(false);
+			setGameSession({
+				status: "normal",
+				baseline: structuredClone(result.record.mapping),
+				baselineRevision: result.record.revision,
+				draft: structuredClone(result.record.mapping),
+				settingsRevision: gameSession.settingsRevision,
+				conflict: null,
+				comparison: null,
+			});
 			setMessage("Game Mappingを保存しました。");
-			await reloadLists();
+			await refreshLists();
 		} catch (cause) {
-			await handleSaveFailure("game", cause);
+			await handleSaveFailure(cause);
 		} finally {
 			setBusy(false);
 		}
 	};
 
 	const removeGame = async () => {
-		if (gameExpected === null) return;
+		if (!gameSession || gameSession.baselineRevision === null) return;
 		setBusy(true);
 		setError(null);
 		setMessage(null);
 		try {
 			await request("deleteGameMapping", {
-				categorySlug: gameDraft.racetime.categorySlug,
-				expectedRevision: gameExpected,
-				settingsRevision,
+				categorySlug: gameSession.draft.racetime.categorySlug,
+				expectedRevision: gameSession.baselineRevision,
+				settingsRevision: gameSession.settingsRevision,
 			});
 			setConfirmDelete(null);
-			applyGameSelection(null);
-			await reloadLists();
+			startGameSession(null);
+			await refreshLists();
 			setMessage("Game Mappingを削除しました。");
 		} catch (cause) {
 			setConfirmDelete(null);
-			await handleSaveFailure("game", cause);
+			await handleSaveFailure(cause);
 		} finally {
 			setBusy(false);
 		}
 	};
 
 	const saveCategory = async () => {
-		if (!categoryDraft) return;
+		if (!categorySession || categorySession.status !== "normal") return;
 		setBusy(true);
 		setError(null);
 		setMessage(null);
 		try {
 			const result = await request("saveCategoryMapping", {
-				mapping: categoryDraft,
-				expectedRevision: categoryExpected,
-				settingsRevision,
+				mapping: categorySession.draft,
+				expectedRevision: categorySession.baselineRevision,
+				settingsRevision: categorySession.settingsRevision,
 			});
-			setCategorySaved(result.record.mapping);
-			setCategoryDraft(structuredClone(result.record.mapping));
-			setCategorySelected(result.record.mapping.racetime.goal);
-			setCategoryExpected(result.record.revision);
-			setConflict(null);
-			setDiffVisible(false);
+			setCategorySession({
+				status: "normal",
+				baseline: structuredClone(result.record.mapping),
+				baselineRevision: result.record.revision,
+				draft: structuredClone(result.record.mapping),
+				settingsRevision: categorySession.settingsRevision,
+				conflict: null,
+				comparison: null,
+			});
 			setMessage("Category Mappingを保存しました。");
-			await reloadLists();
+			await refreshLists();
 		} catch (cause) {
-			await handleSaveFailure("category", cause);
+			await handleSaveFailure(cause);
 		} finally {
 			setBusy(false);
 		}
 	};
 
 	const removeCategory = async () => {
-		if (!categoryDraft || categoryExpected === null) return;
+		if (!categorySession || categorySession.baselineRevision === null) return;
 		setBusy(true);
 		setError(null);
 		setMessage(null);
 		try {
 			await request("deleteCategoryMapping", {
-				categorySlug: categoryDraft.racetime.categorySlug,
-				goal: categoryDraft.racetime.goal,
-				expectedRevision: categoryExpected,
-				settingsRevision,
+				categorySlug: categorySession.draft.racetime.categorySlug,
+				goal: categorySession.draft.racetime.goal,
+				expectedRevision: categorySession.baselineRevision,
+				settingsRevision: categorySession.settingsRevision,
 			});
 			setMessage("Category Mappingを削除しました。");
 			setConfirmDelete(null);
-			setCategorySelected(null);
-			setCategorySaved(null);
-			setCategoryDraft(null);
-			setCategoryExpected(null);
-			await reloadLists();
+			setCategorySession(null);
+			await refreshLists();
 		} catch (cause) {
 			setConfirmDelete(null);
-			await handleSaveFailure("category", cause);
+			await handleSaveFailure(cause);
 		} finally {
 			setBusy(false);
 		}
@@ -466,57 +630,8 @@ export function Mappings() {
 		setError(null);
 		setMessage(null);
 		try {
-			const {gameList, categoryList} = await reloadLists();
-			const gameWasDirty = gameDirty;
-			const categoryWasDirty = categoryDirty;
-			let notice: string | null = null;
-			const gameKey = gameDraft.racetime.categorySlug.trim();
-			const latestGame = gameKey
-				? (gameList.records.find(
-						(record) => record.mapping.racetime.categorySlug.trim() === gameKey,
-					) ?? null)
-				: null;
-			setGameSaved(latestGame?.mapping ?? null);
-			setGameExpected(latestGame?.revision ?? null);
-			if (!gameWasDirty) {
-				if (latestGame) {
-					setGameDraft(structuredClone(latestGame.mapping));
-					setGameSelected(latestGame.mapping.racetime.categorySlug);
-				} else if (gameSelected !== null) {
-					setGameDraft(blankGame());
-					setGameSelected(null);
-					setCategorySelected(null);
-					setCategorySaved(null);
-					setCategoryDraft(null);
-					setCategoryExpected(null);
-				}
-			}
-			if (gameKey && latestGame === null)
-				notice = "選択中のGame Mappingは保存先から削除されています。";
-			if (categoryDraft) {
-				const slug = categoryDraft.racetime.categorySlug.trim();
-				const goal = categoryDraft.racetime.goal.trim();
-				const latestCategory =
-					categoryList.records.find(
-						(record) =>
-							record.mapping.racetime.categorySlug.trim() === slug &&
-							record.mapping.racetime.goal.trim() === goal,
-					) ?? null;
-				setCategorySaved(latestCategory?.mapping ?? null);
-				setCategoryExpected(latestCategory?.revision ?? null);
-				if (!categoryWasDirty && latestCategory)
-					setCategoryDraft(structuredClone(latestCategory.mapping));
-				if (latestCategory === null)
-					notice = "選択中のCategory Mappingは保存先から削除されています。";
-			}
-			setConflict(null);
-			setDiffVisible(false);
-			setMessage(
-				notice ??
-					(gameWasDirty || categoryWasDirty
-						? "保存済みデータを取り込みました。未保存の編集は保持しています。"
-						: "最新の内容を読み込みました。"),
-			);
+			await refreshLists();
+			setMessage("保存先の最新状態を読み込みました。");
 		} catch (cause) {
 			setError(errorMessage(cause));
 		} finally {
@@ -541,85 +656,100 @@ export function Mappings() {
 		}
 	};
 
-	const chooseSrcGame = async (game: SpeedrunGameSummary) => {
-		optionsGen.current++;
-		variablesGen.current++;
-		setGameDraft((draft) => ({
-			...draft,
-			speedrunCom: {gameId: game.id, gameName: game.name},
-		}));
-		setCategoryDraft((draft) =>
-			draft
+	const chooseSrcGame = (game: SpeedrunGameSummary) => {
+		searchGen.current++;
+		setGameSession((session) =>
+			session
 				? {
-						...draft,
-						speedrunCom: {
-							...draft.speedrunCom,
-							categoryId: "",
-							categoryName: "",
-							levelId: null,
-							variables: {},
+						...session,
+						draft: {
+							...session.draft,
+							speedrunCom: {gameId: game.id, gameName: game.name},
 						},
 					}
-				: draft,
+				: session,
+		);
+		setCategorySession((session) =>
+			session
+				? {
+						...session,
+						draft: {
+							...session.draft,
+							speedrunCom: {
+								...session.draft.speedrunCom,
+								categoryId: "",
+								categoryName: "",
+								levelId: null,
+								variables: {},
+							},
+						},
+					}
+				: session,
 		);
 		setSrcResults([]);
 		setSrcQuery("");
-		setOptions(null);
-		setOptionsFor(null);
-		setVariables([]);
-		setVariablesFor(null);
-		setVariablesLoading(false);
-		await loadOptions(game.id);
 	};
 
-	const chooseCategory = async (option: SpeedrunCategoryOption) => {
-		setCategoryDraft((draft) =>
-			draft
+	const chooseCategory = (option: SpeedrunCategoryOption) => {
+		setCategorySession((session) =>
+			session
 				? {
-						...draft,
-						speedrunCom: {
-							...draft.speedrunCom,
-							categoryId: option.id,
-							categoryName: option.name,
-							levelId:
-								option.type === "per-level" ? draft.speedrunCom.levelId : null,
-							variables: {},
+						...session,
+						draft: {
+							...session.draft,
+							speedrunCom: {
+								...session.draft.speedrunCom,
+								categoryId: option.id,
+								categoryName: option.name,
+								levelId: null,
+								variables: {},
+							},
 						},
 					}
-				: draft,
+				: session,
 		);
-		setVariables([]);
-		setVariablesFor(null);
-		await loadVariables(option.id);
 	};
 
 	const setCategoryField = <K extends keyof CategoryMapping["speedrunCom"]>(
 		key: K,
 		value: CategoryMapping["speedrunCom"][K],
 	) => {
-		setCategoryDraft((draft) =>
-			draft
-				? {...draft, speedrunCom: {...draft.speedrunCom, [key]: value}}
-				: draft,
+		setCategorySession((session) =>
+			session
+				? {
+						...session,
+						draft: {
+							...session.draft,
+							speedrunCom: {...session.draft.speedrunCom, [key]: value},
+						},
+					}
+				: session,
 		);
 	};
 
 	const filteredGames = games.filter((record) =>
 		stringify(record.mapping).toLowerCase().includes(gameQuery.toLowerCase()),
 	);
-	const categoryId = categoryDraft?.speedrunCom.categoryId ?? "";
+	const gameBlocked = gameSession !== null && gameSession.status !== "normal";
+	const categoryBlocked =
+		categorySession !== null && categorySession.status !== "normal";
+	const categoryId = categorySession?.draft.speedrunCom.categoryId ?? "";
 	const variablesReady =
 		categoryId !== "" && !variablesLoading && variablesFor === categoryId;
-	const missingMandatory = categoryDraft
+	const missingMandatory = categorySession
 		? variables.some(
 				(variable) =>
 					variable.mandatory &&
-					!categoryDraft.speedrunCom.variables[variable.id],
+					!categorySession.draft.speedrunCom.variables[variable.id],
 			)
 		: false;
 	const optionsReady =
-		!gameDraft.speedrunCom.gameId ||
-		(optionsFor !== null && optionsFor === gameDraft.speedrunCom.gameId);
+		!activeGameId || (optionsFor !== null && optionsFor === activeGameId);
+	const hasSessionNotice =
+		gameSession?.status === "conflict" ||
+		gameSession?.status === "invalid" ||
+		categorySession?.status === "conflict" ||
+		categorySession?.status === "invalid";
 
 	return (
 		<div className='mappings layout-two'>
@@ -647,7 +777,8 @@ export function Mappings() {
 								type='button'
 								disabled={busy}
 								className={
-									gameSelected === record.mapping.racetime.categorySlug
+									gameSession?.draft.racetime.categorySlug ===
+									record.mapping.racetime.categorySlug
 										? "active"
 										: ""
 								}
@@ -672,249 +803,357 @@ export function Mappings() {
 			</aside>
 
 			<section className='panel'>
-				{conflict ? (
-					<div className='callout warning'>
-						<p>{error}</p>
-						<div className='button-row'>
-							<button
-								type='button'
-								disabled={busy}
-								onClick={adoptLatest}
-							>
-								最新状態へ戻す
-							</button>
-							<button
-								type='button'
-								disabled={busy || diffVisible}
-								onClick={confirmRedo}
-							>
-								編集内容を確認してやり直す
-							</button>
-						</div>
-						{diffVisible && (
-							<DiffTable
-								before={
-									conflict.kind === "game"
-										? (conflict.latest?.mapping ?? blankGame())
-										: (conflict.latest?.mapping ??
-											blankCategory(gameSelected ?? ""))
-								}
-								after={
-									conflict.kind === "game"
-										? gameDraft
-										: (categoryDraft ?? blankCategory(gameSelected ?? ""))
-								}
-							/>
-						)}
-					</div>
-				) : (
-					error && <Callout tone='error'>{error}</Callout>
-				)}
+				{error && !hasSessionNotice && <Callout tone='error'>{error}</Callout>}
 				{message && <Callout tone='success'>{message}</Callout>}
 
-				<h2>Game Mapping</h2>
-				<form
-					onSubmit={(event) => {
-						event.preventDefault();
-						void saveGame();
-					}}
-				>
-					<div className='grid'>
-						<Field label='RaceTime category slug（一意キー）'>
-							<input
-								value={gameDraft.racetime.categorySlug}
-								readOnly={gameSaved !== null}
-								onChange={(event) =>
-									setGameDraft({
-										...gameDraft,
-										racetime: {
-											...gameDraft.racetime,
-											categorySlug: event.target.value,
-										},
-									})
-								}
-							/>
-						</Field>
-						<Field label='RaceTime category name（表示用）'>
-							<input
-								value={gameDraft.racetime.categoryName}
-								onChange={(event) =>
-									setGameDraft({
-										...gameDraft,
-										racetime: {
-											...gameDraft.racetime,
-											categoryName: event.target.value,
-										},
-									})
-								}
-							/>
-						</Field>
-					</div>
-					{gameSaved !== null && (
-						<p className='muted'>
-							一意キーの変更はできません。変更する場合は削除して新規登録してください。
-						</p>
-					)}
-
-					<div className='subpanel'>
-						<h3>Speedrun.com ゲーム（手動選択）</h3>
-						{gameHasChildren && (
-							<Callout tone='warning'>
-								子Category
-								Mappingが存在するためSRCゲームを変更できません。先に子Category
-								Mappingを整理してください。
-							</Callout>
-						)}
-						<p className='muted'>
-							選択中: {gameDraft.speedrunCom.gameName || "未選択"}
-							{gameDraft.speedrunCom.gameId
-								? ` (${gameDraft.speedrunCom.gameId})`
-								: ""}
-						</p>
-						<div className='formrow'>
-							<input
-								aria-label='SRCゲーム検索'
-								placeholder='ゲーム名で検索'
-								disabled={gameHasChildren}
-								value={srcQuery}
-								onChange={(event) => setSrcQuery(event.target.value)}
-							/>
-							<button
-								type='button'
-								disabled={busy || gameHasChildren || srcQuery.trim() === ""}
-								onClick={() => void searchGames()}
-							>
-								検索
-							</button>
-						</div>
-						{srcResults.map((game) => (
-							<button
-								key={game.id}
-								type='button'
-								className='choice'
-								disabled={gameHasChildren}
-								onClick={() => void chooseSrcGame(game)}
-							>
-								{game.name} ({game.abbreviation})
-							</button>
-						))}
-					</div>
-
-					<div className='button-row'>
-						<button
-							type='submit'
-							disabled={busy || conflictBlocking}
-						>
-							{busy ? "保存中…" : "Game Mappingを保存"}
-						</button>
-						<button
-							type='button'
-							disabled={busy || !gameDirty}
-							onClick={() =>
-								setGameDraft(structuredClone(gameSaved ?? blankGame()))
-							}
-						>
-							Revert
-						</button>
-						{gameExpected !== null &&
-							(confirmDelete === "game" ? (
-								<>
-									<span>
-										子Category Mappingがある場合は削除できません。削除しますか？
-									</span>
-									<button
-										type='button'
-										disabled={busy}
-										onClick={() => void removeGame()}
-									>
-										削除を確定
-									</button>
-									<button
-										type='button'
-										onClick={() => setConfirmDelete(null)}
-									>
-										キャンセル
-									</button>
-								</>
-							) : (
-								<button
-									type='button'
-									onClick={() => setConfirmDelete("game")}
-								>
-									削除
-								</button>
-							))}
-					</div>
-				</form>
-
-				<h2>Category Mappings</h2>
-				{gameSelected === null ? (
-					<p className='muted'>先にGame Mappingを保存してください。</p>
+				{gameSession === null ? (
+					<p className='muted'>
+						Game Mappingを選択するか、＋新規で作成してください。
+					</p>
 				) : (
 					<>
-						<ul className='list horizontal'>
-							{gameCategories.map((record) => (
-								<li key={record.mapping.racetime.goal}>
+						<h2>Game Mapping</h2>
+						{gameSession.status === "conflict" && (
+							<SessionConflict
+								label='Game Mapping'
+								deleted={gameSession.conflict === null}
+								before={gameSession.conflict?.mapping ?? blankGame()}
+								after={gameSession.draft}
+								busy={busy}
+								onAdopt={adoptGameLatest}
+								onReEdit={reEditGameLatest}
+							/>
+						)}
+						{gameSession.status === "invalid" && (
+							<Callout tone='warning'>
+								このGame
+								Mappingは保存先から削除されたか、Spreadsheet設定が変更されました。保存できません。再読込して選び直してください。
+							</Callout>
+						)}
+						{gameSession.comparison && (
+							<div className='subpanel'>
+								<h3>前回の編集内容（比較用・自動適用しません）</h3>
+								<DiffTable
+									before={gameSession.baseline ?? blankGame()}
+									after={gameSession.comparison}
+								/>
+								<div className='button-row'>
 									<button
 										type='button'
-										disabled={busy}
-										className={
-											categorySelected === record.mapping.racetime.goal
-												? "active"
-												: ""
+										onClick={() =>
+											setGameSession((session) =>
+												session ? {...session, comparison: null} : session,
+											)
 										}
-										onClick={() => selectCategory(record)}
 									>
-										<strong>{record.mapping.racetime.goal}</strong>
-										<small>{record.mapping.speedrunCom.categoryName}</small>
+										比較を閉じる
 									</button>
-								</li>
-							))}
-							<li>
+								</div>
+							</div>
+						)}
+						<form
+							onSubmit={(event) => {
+								event.preventDefault();
+								void saveGame();
+							}}
+						>
+							<div className='grid'>
+								<Field label='RaceTime category slug（一意キー）'>
+									<input
+										value={gameSession.draft.racetime.categorySlug}
+										readOnly={gameSession.baseline !== null}
+										onChange={(event) =>
+											setGameSession((session) =>
+												session
+													? {
+															...session,
+															draft: {
+																...session.draft,
+																racetime: {
+																	...session.draft.racetime,
+																	categorySlug: event.target.value,
+																},
+															},
+														}
+													: session,
+											)
+										}
+									/>
+								</Field>
+								<Field label='RaceTime category name（表示用）'>
+									<input
+										value={gameSession.draft.racetime.categoryName}
+										onChange={(event) =>
+											setGameSession((session) =>
+												session
+													? {
+															...session,
+															draft: {
+																...session.draft,
+																racetime: {
+																	...session.draft.racetime,
+																	categoryName: event.target.value,
+																},
+															},
+														}
+													: session,
+											)
+										}
+									/>
+								</Field>
+							</div>
+							{gameSession.baseline !== null && (
+								<p className='muted'>
+									一意キーの変更はできません。変更する場合は削除して新規登録してください。
+								</p>
+							)}
+
+							<div className='subpanel'>
+								<h3>Speedrun.com ゲーム（手動選択）</h3>
+								{gameHasChildren && (
+									<Callout tone='warning'>
+										子Category
+										Mappingが存在するためSRCゲームを変更できません。先に子Category
+										Mappingを整理してください。
+									</Callout>
+								)}
+								<p className='muted'>
+									選択中: {gameSession.draft.speedrunCom.gameName || "未選択"}
+									{gameSession.draft.speedrunCom.gameId
+										? ` (${gameSession.draft.speedrunCom.gameId})`
+										: ""}
+								</p>
+								<div className='formrow'>
+									<input
+										aria-label='SRCゲーム検索'
+										placeholder='ゲーム名で検索'
+										disabled={gameHasChildren}
+										value={srcQuery}
+										onChange={(event) => setSrcQuery(event.target.value)}
+									/>
+									<button
+										type='button'
+										disabled={busy || gameHasChildren || srcQuery.trim() === ""}
+										onClick={() => void searchGames()}
+									>
+										検索
+									</button>
+								</div>
+								{srcResults.map((game) => (
+									<button
+										key={game.id}
+										type='button'
+										className='choice'
+										disabled={gameHasChildren}
+										onClick={() => chooseSrcGame(game)}
+									>
+										{game.name} ({game.abbreviation})
+									</button>
+								))}
+							</div>
+
+							<div className='button-row'>
+								<button
+									type='submit'
+									disabled={busy || gameBlocked}
+								>
+									{busy ? "保存中…" : "Game Mappingを保存"}
+								</button>
 								<button
 									type='button'
-									disabled={busy}
-									onClick={() => selectCategory(null)}
+									disabled={busy || !gameDirty}
+									onClick={() =>
+										setGameSession((session) =>
+											session
+												? {
+														...session,
+														draft: structuredClone(
+															session.baseline ?? blankGame(),
+														),
+													}
+												: session,
+										)
+									}
 								>
-									＋ 新規 Goal
+									Revert
 								</button>
-							</li>
-						</ul>
-						{categoryDraft ? (
-							<CategoryEditor
-								draft={categoryDraft}
-								options={options}
-								variables={variables}
-								busy={busy}
-								dirty={categoryDirty}
-								expected={categoryExpected}
-								confirmDelete={confirmDelete === "category"}
-								missingMandatory={missingMandatory}
-								variablesReady={variablesReady}
-								optionsReady={optionsReady}
-								blocked={conflictBlocking}
-								onField={setCategoryField}
-								onChooseCategory={(option) => void chooseCategory(option)}
-								onGoal={(goal) =>
-									setCategoryDraft({
-										...categoryDraft,
-										racetime: {...categoryDraft.racetime, goal},
-									})
-								}
-								onSave={() => void saveCategory()}
-								onRevert={() =>
-									setCategoryDraft(
-										structuredClone(
-											categorySaved ?? blankCategory(gameSelected ?? ""),
-										),
-									)
-								}
-								onDeleteRequest={() => setConfirmDelete("category")}
-								onDeleteConfirm={() => void removeCategory()}
-								onDeleteCancel={() => setConfirmDelete(null)}
-							/>
+								{gameSession.baselineRevision !== null &&
+									(confirmDelete === "game" ? (
+										<>
+											<span>
+												子Category
+												Mappingがある場合は削除できません。削除しますか？
+											</span>
+											<button
+												type='button'
+												disabled={busy}
+												onClick={() => void removeGame()}
+											>
+												削除を確定
+											</button>
+											<button
+												type='button'
+												onClick={() => setConfirmDelete(null)}
+											>
+												キャンセル
+											</button>
+										</>
+									) : (
+										<button
+											type='button'
+											onClick={() => setConfirmDelete("game")}
+										>
+											削除
+										</button>
+									))}
+							</div>
+						</form>
+
+						<h2>Category Mappings</h2>
+						{gameSession.baseline === null ? (
+							<p className='muted'>先にGame Mappingを保存してください。</p>
 						) : (
-							<p className='muted'>Goalを選択するか新規作成してください。</p>
+							<>
+								<ul className='list horizontal'>
+									{gameCategories.map((record) => (
+										<li key={record.mapping.racetime.goal}>
+											<button
+												type='button'
+												disabled={busy}
+												className={
+													categorySession?.draft.racetime.goal ===
+														record.mapping.racetime.goal &&
+													categorySession?.draft.racetime.categorySlug ===
+														record.mapping.racetime.categorySlug
+														? "active"
+														: ""
+												}
+												onClick={() => selectCategory(record)}
+											>
+												<strong>{record.mapping.racetime.goal}</strong>
+												<small>{record.mapping.speedrunCom.categoryName}</small>
+											</button>
+										</li>
+									))}
+									<li>
+										<button
+											type='button'
+											disabled={busy}
+											onClick={() => selectCategory(null)}
+										>
+											＋ 新規 Goal
+										</button>
+									</li>
+								</ul>
+								{categorySession ? (
+									<>
+										{categorySession.status === "conflict" && (
+											<SessionConflict
+												label='Category Mapping'
+												deleted={categorySession.conflict === null}
+												before={
+													categorySession.conflict?.mapping ??
+													blankCategory(
+														categorySession.draft.racetime.categorySlug,
+													)
+												}
+												after={categorySession.draft}
+												busy={busy}
+												onAdopt={adoptCategoryLatest}
+												onReEdit={reEditCategoryLatest}
+											/>
+										)}
+										{categorySession.status === "invalid" && (
+											<Callout tone='warning'>
+												このCategory
+												Mappingは保存先から削除されたか、Spreadsheet設定が変更されました。保存できません。再読込して選び直してください。
+											</Callout>
+										)}
+										{categorySession.comparison && (
+											<div className='subpanel'>
+												<h3>前回の編集内容（比較用・自動適用しません）</h3>
+												<DiffTable
+													before={
+														categorySession.baseline ??
+														blankCategory(
+															categorySession.draft.racetime.categorySlug,
+														)
+													}
+													after={categorySession.comparison}
+												/>
+												<div className='button-row'>
+													<button
+														type='button'
+														onClick={() =>
+															setCategorySession((session) =>
+																session
+																	? {...session, comparison: null}
+																	: session,
+															)
+														}
+													>
+														比較を閉じる
+													</button>
+												</div>
+											</div>
+										)}
+										<CategoryEditor
+											draft={categorySession.draft}
+											options={options}
+											variables={variables}
+											busy={busy}
+											dirty={categoryDirty}
+											expected={categorySession.baselineRevision}
+											confirmDelete={confirmDelete === "category"}
+											missingMandatory={missingMandatory}
+											variablesReady={variablesReady}
+											optionsReady={optionsReady}
+											blocked={categoryBlocked}
+											onField={setCategoryField}
+											onChooseCategory={chooseCategory}
+											onGoal={(goal) =>
+												setCategorySession((session) =>
+													session
+														? {
+																...session,
+																draft: {
+																	...session.draft,
+																	racetime: {
+																		...session.draft.racetime,
+																		goal,
+																	},
+																},
+															}
+														: session,
+												)
+											}
+											onSave={() => void saveCategory()}
+											onRevert={() =>
+												setCategorySession((session) =>
+													session
+														? {
+																...session,
+																draft: structuredClone(
+																	session.baseline ??
+																		blankCategory(
+																			session.draft.racetime.categorySlug,
+																		),
+																),
+															}
+														: session,
+												)
+											}
+											onDeleteRequest={() => setConfirmDelete("category")}
+											onDeleteConfirm={() => void removeCategory()}
+											onDeleteCancel={() => setConfirmDelete(null)}
+										/>
+									</>
+								) : (
+									<p className='muted'>
+										Goalを選択するか新規作成してください。
+									</p>
+								)}
+							</>
 						)}
 					</>
 				)}
@@ -944,6 +1183,56 @@ export function Mappings() {
 						</div>
 					</div>
 				</div>
+			)}
+		</div>
+	);
+}
+
+function SessionConflict({
+	label,
+	deleted,
+	before,
+	after,
+	busy,
+	onAdopt,
+	onReEdit,
+}: {
+	label: string;
+	deleted: boolean;
+	before: unknown;
+	after: unknown;
+	busy: boolean;
+	onAdopt: () => void;
+	onReEdit: () => void;
+}) {
+	return (
+		<div className='callout warning'>
+			<p>
+				{deleted
+					? `${label}は保存先から削除されています。最新状態を採用するか、最新状態から再編集してください。`
+					: "他の変更と競合しました。最新状態を採用するか、最新状態から再編集してください。"}
+			</p>
+			<div className='button-row'>
+				<button
+					type='button'
+					disabled={busy}
+					onClick={onAdopt}
+				>
+					最新状態を採用
+				</button>
+				<button
+					type='button'
+					disabled={busy || deleted}
+					onClick={onReEdit}
+				>
+					最新状態から再編集
+				</button>
+			</div>
+			{!deleted && (
+				<DiffTable
+					before={before}
+					after={after}
+				/>
 			)}
 		</div>
 	);

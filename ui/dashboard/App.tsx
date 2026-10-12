@@ -6,7 +6,7 @@ import {Overview} from "./components/Overview";
 import {Settings} from "./components/Settings";
 import {usePlayerManagerStatus} from "./hooks/use-player-manager-status";
 import {useReplicant} from "./hooks/use-replicant";
-import {statusTone} from "./model/status";
+import type {EditorState} from "./model/editor";
 
 const PLAYER_MANAGER_LABELS = {
 	ready: "Ready",
@@ -30,13 +30,42 @@ const TABS: ReadonlyArray<{id: Tab; label: string}> = [
 	{id: "settings", label: "Settings"},
 ];
 
+const IDLE_EDITOR: EditorState = {dirty: false, busy: false};
+
 export function App() {
 	const [tab, setTab] = useState<Tab>("overview");
+	const [editorState, setEditorState] = useState<EditorState>(IDLE_EDITOR);
+	const [confirmTab, setConfirmTab] = useState<Tab | null>(null);
 	const races = useReplicant<RacesState>(RACES_REPLICANT);
 	const playerManager = usePlayerManagerStatus();
-	const state = races.ready ? (races.value ? "ready" : "idle") : "loading";
 	const playerManagerMessage =
 		"message" in playerManager ? playerManager.message : undefined;
+
+	const raceCount = races.value?.races.length ?? 0;
+	const racesState = !races.ready
+		? "Loading"
+		: raceCount > 0
+			? "Monitoring"
+			: "Idle";
+	const racesTone = !races.ready
+		? "progress"
+		: raceCount > 0
+			? "success"
+			: "neutral";
+
+	const switchTab = (next: Tab) => {
+		setEditorState(IDLE_EDITOR);
+		setTab(next);
+	};
+
+	const requestTab = (next: Tab) => {
+		if (next === tab || editorState.busy) return;
+		if (editorState.dirty) {
+			setConfirmTab(next);
+			return;
+		}
+		switchTab(next);
+	};
 
 	return (
 		<div className='app'>
@@ -48,12 +77,12 @@ export function App() {
 				<div className='statusbar'>
 					<Badge
 						label='races'
-						state={state}
-						tone={statusTone(state)}
+						state={racesState}
+						tone={racesTone}
 					/>
 					<Badge
 						label='監視中'
-						state={`${races.value?.races.length ?? 0}`}
+						state={`${raceCount}`}
 						tone='neutral'
 					/>
 					<Badge
@@ -70,7 +99,8 @@ export function App() {
 						key={item.id}
 						type='button'
 						className={tab === item.id ? "active" : ""}
-						onClick={() => setTab(item.id)}
+						disabled={editorState.busy}
+						onClick={() => requestTab(item.id)}
 					>
 						{item.label}
 					</button>
@@ -78,9 +108,34 @@ export function App() {
 			</nav>
 			<main>
 				{tab === "overview" && <Overview races={races.value} />}
-				{tab === "mappings" && <Mappings />}
-				{tab === "settings" && <Settings />}
+				{tab === "mappings" && <Mappings onStateChange={setEditorState} />}
+				{tab === "settings" && <Settings onStateChange={setEditorState} />}
 			</main>
+			{confirmTab && (
+				<div className='dialog-backdrop'>
+					<div className='dialog'>
+						<p>未保存の変更があります。破棄して移動しますか？</p>
+						<div className='button-row'>
+							<button
+								type='button'
+								onClick={() => {
+									const next = confirmTab;
+									setConfirmTab(null);
+									switchTab(next);
+								}}
+							>
+								破棄して移動
+							</button>
+							<button
+								type='button'
+								onClick={() => setConfirmTab(null)}
+							>
+								キャンセル
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }
