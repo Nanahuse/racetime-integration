@@ -15,6 +15,12 @@ pnpm test
 
 `pnpm test` はプロトコルとNodeCG拡張をビルドして境界テストを実行します。`pnpm dev` は拡張の変更を監視してビルドします。NodeCGの再起動は別途行ってください。
 
+## CIとバージョン管理
+
+Player Managerと同じ構成で、PRとmainへのpush時に`Check`を実行します。Node.js 24 / pnpm 12.9.1とpnpmキャッシュを使い、固定lockfileでのインストール、バージョン検証、型チェック、lint、テスト、ビルドを行います。
+
+ルートとProtocolのpackage.jsonは同じ`MAJOR.MINOR.PATCH`に揃えて更新してください。パッケージ版と公開APIの`API_VERSION`は別に管理します。mainへのpushで`Check`が成功すると、`Tag`がそのコミットのバージョンで注釈付きタグ`vX.Y.Z`を作成します。既存タグやmainが先へ進んだ実行はスキップし、最新リリースタグ以下の新規バージョンは拒否します。
+
 ## NodeCGへの配置
 
 NodeCGの `bundles/racetime-integration` に配置して `pnpm install --frozen-lockfile`、`pnpm build` を実行します。同じNodeCGに `player-manager` >=2.2.1 <3 を配置してください。bundleDependenciesで読込み順を指定しています。

@@ -13,7 +13,7 @@
 		"dev": "pnpm build && node scripts/build.mjs --watch",
 		"start": "nodecg start",
 		"typecheck": "pnpm --filter @nanahuse/racetime-protocol build && tsc --noEmit",
-		"test": "pnpm build && vitest run",
+		"test": "pnpm build && vitest run --dir test",
 		"lint": "biome check .",
 		"format": "biome check --write ."
 	},
