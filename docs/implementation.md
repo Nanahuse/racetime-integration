@@ -1,22 +1,22 @@
-# v2実装と検証
+# v3実装と検証
 
-調査基点はracetime-integration mainの4db1cdf。PR #1のレビューを反映し、Player Manager 3.0.0 / Protocol v3（タグ `v3.0.0`）に接続する。racetime-integration自身の公開Protocolは `v2` のままとし、Player Manager Protocol v3とは独立して扱う。v2ではマッピングモデルを分割し、Dashboardを追加した。
+調査基点はracetime-integration mainの4db1cdf。PR #1のレビューを反映し、Player Manager 3.0.0 / Protocol v3（タグ `v3.0.0`）に接続する。racetime-integration自身の公開Protocolは `v3` とし、Player Manager Protocol v3とは独立して扱う。v2ではマッピングモデルを分割し、Dashboardを追加した。v3では単発取得でもPlayer解決を行う。
 
 ## 責務と公開契約
 
 - RaceTime: HTTP取得、WebSocket通知での再取得、再接続、レースIDと結果の正規化。
-- RaceService: URLごとの共有監視、初回成功後の購読成立、失敗時の解放、Player解決とRevision管理。
+- RaceService: 単発取得のHTTP取得・Player解決、URLごとの共有監視、初回成功後の購読成立、失敗時の解放、Revision管理。
 - Player Manager: 公開 `list` でDirectoryを取得し、Playerに属するRaceTime Account（`service === "racetime"`、`identity.userId`）をPrimary/Secondaryの区別なく検索する。`find` は使わない。RaceTime側でPlayerを作成・更新せず、公開 `resolveDisplayName` で表示名を確定し、`player-manager.v3.directoryChanged` で再解決する。
 - Game Mappings: RaceTimeゲーム（categorySlugが一意キー）とSRCゲームをGameMappingsシートで対応付ける。
 - Category Mappings: RaceTime Goal（categorySlug + goalが一意キー）をSRCカテゴリへCategoryMappingsシートで対応付ける。親Game Mappingを必須とし、SRC Game ID/Nameを重複保存しない。
 - 親子整合性: 親の無いCategory登録、子の有る親のSRCゲーム変更・削除、親のSRCゲームに属さないSRCカテゴリをサーバー側で拒否する。
 - 統合参照: resolveCategoryMappingでGame MappingとCategory Mappingを結合し、未登録（unregistered）と不整合（inconsistent）を区別して返す。
 - Speedrun.com: 手動選択用にゲーム・カテゴリ・Level・Variables・Platform・Region・Timing Methodを検索・取得する。PB/WR/Leaderboardは含めない。
-- Protocol: 上記契約の型・定数・メッセージ名。ESM/CommonJSを提供。API_VERSIONは2、MESSAGE_PREFIXはracetime.v2。旧v1互換は提供しない。
+- Protocol: 上記契約の型・定数・メッセージ名。ESM/CommonJSを提供。API_VERSIONは3、MESSAGE_PREFIXはracetime.v3。旧バージョン互換は提供しない。
 - Spreadsheet初期化: `initializeSpreadsheet` で指定Spreadsheetへ `GameMappings`/`CategoryMappings` ワークシートを準備する。
 - Dashboard: `RaceTime Integration` パネル（fullbleed）。Overview / Mappings / Settingsを公開Protocol経由で操作し、Replicantは参照専用とする。
 
-watchRaceの成功条件は初回HTTP取得成功。WebSocket接続完了やPlayer解決完了は別の状態として公開する。接続不良を受けても既存Activeの判断に使えるRaceを返す。初回HTTP失敗時には参照も再試行も残さない。
+watchRaceの成功条件は初回HTTP取得成功。WebSocket接続完了やPlayer解決完了は別の状態として公開する。接続不良を受けても既存Activeの判断に使えるRaceを返す。初回HTTP失敗時には参照も再試行も残さない。fetchRaceは同じHTTP取得と `mapRace` 正規化で1回だけ取得し、watchRaceと同じParticipantResolverで参加者を解決して `ResolvedRace`（race / participants / resolution）を返す。watchId・WebSocket・監視セッションを生成せず、既存の監視状態やReplicantを変更しない。Player Manager取得失敗時もレース情報は保持し、参加者をunavailable・resolutionをerrorとして返す。
 
 表示レイアウト、配信への適用、Player登録UI、Speedrun.com検索・PB取得、レース履歴、RaceTimeチャット送信は含めない。nodecg-race-layouts/player-managerの変更は行わない。
 
@@ -55,15 +55,15 @@ Player Manager v3のPlayerは複数Accountを持ち、各Accountは `service` �
 ## Dashboard
 
 - `dashboardPanels` に `racetime-integration`（title `RaceTime Integration`、fullbleed）を定義し、Vite + React + TypeScriptでビルドする。出力は `dashboard/`（CIのbuildで生成）。
-- Overview: `racetime-races` Replicantから監視中レース、接続状態、参加者解決状況を表示する。URLによる単発取得はfetchRaceを使用し、watchIdは生成しない。単発取得の古い応答は世代管理で破棄する。Player Managerの登録は公開APIのbeginRegistrationで得たURLへ遷移し、編集はProtocolの `playerEditUrl` を使う。
+- Overview: `racetime-races` Replicantから監視中レース、接続状態、参加者解決状況を表示する。URLによる単発取得はfetchRaceを使用し、watchIdは生成しない。単発取得も監視と同じ参加者表示・操作（解決済み表示名、編集リンク、登録・紐付け、unavailable理由、順位・完走時間・結果ステータス）を使う。単発取得に監視用メタデータは表示しない。登録後は同じURLを再取得して最新の解決結果を反映できる。単発取得の古い応答は世代管理で破棄する。Player Managerの登録は公開APIのbeginRegistrationで得たURLへ遷移し、編集はProtocolの `playerEditUrl` を使う。
 - Mappings: 左にGame Mapping一覧・検索、右に選択ゲームの詳細とCategory Mapping一覧を表示する。SRCは手動検索・選択のみで、自動マッピング・候補提案・類似度評価は行わない。競合時は最新状態の採用／最新状態からの再編集（差分表示）を提示し、解決まで保存を禁止する。設定変更（settings_changed）は新保存先を読み込み、旧編集を自動適用しない。
 - Settings: Spreadsheet URL/ID、両シート名、接続状態、Spreadsheetリンク、保存、初期化、エラー詳細を表示する。URLはIDへ正規化する。保存（updateSettings）で両シートを検証できた場合のみ「利用可能」と表示する。初期化は未保存入力に対して実行でき、保存や `settingsRevision` を変更しない。初期化中の入力変更・保存を禁止し、入力を変更したら初期化結果表示をクリアする。Google認証情報の入力UIは設けない。
 
 ## 検証
 
-境界テストはHTTP・WebSocket、初回購読失敗、複数利用者、Player Manager v3のPrimary/Secondary解決・Account移動・削除・不正Directory・v3以外、Revision非依存のdirectoryChanged、結果正規化、Game/Category MappingのCRUD、親子整合性、Revision競合、2シートの読込・保存・列順変更・追加カラム保持、設定切替の整合性、SRC検索・選択情報、Spreadsheet初期化（数式・範囲外・空白の保護、再実行、途中失敗）、起動時Settings復旧、Dashboardと公開APIの通信・編集ロック・競合復旧、ビルド済みCommonJS拡張、ProtocolのESM/CommonJSを対象にする。
+境界テストはHTTP・WebSocket、初回購読失敗、複数利用者、単発取得でのPlayer解決（完走済み・進行中・Primary/Secondary・未登録・障害時フォールバック・RaceTime失敗・監視を開始しない・HTTP取得の重複なし・監視との解決結果一致）、Player Manager v3のPrimary/Secondary解決・Account移動・削除・不正Directory・v3以外、Revision非依存のdirectoryChanged、結果正規化、Game/Category MappingのCRUD、親子整合性、Revision競合、2シートの読込・保存・列順変更・追加カラム保持、設定切替の整合性、SRC検索・選択情報、Spreadsheet初期化（数式・範囲外・空白の保護、再実行、途中失敗）、起動時Settings復旧、Dashboardと公開APIの通信・編集ロック・競合復旧・単発取得表示、ビルド済みCommonJS拡張、ProtocolのESM/CommonJSを対象にする。
 
-`pnpm test` は12ファイル126件が成功する。typecheck / lint / buildも成功する。
+`pnpm test` は12ファイル134件が成功する。typecheck / lint / buildも成功する。
 
 未実施: 実NodeCG 2.8環境でのDashboard起動と公開APIとの実通信、実ADCによる対象Spreadsheetの読書き・初期化、実Speedrun.com API・実Player Manager v3を含む運用NodeCGでの通し確認、npmレジストリへのpublish。
 

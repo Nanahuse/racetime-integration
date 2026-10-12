@@ -32,7 +32,7 @@ beforeEach(() => {
 		data: {ready: true, error: null},
 	});
 	sendMessage.mockImplementation(async (name: string) => {
-		const operation = name.replace("racetime.v2.", "");
+		const operation = name.replace("racetime.v3.", "");
 		switch (operation) {
 			case "listGameMappings":
 				return {ok: true, data: {records: [gameRecord], settingsRevision: 0}};

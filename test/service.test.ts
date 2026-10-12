@@ -6,6 +6,7 @@ import type {
 import {afterEach, expect, it, vi} from "vitest";
 import {createAPI} from "../src/api";
 import {ParticipantResolver} from "../src/integrations/players";
+import {RaceTimeHttpError} from "../src/integrations/racetime/errors";
 import {MappingService} from "../src/mappings";
 import {RaceService} from "../src/service";
 import {deferred, dto, FakeSocket, flush, mapping, url} from "./fixtures";
@@ -474,7 +475,118 @@ it("validates new public write contracts and reports disabled Sheets without aff
 	).toMatchObject({ok: false, error: {code: "unsupported_operation"}});
 	expect(await api.request("fetchRace", {url})).toMatchObject({
 		ok: true,
-		data: {raceId: "game/race", results: [{status: "finished"}]},
+		data: {
+			race: {raceId: "game/race", results: [{status: "finished"}]},
+			resolution: {state: "ready", directoryRevision: 1},
+		},
 	});
+	service.dispose();
+});
+
+it("resolves participants for a single fetch without creating a watch or session", async () => {
+	const {service, client, sockets, publish} = setup();
+	const result = await service.fetch(url);
+	expect(client.fetchRaceDetail).toHaveBeenCalledTimes(1);
+	expect(result.race.raceId).toBe("game/race");
+	expect(result.participants[0]).toMatchObject({
+		racetimeUserId: "user1",
+		status: "matched",
+		playerId: "p1",
+	});
+	expect(result.resolution).toEqual({state: "ready", directoryRevision: 1});
+	expect(sockets).toHaveLength(0);
+	expect(service.snapshot().races).toEqual([]);
+	expect(service.getWatch("any-watch")).toBeNull();
+	expect(publish).not.toHaveBeenCalled();
+	service.dispose();
+});
+
+it("resolves in-progress races with the same participant logic as completed races", async () => {
+	const {service, client} = setup();
+	const inProgress = dto();
+	inProgress.entrants[0]!.status = "in_progress";
+	client.fetchRaceDetail.mockResolvedValueOnce(inProgress);
+	const ongoing = await service.fetch(url);
+	const finished = await service.fetch(url);
+	expect(ongoing.participants).toEqual(finished.participants);
+	expect(ongoing.resolution.state).toBe("ready");
+	expect(ongoing.race.results[0]?.status).toBe("other");
+	expect(finished.race.results[0]?.status).toBe("finished");
+});
+
+it("keeps race information and reports unavailable participants when Player Manager fails", async () => {
+	const service = new RaceService(
+		{fetchRaceDetail: vi.fn(async () => dto())},
+		() => {
+			throw new Error("a single fetch must not open a socket");
+		},
+		new ParticipantResolver(() => undefined),
+		() => {},
+	);
+	const result = await service.fetch(url);
+	expect(result.race.raceId).toBe("game/race");
+	expect(result.resolution).toEqual({state: "error", directoryRevision: null});
+	expect(result.participants[0]).toMatchObject({
+		status: "unavailable",
+		player: null,
+	});
+});
+
+it("returns an API error when the RaceTime fetch fails without touching monitoring", async () => {
+	const {service, client} = setup();
+	const mappings = new MappingService(
+		{
+			revision: 0,
+			settings: {
+				spreadsheetId: null,
+				gameMappingsSheet: "GameMappings",
+				categoryMappingsSheet: "CategoryMappings",
+			},
+		},
+		() => {},
+		() => null,
+	);
+	const api = createAPI(service, mappings, {} as never, () => {
+		throw new Error("unused");
+	});
+	client.fetchRaceDetail.mockRejectedValueOnce(
+		new RaceTimeHttpError(500, "boom"),
+	);
+	expect(await api.request("fetchRace", {url})).toMatchObject({
+		ok: false,
+		error: {code: "http_error"},
+	});
+	expect(service.snapshot().races).toEqual([]);
+	service.dispose();
+});
+
+it("produces the same resolution for watched and single-fetched races", async () => {
+	const {service} = setup();
+	const watch = await service.watch(url);
+	await flush();
+	const watched = service.get(url)!;
+	const fetched = await service.fetch(url);
+	expect(fetched.participants).toEqual(watched.participants);
+	expect(fetched.resolution).toMatchObject({
+		state: "ready",
+		directoryRevision: 1,
+	});
+	expect(fetched.race.raceId).toBe(watched.race?.raceId);
+	service.unwatch(watch.watchId);
+	service.dispose();
+});
+
+it("leaves an existing monitored race and its sockets untouched during a single fetch", async () => {
+	const {service, client, sockets, publish} = setup();
+	await service.watch(url);
+	await flush();
+	const before = service.snapshot();
+	publish.mockClear();
+	client.fetchRaceDetail.mockResolvedValueOnce(dto(2, "other"));
+	const result = await service.fetch("https://racetime.gg/game/other");
+	expect(result.race.raceId).toBe("game/other");
+	expect(sockets).toHaveLength(1);
+	expect(publish).not.toHaveBeenCalled();
+	expect(service.snapshot()).toEqual(before);
 	service.dispose();
 });

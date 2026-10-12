@@ -241,9 +241,6 @@ export function createAPI(
 				case "listRaces":
 					value = races.snapshot();
 					break;
-				case "resolveParticipants":
-					value = await races.resolve(text(data.url));
-					break;
 				case "listGameMappings":
 					value = await mappings.listGames();
 					break;

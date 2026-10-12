@@ -2,8 +2,10 @@ import type {
 	Entrant,
 	Participant,
 	Race,
+	RaceResult,
 	RaceState,
 	RacesState,
+	ResolvedRace,
 } from "@nanahuse/racetime-protocol";
 import {useRef, useState} from "react";
 import {errorMessage, request} from "../api/client";
@@ -28,6 +30,12 @@ function orderParticipants(participants: readonly Participant[]) {
 
 function entrantNames(entrants: readonly Entrant[]) {
 	return new Map(entrants.map((entrant) => [entrant.userId, entrant.name]));
+}
+
+function resultByUser(race: Race | null) {
+	const results = new Map<string, RaceResult>();
+	for (const result of race?.results ?? []) results.set(result.userId, result);
+	return results;
 }
 
 /** Fields common to a single Race, used by both monitored and fetched views. */
@@ -90,27 +98,16 @@ function MonitoredDetails({state}: {state: RaceState}) {
 	);
 }
 
-function FetchedDetails({race}: {race: Race}) {
+function FetchedDetails({resolved}: {resolved: ResolvedRace}) {
 	return (
 		<div className='subpanel'>
-			<RaceFields race={race} />
-			<p className='muted'>
-				単発取得の結果です（watchIdなし・Player解決なし）。
-			</p>
+			<RaceFields race={resolved.race} />
+			{resolved.resolution.state === "error" && (
+				<Callout tone='error'>
+					参加者の解決に失敗しました。Player Managerを確認してください。
+				</Callout>
+			)}
 		</div>
-	);
-}
-
-function Entrants({entrants}: {entrants: readonly Entrant[]}) {
-	return (
-		<ul className='list'>
-			{entrants.map((entrant) => (
-				<li key={entrant.userId}>
-					<strong>{entrant.name}</strong>
-					<small>{entrant.userId}</small>
-				</li>
-			))}
-		</ul>
 	);
 }
 
@@ -146,16 +143,21 @@ function ParticipantActions({
 
 function Participants({
 	participants,
-	entrants,
+	race,
 	onRegister,
 }: {
 	participants: readonly Participant[];
-	entrants: readonly Entrant[];
+	race: Race | null;
 	onRegister: (participant: Participant) => void;
 }) {
 	if (participants.length === 0)
-		return <p className='muted'>参加者はまだ解決されていません。</p>;
-	const names = entrantNames(entrants);
+		return race && race.entrants.length === 0 ? (
+			<p className='muted'>参加者はいません。</p>
+		) : (
+			<p className='muted'>参加者はまだ解決されていません。</p>
+		);
+	const names = entrantNames(race?.entrants ?? []);
+	const results = resultByUser(race);
 	return (
 		<table className='participants'>
 			<thead>
@@ -163,52 +165,67 @@ function Participants({
 					<th>RaceTime</th>
 					<th>Player</th>
 					<th>SRC / Twitch</th>
+					<th>結果</th>
 					<th>状態</th>
 					<th />
 				</tr>
 			</thead>
 			<tbody>
-				{participants.map((participant) => (
-					<tr
-						key={participant.racetimeUserId}
-						className={participant.status}
-					>
-						<td>
-							<div>
-								{names.get(participant.racetimeUserId) ??
-									participant.player?.racetime?.name ??
-									"—"}
-							</div>
-							<small>{participant.racetimeUserId}</small>
-						</td>
-						<td>
-							{participant.player ? (
-								<>
-									<div>{participant.player.displayName}</div>
-									<small>{participant.playerId}</small>
-								</>
-							) : (
-								<span className='muted'>—</span>
-							)}
-						</td>
-						<td>
-							<div>SRC: {participant.player?.speedrunCom?.name ?? "—"}</div>
-							<div>Twitch: {participant.player?.twitch?.login ?? "—"}</div>
-						</td>
-						<td>
-							<span className={`badge ${participant.status}`}>
-								{participant.status}
-							</span>
-							{participant.message && <small>{participant.message}</small>}
-						</td>
-						<td>
-							<ParticipantActions
-								participant={participant}
-								onRegister={onRegister}
-							/>
-						</td>
-					</tr>
-				))}
+				{participants.map((participant) => {
+					const result = results.get(participant.racetimeUserId);
+					return (
+						<tr
+							key={participant.racetimeUserId}
+							className={participant.status}
+						>
+							<td>
+								<div>
+									{names.get(participant.racetimeUserId) ??
+										participant.player?.racetime?.name ??
+										"—"}
+								</div>
+								<small>{participant.racetimeUserId}</small>
+							</td>
+							<td>
+								{participant.player ? (
+									<>
+										<div>{participant.player.displayName}</div>
+										<small>{participant.playerId}</small>
+									</>
+								) : (
+									<span className='muted'>—</span>
+								)}
+							</td>
+							<td>
+								<div>SRC: {participant.player?.speedrunCom?.name ?? "—"}</div>
+								<div>Twitch: {participant.player?.twitch?.login ?? "—"}</div>
+							</td>
+							<td>
+								{result ? (
+									<>
+										<div>{result.place ?? "—"}位</div>
+										<div>{result.time ?? "—"}</div>
+										<small>{result.status}</small>
+									</>
+								) : (
+									<span className='muted'>—</span>
+								)}
+							</td>
+							<td>
+								<span className={`badge ${participant.status}`}>
+									{participant.status}
+								</span>
+								{participant.message && <small>{participant.message}</small>}
+							</td>
+							<td>
+								<ParticipantActions
+									participant={participant}
+									onRegister={onRegister}
+								/>
+							</td>
+						</tr>
+					);
+				})}
 			</tbody>
 		</table>
 	);
@@ -217,7 +234,7 @@ function Participants({
 export function Overview({races}: {races: RacesState | undefined}) {
 	const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
 	const [urlInput, setUrlInput] = useState("");
-	const [fetched, setFetched] = useState<Race | null>(null);
+	const [fetched, setFetched] = useState<ResolvedRace | null>(null);
 	const [registrationUrl, setRegistrationUrl] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -237,15 +254,15 @@ export function Overview({races}: {races: RacesState | undefined}) {
 		setBusy(false);
 	};
 
-	const runFetch = async () => {
+	const loadFetch = async (url: string, clearRegistration = true) => {
 		const gen = ++fetchGen.current;
 		setBusy(true);
 		setError(null);
-		setRegistrationUrl(null);
+		if (clearRegistration) setRegistrationUrl(null);
 		try {
-			const race = await request("fetchRace", {url: urlInput.trim()});
+			const resolved = await request("fetchRace", {url});
 			if (gen !== fetchGen.current) return;
-			setFetched(race);
+			setFetched(resolved);
 			setSelectedUrl(null);
 		} catch (cause) {
 			if (gen !== fetchGen.current) return;
@@ -263,6 +280,7 @@ export function Overview({races}: {races: RacesState | undefined}) {
 			const session = await beginRegistration(participant.racetimeUserId);
 			setRegistrationUrl(session.url);
 			window.open(session.url, "_blank", "noopener,noreferrer");
+			if (fetched) await loadFetch(fetched.race.url, false);
 		} catch (cause) {
 			setError(errorMessage(cause));
 		} finally {
@@ -305,7 +323,7 @@ export function Overview({races}: {races: RacesState | undefined}) {
 						<button
 							type='button'
 							disabled={busy || urlInput.trim() === ""}
-							onClick={() => void runFetch()}
+							onClick={() => void loadFetch(urlInput.trim())}
 						>
 							{busy ? "取得中…" : "取得"}
 						</button>
@@ -335,19 +353,28 @@ export function Overview({races}: {races: RacesState | undefined}) {
 						<h3>参加者</h3>
 						<Participants
 							participants={orderParticipants(monitored.participants)}
-							entrants={monitored.race?.entrants ?? []}
+							race={monitored.race}
 							onRegister={(participant) => void register(participant)}
 						/>
 					</>
 				) : fetched ? (
 					<>
-						<FetchedDetails race={fetched} />
+						<FetchedDetails resolved={fetched} />
 						<h3>参加者</h3>
-						{fetched.entrants.length > 0 ? (
-							<Entrants entrants={fetched.entrants} />
-						) : (
-							<p className='muted'>参加者はいません。</p>
-						)}
+						<Participants
+							participants={orderParticipants(fetched.participants)}
+							race={fetched.race}
+							onRegister={(participant) => void register(participant)}
+						/>
+						<div className='formrow'>
+							<button
+								type='button'
+								disabled={busy}
+								onClick={() => void loadFetch(fetched.race.url)}
+							>
+								{busy ? "取得中…" : "再取得"}
+							</button>
+						</div>
 					</>
 				) : (
 					<p className='muted'>レースを選択するかURLで取得してください。</p>

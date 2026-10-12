@@ -1,9 +1,9 @@
 import {randomUUID} from "node:crypto";
 import type {
-	Participant,
 	Race,
 	RaceState,
 	RacesState,
+	ResolvedRace,
 } from "@nanahuse/racetime-protocol";
 import type {ParticipantResolver} from "./integrations/players";
 import type {RaceTimeClient} from "./integrations/racetime/client";
@@ -53,12 +53,21 @@ export class RaceService {
 		const url = this.watches.get(watchId);
 		return url ? this.get(url) : null;
 	}
-	async fetch(url: string): Promise<Race> {
+	async fetch(url: string): Promise<ResolvedRace> {
 		const canonical = canonicalizeRaceUrl(url);
-		return mapRace(
+		const race = mapRace(
 			await this.client.fetchRaceDetail(canonical),
 			canonical.canonicalUrl,
 		);
+		const result = await this.players.resolve(race.entrants);
+		return {
+			race,
+			participants: result.participants,
+			resolution: {
+				state: result.directoryRevision === null ? "error" : "ready",
+				directoryRevision: result.directoryRevision,
+			},
+		};
 	}
 
 	async watch(
@@ -136,19 +145,6 @@ export class RaceService {
 			}
 		}
 		return true;
-	}
-
-	async resolve(url: string): Promise<Participant[]> {
-		const canonical = canonicalizeRaceUrl(url);
-		const session = this.sessions.get(canonical.canonicalUrl);
-		if (!session)
-			return (await this.players.resolve((await this.fetch(url)).entrants))
-				.participants;
-		await session.ready;
-		if (this.sessions.get(canonical.canonicalUrl) !== session)
-			throw new RaceTimeAbortedError("Watch released before resolution");
-		await this.requestResolution(session);
-		return structuredClone(session.state.participants);
 	}
 
 	directoryChanged(revision: number): void {
