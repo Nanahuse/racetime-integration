@@ -4,7 +4,7 @@
 	"private": true,
 	"description": "Shared RaceTime monitoring and category mappings for NodeCG",
 	"license": "Apache-2.0",
-	"packageManager": "pnpm@11.19.0",
+	"packageManager": "pnpm@12.9.1",
 	"engines": {
 		"node": ">=24"
 	},
@@ -20,17 +20,17 @@
 	"nodecg": {
 		"compatibleRange": "^2.8.0",
 		"bundleDependencies": {
-			"player-manager": "^1.0.1"
+			"player-manager": "^2.2.1"
 		}
 	},
 	"dependencies": {
 		"@nanahuse/racetime-protocol": "workspace:*",
 		"@googleapis/sheets": "^18.0.0",
-		"google-auth-library": "^11.1.0"
+		"google-auth-library": "^11.1.0",
+		"@nanahuse/player-manager-protocol": "github:Nanahuse/player-manager#85ef6e5f78503f443b61627fc08c4a9675850cb0&path:/packages/player-manager-protocol"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.12",
-		"@nanahuse/player-manager-protocol": "github:Nanahuse/player-manager#v1.0.1&path:/packages/player-manager-protocol",
 		"@nodecg/types": "^2.8.0",
 		"@types/node": "^24.13.6",
 		"esbuild": "^0.27.0",

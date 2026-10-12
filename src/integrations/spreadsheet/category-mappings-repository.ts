@@ -1,5 +1,7 @@
 // Adapted and modified from Nanahuse/nodecg-race-layouts (Apache-2.0).
-import type {CategoryMapping} from "@nanahuse/racetime-protocol";
+import {createHash} from "node:crypto";
+import type {CategoryMapping, MappingRecord} from "@nanahuse/racetime-protocol";
+import {IntegrationError} from "../../errors";
 import {
 	CATEGORY_MAPPING_ROW_ISSUE_CODES,
 	CATEGORY_MAPPING_SHEET_COLUMNS,
@@ -21,8 +23,17 @@ import {type SheetIssue, SheetValidationError} from "./errors";
 import {buildColumnMap, type ColumnMap, valuesToRawRow} from "./sheet-columns";
 
 export interface CategoryMappingsRepository {
-	find(categorySlug: string, goal: string): Promise<CategoryMapping | null>;
-	upsert(mapping: CategoryMapping): Promise<void>;
+	find(categorySlug: string, goal: string): Promise<MappingRecord | null>;
+	list(): Promise<MappingRecord[]>;
+	save(
+		mapping: CategoryMapping,
+		expectedRevision: string | null,
+	): Promise<{record: MappingRecord; action: "created" | "updated"}>;
+	delete(
+		categorySlug: string,
+		goal: string,
+		expectedRevision: string,
+	): Promise<void>;
 }
 
 export type SpreadsheetCategoryMappingsRepositoryOptions = {
@@ -33,6 +44,7 @@ export type SpreadsheetCategoryMappingsRepositoryOptions = {
 type CategoryMappingEntry = {
 	rowNumber: number;
 	mapping: CategoryMapping;
+	revision: string;
 };
 
 type ParsedCategoryMappingsSheet = {
@@ -65,7 +77,7 @@ function positionRow(
 export class SpreadsheetCategoryMappingsRepository
 	implements CategoryMappingsRepository
 {
-	private writes: Promise<void> = Promise.resolve();
+	private writes: Promise<unknown> = Promise.resolve();
 	private readonly client: SpreadsheetClient;
 	private readonly sheetName: string;
 	private readonly now: () => Date;
@@ -82,7 +94,7 @@ export class SpreadsheetCategoryMappingsRepository
 	async find(
 		categorySlug: string,
 		goal: string,
-	): Promise<CategoryMapping | null> {
+	): Promise<MappingRecord | null> {
 		const values = await this.client.readValues(sheetReadRange(this.sheetName));
 		const parsed = this.parse(values);
 		const key = mappingKey(categorySlug, goal);
@@ -93,17 +105,60 @@ export class SpreadsheetCategoryMappingsRepository
 					candidate.mapping.racetime.goal,
 				) === key,
 		);
-		return entry?.mapping ?? null;
+		return entry ? {mapping: entry.mapping, revision: entry.revision} : null;
 	}
 
-	upsert(mapping: CategoryMapping): Promise<void> {
-		const snapshot = structuredClone(mapping);
-		const write = this.writes.then(() => this.write(snapshot));
+	async list(): Promise<MappingRecord[]> {
+		return this.parse(
+			await this.client.readValues(sheetReadRange(this.sheetName)),
+		).entries.map(({mapping, revision}) => ({mapping, revision}));
+	}
+	private serialize<T>(operation: () => Promise<T>): Promise<T> {
+		const write = this.writes.then(operation);
 		this.writes = write.catch(() => {});
 		return write;
 	}
+	save(
+		mapping: CategoryMapping,
+		expectedRevision: string | null,
+	): Promise<{record: MappingRecord; action: "created" | "updated"}> {
+		const snapshot = structuredClone(mapping);
+		return this.serialize(() => this.write(snapshot, expectedRevision));
+	}
 
-	private async write(mapping: CategoryMapping): Promise<void> {
+	delete(
+		categorySlug: string,
+		goal: string,
+		expectedRevision: string,
+	): Promise<void> {
+		return this.serialize(async () => {
+			const parsed = this.parse(
+				await this.client.readValues(sheetReadRange(this.sheetName)),
+			);
+			const entry = parsed.entries.find(
+				(item) =>
+					mappingKey(
+						item.mapping.racetime.categorySlug,
+						item.mapping.racetime.goal,
+					) === mappingKey(categorySlug, goal),
+			);
+			if (!entry || entry.revision !== expectedRevision)
+				throw new IntegrationError(
+					"mapping_conflict",
+					"Mapping changed or was deleted; reload before deleting",
+				);
+			await this.client.updateValues(
+				CATEGORY_MAPPING_SHEET_COLUMNS.map((column) => ({
+					range: `${quoteSheetName(this.sheetName)}!${columnLetter(parsed.map[column])}${entry.rowNumber}`,
+					values: [[""]],
+				})),
+			);
+		});
+	}
+	private async write(
+		mapping: CategoryMapping,
+		expectedRevision: string | null,
+	): Promise<{record: MappingRecord; action: "created" | "updated"}> {
 		const incomingIssues = validateCategoryMapping(mapping);
 		if (incomingIssues.length > 0) {
 			throw new SheetValidationError(
@@ -131,6 +186,12 @@ export class SpreadsheetCategoryMappingsRepository
 					candidate.mapping.racetime.goal,
 				) === key,
 		);
+		if ((existing?.revision ?? null) !== expectedRevision)
+			throw new IntegrationError(
+				"mapping_conflict",
+				"Mapping changed or already exists; reload before saving",
+			);
+		const record = {mapping, revision: rowRevision(row)};
 
 		if (existing) {
 			await this.client.updateValues(
@@ -139,12 +200,13 @@ export class SpreadsheetCategoryMappingsRepository
 					values: [[row[column]]],
 				})),
 			);
-			return;
+			return {record, action: "updated"};
 		}
 
 		await this.client.appendValues(sheetAppendRange(this.sheetName), [
 			positionRow(row, parsed.map, parsed.columnCount),
 		]);
+		return {record, action: "created"};
 	}
 
 	private parse(values: SpreadsheetValues): ParsedCategoryMappingsSheet {
@@ -173,6 +235,7 @@ export class SpreadsheetCategoryMappingsRepository
 				map,
 				CATEGORY_MAPPING_SHEET_COLUMNS,
 			);
+			if (isBlankRow(Object.values(row))) continue;
 			const conversion = categoryMappingSheetRowToMapping(row);
 			if (!conversion.ok) {
 				for (const issue of conversion.issues) {
@@ -199,7 +262,11 @@ export class SpreadsheetCategoryMappingsRepository
 				continue;
 			}
 			seenKeys.set(key, rowNumber);
-			entries.push({rowNumber, mapping: conversion.mapping});
+			entries.push({
+				rowNumber,
+				mapping: conversion.mapping,
+				revision: rowRevision(row),
+			});
 		}
 
 		if (issues.length > 0) {
@@ -212,4 +279,14 @@ export class SpreadsheetCategoryMappingsRepository
 			entries,
 		};
 	}
+}
+
+function rowRevision(row: CategoryMappingSheetRow): string {
+	return createHash("sha256")
+		.update(
+			JSON.stringify(
+				CATEGORY_MAPPING_SHEET_COLUMNS.map((column) => row[column]),
+			),
+		)
+		.digest("hex");
 }

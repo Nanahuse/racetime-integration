@@ -3,6 +3,7 @@ import {
 	HttpRaceTimeClient,
 	parseRaceDetail,
 } from "../src/integrations/racetime/client";
+import {mapRace} from "../src/integrations/racetime/mapper";
 import {
 	canonicalizeRaceUrl,
 	resolveWebSocketUrl,
@@ -11,6 +12,26 @@ import {RaceWatcher} from "../src/integrations/racetime/watcher";
 import {deferred, dto, FakeSocket, flush, payload, url} from "./fixtures";
 
 afterEach(() => vi.useRealTimers());
+it("normalizes result status and preserves canonical race identity, rank and time", () => {
+	const raw = dto();
+	raw.entrants = ["done", "dnf", "dq", "in_progress", "future_status"].map(
+		(status, i) => ({...raw.entrants[0]!, userId: `user${i}`, status}),
+	);
+	const race = mapRace(raw, url);
+	expect(race.raceId).toBe("game/race");
+	expect(race.results.map((r) => r.status)).toEqual([
+		"finished",
+		"dnf",
+		"dq",
+		"other",
+		"other",
+	]);
+	expect(race.results[0]).toMatchObject({
+		userId: "user0",
+		place: 1,
+		time: "PT1H2M3.45S",
+	});
+});
 describe("HTTP boundary", () => {
 	it("fetches the canonical data URL and maps the provider payload", async () => {
 		const fetchImpl = vi
@@ -131,7 +152,7 @@ describe("WebSocket monitoring", () => {
 	};
 	it("refreshes after open, coalesces race.data, and ignores chat/malformed messages", async () => {
 		const {watcher, sockets, client} = setup();
-		watcher.start();
+		await watcher.start();
 		await flush();
 		sockets[0]!.open();
 		await flush();
@@ -152,16 +173,18 @@ describe("WebSocket monitoring", () => {
 		watcher.stop();
 		expect(vi.getTimerCount()).toBe(0);
 	});
-	it("backs off on initial HTTP failure, socket errors, and handshake timeout", async () => {
+	it("rejects initial HTTP failure without scheduling reconnect", async () => {
 		const {watcher, sockets, client} = setup();
 		client.fetchRaceDetail.mockRejectedValueOnce(new Error("offline"));
-		watcher.start();
-		await flush();
-		expect(watcher.snapshot().connection).toBe("reconnecting");
-		await vi.advanceTimersByTimeAsync(10);
-		expect(sockets).toHaveLength(1);
+		await expect(watcher.start()).rejects.toThrow("offline");
+		expect(sockets).toHaveLength(0);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+	it("backs off on socket errors and handshake timeout after initial success", async () => {
+		const {watcher, sockets} = setup();
+		await watcher.start();
 		sockets[0]!.fail();
-		await vi.advanceTimersByTimeAsync(19);
+		await vi.advanceTimersByTimeAsync(9);
 		expect(sockets).toHaveLength(1);
 		await vi.advanceTimersByTimeAsync(1);
 		expect(sockets).toHaveLength(2);
@@ -173,7 +196,7 @@ describe("WebSocket monitoring", () => {
 	});
 	it("retains the last good snapshot and retries a failed refresh", async () => {
 		const {watcher, sockets, client} = setup();
-		watcher.start();
+		await watcher.start();
 		await flush();
 		sockets[0]!.open();
 		await flush();
@@ -191,7 +214,7 @@ describe("WebSocket monitoring", () => {
 	});
 	it("discards responses from a disconnected socket epoch and after stop", async () => {
 		const {watcher, sockets, client, onUpdate} = setup();
-		watcher.start();
+		await watcher.start();
 		await flush();
 		sockets[0]!.open();
 		await flush();

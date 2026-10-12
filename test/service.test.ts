@@ -1,96 +1,121 @@
-import type {
-	PlayerManagerAPI,
-	Resolution,
-} from "@nanahuse/player-manager-protocol";
+import type {Player, PlayerManagerAPI} from "@nanahuse/player-manager-protocol";
 import {afterEach, expect, it, vi} from "vitest";
 import {createAPI} from "../src/api";
 import {ParticipantResolver} from "../src/integrations/players";
+import {MappingService} from "../src/mappings";
 import {RaceService} from "../src/service";
 import {deferred, dto, FakeSocket, flush, mapping, url} from "./fixtures";
 
 afterEach(() => vi.useRealTimers());
-const resolution = (status: Resolution["status"] = "matched"): Resolution => ({
-	status,
+const player = (name = "Runner", revision = 1): Player => ({
 	playerId: "p1",
-	candidates: [{type: "player", playerId: "p1"}],
-	message: "Resolved",
-	warnings: [],
-	input: {
-		manualDisplayName: null,
-		racetime: null,
-		speedrunCom: null,
-		twitch: null,
-	},
+	revision,
+	manualDisplayName: name,
+	racetime: {userId: "user1", name: "RaceTime name"},
+	speedrunCom: null,
+	twitch: null,
+	youtube: null,
 });
-const playerAPI = (request: ReturnType<typeof vi.fn>) =>
-	({
-		apiVersion: 1,
+function playerAPI() {
+	const directory = {revision: 1, player: player() as Player | null};
+	const request = vi.fn(async (op: string) => ({
+		ok: true,
+		data:
+			op === "list"
+				? {
+						schemaVersion: 1,
+						revision: directory.revision,
+						players: directory.player ? [directory.player] : [],
+					}
+				: structuredClone(directory.player),
+	}));
+	const api = {
+		apiVersion: 2,
 		ready: Promise.resolve(),
 		request,
-	}) as unknown as PlayerManagerAPI;
+	} as unknown as PlayerManagerAPI;
+	return {api, request, directory};
+}
 
-it("delegates identity resolution to the public Player Manager API without mutation", async () => {
-	const request = vi.fn().mockResolvedValue({ok: true, data: resolution()});
-	const resolver = new ParticipantResolver(() => playerAPI(request));
-	expect(await resolver.resolve(dto().entrants)).toEqual([
-		expect.objectContaining({
-			racetimeUserId: "user1",
-			status: "matched",
-			playerId: "p1",
-		}),
+it("uses v2 find with the RaceTime ID and publishes a display-ready Player snapshot", async () => {
+	const {api, request} = playerAPI();
+	const result = await new ParticipantResolver(() => api).resolve(
+		dto().entrants,
+	);
+	expect(result.directoryRevision).toBe(1);
+	expect(result.participants[0]).toMatchObject({
+		status: "matched",
+		playerId: "p1",
+		player: {displayName: "Runner", revision: 1},
+	});
+	expect(request.mock.calls).toContainEqual([
+		"find",
+		{provider: "racetime", value: "user1"},
 	]);
-	expect(request).toHaveBeenCalledExactlyOnceWith("resolve", {
-		input: {
-			racetime: {userId: "user1", name: "Runner", twitchLogin: "runner"},
-			twitch: {login: "runner"},
-		},
-	});
+	expect(
+		request.mock.calls.every(([op]) => op === "find" || op === "list"),
+	).toBe(true);
 });
-it.each(["unresolved", "ambiguous", "conflict"] as const)(
-	"preserves %s and never guesses a player",
-	async (status) => {
-		const resolver = new ParticipantResolver(() =>
-			playerAPI(
-				vi.fn().mockResolvedValue({ok: true, data: resolution(status)}),
-			),
-		);
-		expect(await resolver.resolve(dto().entrants)).toEqual([
-			expect.objectContaining({status, playerId: null}),
-		]);
-	},
-);
-it("represents dependency failure and timeout separately from unmatched players", async () => {
-	const resolver = new ParticipantResolver(() => undefined);
-	expect((await resolver.resolve(dto().entrants))[0]?.status).toBe(
-		"unavailable",
-	);
-	const failed = new ParticipantResolver(() =>
-		playerAPI(
-			vi.fn().mockResolvedValue({ok: false, error: {message: "offline"}}),
-		),
-	);
-	expect((await failed.resolve(dto().entrants))[0]).toMatchObject({
-		status: "unavailable",
-		message: "offline",
-	});
+it("distinguishes unmatched accounts, v1 API incompatibility, directory failures and timeout", async () => {
+	const {api, directory} = playerAPI();
+	directory.player = null;
+	expect(
+		(await new ParticipantResolver(() => api).resolve(dto().entrants))
+			.participants[0]?.status,
+	).toBe("unresolved");
+	expect(
+		(
+			await new ParticipantResolver(
+				() => ({...api, apiVersion: 1}) as never,
+			).resolve(dto().entrants)
+		).participants[0]?.status,
+	).toBe("unavailable");
+	const bad = {
+		...api,
+		request: vi
+			.fn()
+			.mockResolvedValue({ok: false, error: {message: "offline"}}),
+	} as PlayerManagerAPI;
+	expect(
+		(await new ParticipantResolver(() => bad).resolve(dto().entrants))
+			.participants[0],
+	).toMatchObject({status: "unavailable", message: "offline"});
 	vi.useFakeTimers();
-	const stalled = new ParticipantResolver(
-		() => playerAPI(vi.fn().mockReturnValue(new Promise(() => {}))),
-		10,
+	const wait = deferred<void>();
+	const pendingAPI = {...api, ready: wait.promise};
+	const pending = new ParticipantResolver(() => pendingAPI, 10).resolve(
+		dto().entrants,
 	);
-	const pending = stalled.resolve(dto().entrants);
 	await vi.advanceTimersByTimeAsync(10);
-	expect((await pending)[0]).toMatchObject({
+	expect((await pending).participants[0]).toMatchObject({
 		status: "unavailable",
 		message: "Player Manager timed out",
 	});
 });
-
+it("retries the entire find batch if the directory changes during resolution", async () => {
+	const {api, request, directory} = playerAPI();
+	const original = request.getMockImplementation()!;
+	let change = true;
+	request.mockImplementation(async (op) => {
+		const result = await original(op);
+		if (op === "find" && change) {
+			change = false;
+			directory.revision = 2;
+			directory.player = player("Renamed", 2);
+		}
+		return result;
+	});
+	const result = await new ParticipantResolver(() => api).resolve(
+		dto().entrants,
+	);
+	expect(result.directoryRevision).toBe(2);
+	expect(result.participants[0]?.player?.displayName).toBe("Renamed");
+});
 function setup() {
 	vi.useFakeTimers();
 	const client = {fetchRaceDetail: vi.fn(async () => dto())};
 	const sockets: FakeSocket[] = [];
-	const request = vi.fn().mockResolvedValue({ok: true, data: resolution()});
+	const players = playerAPI();
 	const publish = vi.fn();
 	const service = new RaceService(
 		client,
@@ -99,100 +124,203 @@ function setup() {
 			sockets.push(socket);
 			return socket;
 		},
-		new ParticipantResolver(() => playerAPI(request)),
+		new ParticipantResolver(() => players.api),
 		publish,
 	);
-	return {service, client, sockets, request, publish};
+	return {service, client, sockets, publish, ...players};
 }
-it("shares one watcher per canonical URL and releases only the final reference", async () => {
+it("waits for initial HTTP success and shares the pending load between consumers", async () => {
 	const {service, client, sockets} = setup();
-	const a = service.watch(url),
-		b = service.watch(`${url}/#chat`);
-	service.watch("https://racetime.gg/game/other");
+	const pending = deferred<ReturnType<typeof dto>>();
+	client.fetchRaceDetail.mockReturnValueOnce(pending.promise);
+	let settled = false;
+	const a = service.watch(url).then((watch) => {
+		settled = true;
+		return watch;
+	});
+	const b = service.watch(`${url}/#chat`);
 	await flush();
-	expect(a.watchId).not.toBe(b.watchId);
-	expect(sockets).toHaveLength(2);
-	expect(client.fetchRaceDetail).toHaveBeenCalledTimes(2);
-	expect(service.snapshot().races).toHaveLength(2);
-	expect(service.unwatch(a.watchId)).toBe(true);
+	expect(settled).toBe(false);
+	expect(sockets).toHaveLength(0);
+	expect(client.fetchRaceDetail).toHaveBeenCalledTimes(1);
+	pending.resolve(dto());
+	const [first, second] = await Promise.all([a, b]);
+	expect(first.state.race.raceId).toBe("game/race");
+	expect(first.watchId).not.toBe(second.watchId);
+	expect(service.getWatch(first.watchId)?.race).not.toBeNull();
+	service.unwatch(first.watchId);
 	expect(sockets[0]!.close).not.toHaveBeenCalled();
-	expect(service.unwatch(a.watchId)).toBe(false);
-	service.unwatch(b.watchId);
+	service.unwatch(second.watchId);
 	expect(sockets[0]!.close).toHaveBeenCalledOnce();
-	expect(service.snapshot().races).toHaveLength(1);
+	expect(service.getWatch(second.watchId)).toBeNull();
+	await flush();
+	expect(vi.getTimerCount()).toBe(0);
+});
+it("removes all references after initial failure and leaves the existing active race intact", async () => {
+	const {service, client, sockets} = setup();
+	const active = await service.watch(url);
+	const pending = deferred<ReturnType<typeof dto>>();
+	client.fetchRaceDetail.mockReturnValueOnce(pending.promise);
+	const a = service.watch("https://racetime.gg/game/new"),
+		b = service.watch("https://racetime.gg/game/new");
+	const results = Promise.allSettled([a, b]);
+	pending.reject(new Error("not found"));
+	expect((await results).map((r) => r.status)).toEqual([
+		"rejected",
+		"rejected",
+	]);
+	expect(service.snapshot().races.map((r) => r.url)).toEqual([url]);
+	expect(service.getWatch(active.watchId)?.race?.raceId).toBe("game/race");
+	expect(sockets).toHaveLength(1);
 	service.dispose();
 	expect(vi.getTimerCount()).toBe(0);
 });
-it("returns isolated snapshots and does not repeat lookups for result-only updates", async () => {
-	const {service, sockets, client, request} = setup();
-	const initial = dto();
-	initial.entrants.push({...initial.entrants[0]!, userId: "user2"});
-	client.fetchRaceDetail.mockResolvedValue(initial);
-	service.watch(url);
+it("aborts pending startup on shutdown without leaving a socket or watch", async () => {
+	const {service, client, sockets} = setup();
+	const pending = deferred<ReturnType<typeof dto>>();
+	client.fetchRaceDetail.mockReturnValueOnce(pending.promise);
+	const result = expect(service.watch(url)).rejects.toMatchObject({
+		code: "aborted",
+	});
+	service.dispose();
+	pending.resolve(dto());
+	await result;
+	expect(service.snapshot().races).toEqual([]);
+	expect(sockets).toHaveLength(0);
+});
+it("directoryChanged automatically refreshes names and account removals with revisions", async () => {
+	const {service, directory, request} = setup();
+	await service.watch(url);
 	await flush();
-	sockets[0]!.open();
+	const before = service.get(url)!;
+	expect(before.resolution).toMatchObject({
+		state: "ready",
+		directoryRevision: 1,
+	});
+	directory.player = player("New name", 2);
+	directory.revision = 2;
+	service.directoryChanged(2);
+	expect(service.get(url)?.resolution.state).toBe("pending");
 	await flush();
-	expect(request).toHaveBeenCalledTimes(2);
-	const reordered = {
-		...initial,
-		version: 2,
-		entrants: [...initial.entrants].reverse(),
-	};
-	client.fetchRaceDetail.mockResolvedValueOnce(reordered);
-	sockets[0]!.message('{"type":"race.data"}');
+	const changed = service.get(url)!;
+	expect(changed.participants[0]?.player?.displayName).toBe("New name");
+	expect(changed.raceRevision).toBe(before.raceRevision);
+	expect(changed.participantsRevision).toBeGreaterThan(
+		before.participantsRevision,
+	);
+	expect(changed.revision).toBeGreaterThan(before.revision);
+	const count = request.mock.calls.length;
+	service.directoryChanged(2);
+	service.directoryChanged(1);
 	await flush();
-	expect(request).toHaveBeenCalledTimes(2);
-	const state = service.get(url)!;
-	state.participants.length = 0;
-	state.race!.entrants.length = 0;
-	expect(service.get(url)?.participants).toHaveLength(2);
-	expect(service.get(url)?.race?.entrants).toHaveLength(2);
+	expect(request).toHaveBeenCalledTimes(count);
+	directory.player = null;
+	directory.revision = 3;
+	service.directoryChanged(3);
+	await flush();
+	expect(service.get(url)?.participants[0]).toMatchObject({
+		status: "unresolved",
+		player: null,
+	});
 	service.dispose();
 });
-it("ignores participant results for replaced entrant lists and disposed sessions", async () => {
-	const {service, sockets, client, request, publish} = setup();
-	const pending = deferred<unknown>();
-	request.mockReturnValueOnce(pending.promise);
-	const watch = service.watch(url);
+it("coalesces directory events and discards outdated resolutions and post-release updates", async () => {
+	const {service, directory, request, publish} = setup();
+	const wait = deferred<unknown>();
+	const original = request.getMockImplementation()!;
+	let waiting = true;
+	request.mockImplementation(async (op) => {
+		if (op === "find" && waiting) {
+			waiting = false;
+			return (await wait.promise) as never;
+		}
+		return original(op);
+	});
+	const watch = await service.watch(url);
 	await flush();
-	const changed = dto(2);
-	changed.entrants[0]!.userId = "user2";
-	client.fetchRaceDetail.mockResolvedValueOnce(changed);
-	sockets[0]!.open();
+	expect(service.get(url)?.resolution.state).toBe("pending");
+	directory.player = player("Newest", 3);
+	directory.revision = 3;
+	service.directoryChanged(2);
+	service.directoryChanged(3);
+	wait.resolve({ok: true, data: player("Old")});
 	await flush();
-	expect(service.get(url)?.participants[0]?.racetimeUserId).toBe("user2");
-	pending.resolve({ok: true, data: resolution()});
 	await flush();
-	expect(service.get(url)?.participants[0]?.racetimeUserId).toBe("user2");
-	const late = deferred<unknown>();
-	request.mockReturnValueOnce(late.promise);
-	const refresh = service.resolve(url);
+	await vi.waitFor(() =>
+		expect(service.get(url)?.participants[0]?.player?.displayName).toBe(
+			"Newest",
+		),
+	);
+	expect(
+		publish.mock.calls.every(
+			([snapshot]) =>
+				snapshot.races[0]?.participants[0]?.player?.displayName !== "Old",
+		),
+	).toBe(true);
 	service.unwatch(watch.watchId);
 	const count = publish.mock.calls.length;
-	late.resolve({ok: true, data: resolution()});
-	await refresh;
+	service.directoryChanged(4);
+	await flush();
 	expect(publish).toHaveBeenCalledTimes(count);
 });
-it("validates public requests and reports Sheets configuration errors without affecting races", async () => {
+it("keeps race and participant revisions independent for result-only updates", async () => {
+	const {service, client, sockets, request} = setup();
+	await service.watch(url);
+	await flush();
+	sockets[0]!.open();
+	await flush();
+	const before = service.get(url)!;
+	const count = request.mock.calls.length;
+	client.fetchRaceDetail.mockResolvedValueOnce(dto(2));
+	sockets[0]!.message('{"type":"race.data"}');
+	await flush();
+	const after = service.get(url)!;
+	expect(after.raceRevision).toBeGreaterThan(before.raceRevision);
+	expect(after.participantsRevision).toBe(before.participantsRevision);
+	expect(after.resolution.raceRevision).toBe(after.raceRevision);
+	expect(request).toHaveBeenCalledTimes(count);
+	after.participants.length = 0;
+	expect(service.get(url)?.participants).toHaveLength(1);
+	service.dispose();
+});
+it("validates new public write contracts and reports disabled Sheets without affecting races", async () => {
 	const {service} = setup();
-	const api = createAPI(service, null);
+	const mappings = new MappingService(
+		{
+			revision: 0,
+			settings: {
+				spreadsheetId: null,
+				categoryMappingsSheet: "CategoryMappings",
+			},
+		},
+		() => {},
+		() => null,
+	);
+	const api = createAPI(service, mappings);
 	expect(await api.request("watchRace", {url: 123} as never)).toMatchObject({
 		ok: false,
 		error: {code: "invalid_input"},
 	});
 	expect(
-		await api.request("saveCategoryMapping", {mapping: {}} as never),
+		await api.request("saveCategoryMapping", {mapping} as never),
 	).toMatchObject({ok: false, error: {code: "invalid_input"}});
-	expect(await api.request("saveCategoryMapping", {mapping})).toMatchObject({
-		ok: false,
-		error: {code: "spreadsheet_unavailable"},
+	expect(
+		await api.request("saveCategoryMapping", {
+			mapping,
+			expectedRevision: null,
+			settingsRevision: 0,
+		}),
+	).toMatchObject({ok: false, error: {code: "spreadsheet_unavailable"}});
+	expect(await api.request("getSettings", undefined)).toMatchObject({
+		ok: true,
+		data: {revision: 0},
 	});
 	expect(
 		await api.request("unknown" as never, undefined as never),
 	).toMatchObject({ok: false, error: {code: "unsupported_operation"}});
 	expect(await api.request("fetchRace", {url})).toMatchObject({
 		ok: true,
-		data: {url},
+		data: {raceId: "game/race", results: [{status: "finished"}]},
 	});
 	service.dispose();
 });

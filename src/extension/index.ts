@@ -1,10 +1,16 @@
-import type {PlayerManagerAPI} from "@nanahuse/player-manager-protocol";
+import {
+	eventMessageName,
+	BUNDLE_NAME as PLAYER_BUNDLE,
+	type PlayerManagerAPI,
+} from "@nanahuse/player-manager-protocol";
 import {
 	OPERATIONS,
 	operationMessageName,
 	RACES_REPLICANT,
 	type RacesState,
 	type RaceTimeAPI,
+	SETTINGS_REPLICANT,
+	type SettingsState,
 } from "@nanahuse/racetime-protocol";
 import type NodeCG from "@nodecg/types";
 import {createAPI} from "../api";
@@ -12,6 +18,7 @@ import {ParticipantResolver} from "../integrations/players";
 import {HttpRaceTimeClient} from "../integrations/racetime/client";
 import {SpreadsheetCategoryMappingsRepository} from "../integrations/spreadsheet/category-mappings-repository";
 import {GoogleSheetsClient} from "../integrations/spreadsheet/google-sheets-client";
+import {MappingService} from "../mappings";
 import {RaceService} from "../service";
 
 export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
@@ -34,14 +41,48 @@ export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 			state.value = value;
 		},
 	);
-	const repository = config.spreadsheetId
-		? new SpreadsheetCategoryMappingsRepository(
-				GoogleSheetsClient.create(config.spreadsheetId),
-				{sheetName: config.categoryMappingsSheet ?? "CategoryMappings"},
-			)
-		: null;
-	const api = createAPI(races, repository);
-	nodecg.once("serverStopping", () => races.dispose());
+	const settings = nodecg.Replicant<SettingsState>(SETTINGS_REPLICANT, {
+		persistent: true,
+		defaultValue: {
+			revision: 0,
+			settings: {
+				spreadsheetId: config.spreadsheetId ?? null,
+				categoryMappingsSheet:
+					config.categoryMappingsSheet ?? "CategoryMappings",
+			},
+		},
+	});
+	const mappings = new MappingService(
+		settings.value,
+		(next) => {
+			settings.value = next;
+		},
+		(current) =>
+			current.spreadsheetId
+				? new SpreadsheetCategoryMappingsRepository(
+						GoogleSheetsClient.create(current.spreadsheetId),
+						{sheetName: current.categoryMappingsSheet},
+					)
+				: null,
+	);
+	const api = createAPI(races, mappings);
+	const directoryChanged = (data: {directoryRevision?: unknown}) => {
+		if (typeof data?.directoryRevision === "number")
+			races.directoryChanged(data.directoryRevision);
+	};
+	nodecg.listenFor(
+		eventMessageName("directoryChanged"),
+		PLAYER_BUNDLE,
+		directoryChanged,
+	);
+	nodecg.once("serverStopping", () => {
+		nodecg.unlisten(
+			eventMessageName("directoryChanged"),
+			PLAYER_BUNDLE,
+			directoryChanged,
+		);
+		races.dispose();
+	});
 	for (const operation of OPERATIONS) {
 		nodecg.listenFor(operationMessageName(operation), (data, ack) => {
 			void api.request(operation, data).then((result) => {

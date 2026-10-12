@@ -10,6 +10,8 @@ jobs:
           node-version: 24
       - uses: pnpm/action-setup@v4
       - run: pnpm install --frozen-lockfile
+        env:
+          pnpm_config_pm_on_fail: error
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test

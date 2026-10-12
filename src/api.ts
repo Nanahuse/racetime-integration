@@ -1,27 +1,20 @@
 import {
 	API_VERSION,
 	type CategoryMapping,
-	type FailureCode,
 	type Operations,
 	type RaceTimeAPI,
 	type Response,
 } from "@nanahuse/racetime-protocol";
+import {IntegrationError} from "./errors";
 import {RaceTimeError} from "./integrations/racetime/errors";
-import type {CategoryMappingsRepository} from "./integrations/spreadsheet/category-mappings-repository";
 import {
 	SheetValidationError,
 	SpreadsheetIntegrationError,
 } from "./integrations/spreadsheet/errors";
+import type {MappingService} from "./mappings";
 import type {RaceService} from "./service";
 
-class RequestError extends Error {
-	constructor(
-		readonly code: FailureCode,
-		message: string,
-	) {
-		super(message);
-	}
-}
+class RequestError extends IntegrationError {}
 function object(raw: unknown): Record<string, unknown> {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw))
 		throw new RequestError("invalid_input", "Expected an object");
@@ -34,6 +27,11 @@ function text(value: unknown): string {
 			"Expected a non-empty string (max 2048 characters)",
 		);
 	return value.trim();
+}
+function revision(value: unknown): number {
+	if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+		throw new RequestError("invalid_input", "Expected a non-negative revision");
+	return value;
 }
 function mapping(raw: unknown): CategoryMapping {
 	const input = object(raw),
@@ -77,7 +75,7 @@ function mapping(raw: unknown): CategoryMapping {
 
 export function createAPI(
 	races: RaceService,
-	repository: CategoryMappingsRepository | null,
+	mappings: MappingService,
 ): RaceTimeAPI {
 	async function request<K extends keyof Operations>(
 		operation: K,
@@ -91,7 +89,7 @@ export function createAPI(
 					value = await races.fetch(text(data.url));
 					break;
 				case "watchRace":
-					value = races.watch(text(data.url));
+					value = await races.watch(text(data.url));
 					break;
 				case "unwatchRace":
 					value = {released: races.unwatch(text(data.watchId))};
@@ -99,41 +97,65 @@ export function createAPI(
 				case "getRace":
 					value = races.get(text(data.url));
 					break;
+				case "getWatch":
+					value = races.getWatch(text(data.watchId));
+					break;
 				case "listRaces":
 					value = races.snapshot();
 					break;
 				case "resolveParticipants":
 					value = await races.resolve(text(data.url));
 					break;
-				case "findCategoryMapping":
-					if (!repository)
-						throw new RequestError(
-							"spreadsheet_unavailable",
-							"Configure spreadsheetId to use CategoryMappings",
-						);
-					value = await repository.find(
-						text(data.categorySlug),
-						text(data.goal),
+				case "getSettings":
+					value = mappings.settings();
+					break;
+				case "updateSettings": {
+					const settings = object(data.settings);
+					const spreadsheetId =
+						settings.spreadsheetId === null
+							? null
+							: text(settings.spreadsheetId);
+					if (spreadsheetId !== null && !/^[A-Za-z0-9_-]+$/.test(spreadsheetId))
+						throw new RequestError("invalid_input", "Invalid spreadsheetId");
+					value = await mappings.update(
+						{
+							spreadsheetId,
+							categoryMappingsSheet: text(settings.categoryMappingsSheet),
+						},
+						revision(data.expectedRevision),
 					);
+					break;
+				}
+				case "listCategoryMappings":
+					value = await mappings.list();
+					break;
+				case "findCategoryMapping":
+					value = await mappings.find(text(data.categorySlug), text(data.goal));
 					break;
 				case "saveCategoryMapping": {
 					const incoming = mapping(data.mapping);
-					if (!repository)
-						throw new RequestError(
-							"spreadsheet_unavailable",
-							"Configure spreadsheetId to use CategoryMappings",
-						);
-					await repository.upsert(incoming);
-					value = incoming;
+					value = await mappings.save(
+						incoming,
+						data.expectedRevision === null ? null : text(data.expectedRevision),
+						revision(data.settingsRevision),
+					);
 					break;
 				}
+				case "deleteCategoryMapping":
+					value = await mappings.delete(
+						text(data.categorySlug),
+						text(data.goal),
+						text(data.expectedRevision),
+						revision(data.settingsRevision),
+					);
+					break;
 				default:
 					throw new RequestError("unsupported_operation", "Unknown operation");
 			}
 			return {ok: true, data: value as Operations[K]["response"]};
 		} catch (error) {
 			const code =
-				error instanceof RequestError || error instanceof RaceTimeError
+				error instanceof IntegrationError || error instanceof RaceTimeError
 					? error.code
 					: error instanceof SheetValidationError
 						? "invalid_sheet"

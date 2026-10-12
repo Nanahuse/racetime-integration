@@ -1,7 +1,8 @@
 packages:
   - packages/*
+pmOnFail: error
 allowBuilds:
-  '@nanahuse/player-manager-protocol@https://codeload.github.com/Nanahuse/player-manager/tar.gz/2a8bbe7b1d05e8df02da2bd17651ca2444083b26#path:/packages/player-manager-protocol': true
+  '@nanahuse/player-manager-protocol@https://codeload.github.com/Nanahuse/player-manager/tar.gz/85ef6e5f78503f443b61627fc08c4a9675850cb0#path:/packages/player-manager-protocol': true
   '@parcel/watcher': false
   '@vaadin/vaadin-usage-statistics': true
   better-sqlite3: true
