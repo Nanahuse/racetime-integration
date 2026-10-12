@@ -1,5 +1,18 @@
 {
 	"$schema": "http://json-schema.org/draft-07/schema#",
 	"type": "object",
-	"properties": {}
+	"additionalProperties": false,
+	"properties": {
+		"spreadsheetId": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+		"gameMappingsSheet": {
+			"type": "string",
+			"minLength": 1,
+			"default": "GameMappings"
+		},
+		"categoryMappingsSheet": {
+			"type": "string",
+			"minLength": 1,
+			"default": "CategoryMappings"
+		}
+	}
 }

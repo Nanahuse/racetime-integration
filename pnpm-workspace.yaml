@@ -1,4 +1,8 @@
+packages:
+  - packages/*
+pmOnFail: error
 allowBuilds:
+  '@nanahuse/player-manager-protocol@git+https://github.com/Nanahuse/player-manager.git': true
   '@parcel/watcher': false
   '@vaadin/vaadin-usage-statistics': true
   better-sqlite3: true

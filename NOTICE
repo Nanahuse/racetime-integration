@@ -1,0 +1,3 @@
+RaceTime HTTP parsing and CategoryMappings sheet encoding are adapted from
+Nanahuse/nodecg-race-layouts (Apache-2.0).
+The adapted files are identified in their source headers.
