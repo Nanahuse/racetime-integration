@@ -181,44 +181,46 @@ export class RaceService {
 		this.publish(this.snapshot());
 	}
 	private requestResolution(session: Session): Promise<void> {
-		if (this.sessions.get(session.state.url) !== session)
+		if (!session.state.race || this.sessions.get(session.state.url) !== session)
 			return Promise.resolve();
 		session.generation++;
 		session.controller?.abort();
 		session.requested = true;
 		session.state.resolution = {...session.state.resolution, state: "pending"};
 		this.emit(session);
-		session.resolving ??= this.runResolution(session).finally(() => {
-			session.resolving = null;
-		});
+		session.resolving ??= this.runResolution(session);
 		return session.resolving;
 	}
 	private async runResolution(session: Session): Promise<void> {
-		while (
-			session.requested &&
-			this.sessions.get(session.state.url) === session
-		) {
-			session.requested = false;
-			const generation = session.generation;
-			const race = session.state.race;
-			if (!race) return;
-			const controller = new AbortController();
-			session.controller = controller;
-			const result = await this.players.resolve(
-				race.entrants,
-				controller.signal,
-			);
-			session.controller = null;
-			if (this.sessions.get(session.state.url) !== session) return;
-			if (generation !== session.generation) continue;
-			session.state.participants = result.participants;
-			session.state.participantsRevision++;
-			session.state.resolution = {
-				state: result.directoryRevision === null ? "error" : "ready",
-				raceRevision: session.state.raceRevision,
-				directoryRevision: result.directoryRevision,
-			};
-			this.emit(session);
+		try {
+			while (
+				session.requested &&
+				this.sessions.get(session.state.url) === session
+			) {
+				session.requested = false;
+				const generation = session.generation;
+				const race = session.state.race;
+				if (!race) return;
+				const controller = new AbortController();
+				session.controller = controller;
+				const result = await this.players.resolve(
+					race.entrants,
+					controller.signal,
+				);
+				session.controller = null;
+				if (this.sessions.get(session.state.url) !== session) return;
+				if (generation !== session.generation) continue;
+				session.state.participants = result.participants;
+				session.state.participantsRevision++;
+				session.state.resolution = {
+					state: result.directoryRevision === null ? "error" : "ready",
+					raceRevision: session.state.raceRevision,
+					directoryRevision: result.directoryRevision,
+				};
+				this.emit(session);
+			}
+		} finally {
+			session.resolving = null;
 		}
 	}
 	private update(

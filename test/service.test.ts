@@ -283,6 +283,29 @@ it("keeps race and participant revisions independent for result-only updates", a
 	expect(service.get(url)?.participants).toHaveLength(1);
 	service.dispose();
 });
+it("handles a directory change queued as the previous resolution completes", async () => {
+	const {service, directory, publish} = setup();
+	let queued = false;
+	publish.mockImplementation((snapshot) => {
+		if (!queued && snapshot.races[0]?.resolution.state === "ready") {
+			queued = true;
+			queueMicrotask(() => {
+				directory.player = player("Latest", 2);
+				directory.revision = 2;
+				service.directoryChanged(2);
+			});
+		}
+	});
+	await service.watch(url);
+	await vi.waitFor(() => {
+		expect(service.get(url)?.resolution).toMatchObject({
+			state: "ready",
+			directoryRevision: 2,
+		});
+	});
+	expect(service.get(url)?.participants[0]?.player?.displayName).toBe("Latest");
+	service.dispose();
+});
 it("validates new public write contracts and reports disabled Sheets without affecting races", async () => {
 	const {service} = setup();
 	const mappings = new MappingService(
