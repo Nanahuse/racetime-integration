@@ -501,17 +501,71 @@ it("resolves participants for a single fetch without creating a watch or session
 	service.dispose();
 });
 
-it("resolves in-progress races with the same participant logic as completed races", async () => {
-	const {service, client} = setup();
-	const inProgress = dto();
-	inProgress.entrants[0]!.status = "in_progress";
-	client.fetchRaceDetail.mockResolvedValueOnce(inProgress);
-	const ongoing = await service.fetch(url);
+it("resolves Primary and Secondary accounts for a completed race and keeps its results", async () => {
+	const {service, client, sockets, directory} = setup();
+	directory.players = [player("Runner", 1, ["user1", "user2"])];
+	const completed = dto(1, "race", "done");
+	completed.entrants = [
+		{
+			userId: "user1",
+			name: "Runner",
+			twitchLogin: "runner",
+			status: "done",
+			finishTime: "PT1H2M3S",
+			place: 1,
+		},
+		{
+			userId: "user2",
+			name: "Second",
+			twitchLogin: null,
+			status: "done",
+			finishTime: "PT1H5M0S",
+			place: 2,
+		},
+	];
+	client.fetchRaceDetail.mockResolvedValueOnce(completed);
+
+	const result = await service.fetch(url);
+
+	expect(client.fetchRaceDetail).toHaveBeenCalledTimes(1);
+	expect(result.race.status).toBe("done");
+	expect(result.participants).toMatchObject([
+		{racetimeUserId: "user1", status: "matched", playerId: "p1"},
+		{racetimeUserId: "user2", status: "matched", playerId: "p1"},
+	]);
+	expect(result.resolution).toEqual({state: "ready", directoryRevision: 1});
+	expect(result.race.results).toEqual([
+		{
+			userId: "user1",
+			name: "Runner",
+			place: 1,
+			time: "PT1H2M3S",
+			status: "finished",
+		},
+		{
+			userId: "user2",
+			name: "Second",
+			place: 2,
+			time: "PT1H5M0S",
+			status: "finished",
+		},
+	]);
+	expect(sockets).toHaveLength(0);
+	expect(service.snapshot().races).toEqual([]);
+	service.dispose();
+});
+
+it("resolves an in-progress race with the same participant logic", async () => {
+	const {service, client, directory} = setup();
+	directory.players = [player("Runner", 1, ["user1"])];
+	client.fetchRaceDetail.mockResolvedValueOnce(dto(1, "race", "done"));
 	const finished = await service.fetch(url);
+	client.fetchRaceDetail.mockResolvedValueOnce(dto());
+	const ongoing = await service.fetch(url);
+
+	expect(ongoing.race.status).toBe("in_progress");
 	expect(ongoing.participants).toEqual(finished.participants);
-	expect(ongoing.resolution.state).toBe("ready");
-	expect(ongoing.race.results[0]?.status).toBe("other");
-	expect(finished.race.results[0]?.status).toBe("finished");
+	expect(ongoing.resolution).toEqual(finished.resolution);
 });
 
 it("keeps race information and reports unavailable participants when Player Manager fails", async () => {

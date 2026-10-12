@@ -16,6 +16,7 @@ import {
 } from "@testing-library/react";
 import {afterEach, expect, it, vi} from "vitest";
 import {Overview} from "../ui/dashboard/components/Overview";
+import {deferred} from "./fixtures";
 
 const sendMessage = vi.fn();
 const sendMessageToBundle = vi.fn();
@@ -143,6 +144,7 @@ const races: RacesState = {schemaVersion: 1, races: [raceState]};
 
 afterEach(() => {
 	cleanup();
+	vi.restoreAllMocks();
 	sendMessage.mockReset();
 	sendMessageToBundle.mockReset();
 });
@@ -213,8 +215,8 @@ it("keeps RaceTime information when participant resolution fails", async () => {
 	expect(screen.getAllByText("Player Manager timed out")).toHaveLength(3);
 });
 
-it("re-fetches a single-fetched race after registration so resolution refreshes", async () => {
-	vi.spyOn(window, "open").mockReturnValue(null);
+it("opens registration without re-fetching and refreshes on demand", async () => {
+	const open = vi.spyOn(window, "open").mockReturnValue(null);
 	const before = resolved(race, [participants[1]!], 1);
 	let fetches = 0;
 	sendMessage.mockImplementation(async (name: string) => {
@@ -236,13 +238,155 @@ it("re-fetches a single-fetched race after registration so resolution refreshes"
 	});
 	fireEvent.click(screen.getByRole("button", {name: "取得"}));
 	fireEvent.click(await screen.findByRole("button", {name: "登録・紐付け"}));
-	expect(await screen.findByText("Player One")).toBeTruthy();
-	expect(fetches).toBe(2);
+
+	expect(await screen.findByText(/登録画面を開きました/)).toBeTruthy();
 	expect(sendMessageToBundle).toHaveBeenCalledWith(
 		"player-manager.v3.beginRegistration",
 		"player-manager",
 		{input: {racetime: "user2"}, createPlayerOnEmpty: true},
 	);
+	expect(open).toHaveBeenCalledWith(
+		"/bundles/player-manager/Registration.html",
+		"_blank",
+		"noopener,noreferrer",
+	);
+	// Opening the registration session must not re-run fetchRace.
+	expect(fetches).toBe(1);
+
+	fireEvent.click(screen.getByRole("button", {name: "再取得"}));
+	expect(await screen.findByText("Player One")).toBeTruthy();
+	expect(fetches).toBe(2);
+});
+
+it("ignores a registration result that settles after fetching another race", async () => {
+	const open = vi.spyOn(window, "open").mockReturnValue(null);
+	const otherRace: Race = {...race, raceId: "other/race"};
+	let settleRegistration: (value: unknown) => void = () => {};
+	sendMessageToBundle.mockImplementation(
+		() =>
+			new Promise((resolve) => {
+				settleRegistration = resolve;
+			}),
+	);
+	let fetches = 0;
+	sendMessage.mockImplementation(async (name: string) => {
+		if (name !== "racetime.v3.fetchRace")
+			throw new Error(`unexpected operation ${name}`);
+		fetches += 1;
+		return {ok: true, data: fetches === 1 ? resolved() : resolved(otherRace)};
+	});
+	render(<Overview races={undefined} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: race.url},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	fireEvent.click(await screen.findByRole("button", {name: "登録・紐付け"}));
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: "https://racetime.gg/other/race"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	expect(await screen.findByText("other/race")).toBeTruthy();
+
+	await act(async () => {
+		settleRegistration({
+			ok: true,
+			data: {
+				registrationId: "r1",
+				url: "/bundles/player-manager/Registration.html",
+			},
+		});
+	});
+	expect(open).not.toHaveBeenCalled();
+	expect(screen.queryByText(/登録画面を開きました/)).toBeNull();
+});
+
+it("shows a registration error for the current race", async () => {
+	vi.spyOn(window, "open").mockReturnValue(null);
+	sendMessageToBundle.mockResolvedValue({
+		ok: false,
+		error: {code: "directory_unavailable", message: "down"},
+	});
+	sendMessage.mockResolvedValue({ok: true, data: resolved()});
+	render(<Overview races={undefined} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: race.url},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	fireEvent.click(await screen.findByRole("button", {name: "登録・紐付け"}));
+	expect(await screen.findByText(/directory_unavailable/)).toBeTruthy();
+});
+
+it("does not surface a registration error after fetching another race", async () => {
+	vi.spyOn(window, "open").mockReturnValue(null);
+	let rejectRegistration: (reason: unknown) => void = () => {};
+	sendMessageToBundle.mockImplementation(
+		() =>
+			new Promise((_resolve, reject) => {
+				rejectRegistration = reject;
+			}),
+	);
+	sendMessage.mockResolvedValue({ok: true, data: resolved()});
+	render(<Overview races={undefined} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: race.url},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	fireEvent.click(await screen.findByRole("button", {name: "登録・紐付け"}));
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: "https://racetime.gg/other/race"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	await act(async () => {
+		rejectRegistration(new Error("directory_unavailable: down"));
+	});
+	await waitFor(() =>
+		expect(screen.queryByText(/directory_unavailable/)).toBeNull(),
+	);
+});
+
+it("keeps a fetch busy when an older registration completes", async () => {
+	vi.spyOn(window, "open").mockReturnValue(null);
+	let rejectRegistration: (reason: unknown) => void = () => {};
+	sendMessageToBundle.mockImplementation(
+		() =>
+			new Promise((_resolve, reject) => {
+				rejectRegistration = reject;
+			}),
+	);
+	const pending = deferred<unknown>();
+	let fetches = 0;
+	sendMessage.mockImplementation((name: string) => {
+		if (name !== "racetime.v3.fetchRace")
+			throw new Error(`unexpected operation ${name}`);
+		fetches += 1;
+		return fetches === 1
+			? Promise.resolve({ok: true, data: resolved()})
+			: pending.promise;
+	});
+	render(<Overview races={undefined} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: race.url},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	fireEvent.click(await screen.findByRole("button", {name: "登録・紐付け"}));
+	fireEvent.click(screen.getByRole("button", {name: "再取得"}));
+	expect(screen.getAllByRole("button", {name: "取得中…"})).toHaveLength(2);
+
+	await act(async () => {
+		rejectRegistration(new Error("registration failed"));
+	});
+	expect(screen.getAllByRole("button", {name: "取得中…"})).toHaveLength(2);
+
+	await act(async () => {
+		pending.resolve({ok: true, data: resolved()});
+	});
+});
+
+it("renders an unset place as a dash instead of 位", () => {
+	render(<Overview races={races} />);
+	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
+	expect(screen.getByText("1位")).toBeTruthy();
+	expect(screen.queryByText("—位")).toBeNull();
 });
 
 it("shows participant actions by resolution status and RaceTime names from entrants", () => {

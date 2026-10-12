@@ -203,7 +203,9 @@ function Participants({
 							<td>
 								{result ? (
 									<>
-										<div>{result.place ?? "—"}位</div>
+										<div>
+											{result.place === null ? "—" : `${result.place}位`}
+										</div>
 										<div>{result.time ?? "—"}</div>
 										<small>{result.status}</small>
 									</>
@@ -236,9 +238,14 @@ export function Overview({races}: {races: RacesState | undefined}) {
 	const [urlInput, setUrlInput] = useState("");
 	const [fetched, setFetched] = useState<ResolvedRace | null>(null);
 	const [registrationUrl, setRegistrationUrl] = useState<string | null>(null);
-	const [busy, setBusy] = useState(false);
+	const [fetching, setFetching] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const fetchGen = useRef(0);
+	// Identifies the currently displayed race so a registration that finishes
+	// after the user moved on cannot change the view.
+	const viewRef = useRef(0);
+	const registerGen = useRef(0);
+	const activeRegistration = useRef<string | null>(null);
 
 	const list = races?.races ?? [];
 	const monitored =
@@ -248,17 +255,20 @@ export function Overview({races}: {races: RacesState | undefined}) {
 
 	const selectMonitored = (url: string) => {
 		fetchGen.current++;
+		viewRef.current++;
 		setSelectedUrl(url);
 		setFetched(null);
+		setRegistrationUrl(null);
 		setError(null);
-		setBusy(false);
+		setFetching(false);
 	};
 
-	const loadFetch = async (url: string, clearRegistration = true) => {
+	const loadFetch = async (url: string) => {
 		const gen = ++fetchGen.current;
-		setBusy(true);
+		viewRef.current++;
+		setFetching(true);
 		setError(null);
-		if (clearRegistration) setRegistrationUrl(null);
+		setRegistrationUrl(null);
 		try {
 			const resolved = await request("fetchRace", {url});
 			if (gen !== fetchGen.current) return;
@@ -269,22 +279,28 @@ export function Overview({races}: {races: RacesState | undefined}) {
 			setFetched(null);
 			setError(errorMessage(cause));
 		} finally {
-			if (gen === fetchGen.current) setBusy(false);
+			if (gen === fetchGen.current) setFetching(false);
 		}
 	};
 
 	const register = async (participant: Participant) => {
-		setBusy(true);
+		if (activeRegistration.current === participant.racetimeUserId) return;
+		const view = viewRef.current;
+		const gen = ++registerGen.current;
+		activeRegistration.current = participant.racetimeUserId;
 		setError(null);
 		try {
 			const session = await beginRegistration(participant.racetimeUserId);
+			if (gen !== registerGen.current || view !== viewRef.current) return;
 			setRegistrationUrl(session.url);
 			window.open(session.url, "_blank", "noopener,noreferrer");
-			if (fetched) await loadFetch(fetched.race.url, false);
 		} catch (cause) {
+			if (gen !== registerGen.current || view !== viewRef.current) return;
 			setError(errorMessage(cause));
 		} finally {
-			setBusy(false);
+			if (gen === registerGen.current) {
+				activeRegistration.current = null;
+			}
 		}
 	};
 
@@ -322,10 +338,10 @@ export function Overview({races}: {races: RacesState | undefined}) {
 						/>
 						<button
 							type='button'
-							disabled={busy || urlInput.trim() === ""}
+							disabled={fetching || urlInput.trim() === ""}
 							onClick={() => void loadFetch(urlInput.trim())}
 						>
-							{busy ? "取得中…" : "取得"}
+							{fetching ? "取得中…" : "取得"}
 						</button>
 					</div>
 					<p className='muted'>watchIdは生成せず、監視には影響しません。</p>
@@ -369,10 +385,10 @@ export function Overview({races}: {races: RacesState | undefined}) {
 						<div className='formrow'>
 							<button
 								type='button'
-								disabled={busy}
+								disabled={fetching}
 								onClick={() => void loadFetch(fetched.race.url)}
 							>
-								{busy ? "取得中…" : "再取得"}
+								{fetching ? "取得中…" : "再取得"}
 							</button>
 						</div>
 					</>

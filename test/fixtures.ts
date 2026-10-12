@@ -4,11 +4,15 @@ import {parseRaceDetail} from "../src/integrations/racetime/client";
 import type {Socket} from "../src/integrations/racetime/watcher";
 
 export const url = "https://racetime.gg/game/race";
-export const payload = (version = 1, race = "race") => ({
+export const payload = (
+	version = 1,
+	race = "race",
+	status = "in_progress",
+) => ({
 	version,
 	name: `game/${race}`,
 	slug: race,
-	status: {value: "in_progress"},
+	status: {value: status},
 	url: `/game/${race}`,
 	data_url: `/game/${race}/data`,
 	websocket_url: `/ws/race/${race}`,
@@ -23,8 +27,8 @@ export const payload = (version = 1, race = "race") => ({
 		},
 	],
 });
-export const dto = (version = 1, race = "race") =>
-	parseRaceDetail(payload(version, race));
+export const dto = (version = 1, race = "race", status = "in_progress") =>
+	parseRaceDetail(payload(version, race, status));
 export const gameMapping: GameMapping = {
 	racetime: {categorySlug: "game", categoryName: "Game"},
 	speedrunCom: {gameId: "g1", gameName: "Game"},

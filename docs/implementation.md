@@ -55,15 +55,15 @@ Player Manager v3のPlayerは複数Accountを持ち、各Accountは `service` �
 ## Dashboard
 
 - `dashboardPanels` に `racetime-integration`（title `RaceTime Integration`、fullbleed）を定義し、Vite + React + TypeScriptでビルドする。出力は `dashboard/`（CIのbuildで生成）。
-- Overview: `racetime-races` Replicantから監視中レース、接続状態、参加者解決状況を表示する。URLによる単発取得はfetchRaceを使用し、watchIdは生成しない。単発取得も監視と同じ参加者表示・操作（解決済み表示名、編集リンク、登録・紐付け、unavailable理由、順位・完走時間・結果ステータス）を使う。単発取得に監視用メタデータは表示しない。登録後は同じURLを再取得して最新の解決結果を反映できる。単発取得の古い応答は世代管理で破棄する。Player Managerの登録は公開APIのbeginRegistrationで得たURLへ遷移し、編集はProtocolの `playerEditUrl` を使う。
+- Overview: `racetime-races` Replicantから監視中レース、接続状態、参加者解決状況を表示する。URLによる単発取得はfetchRaceを使用し、watchIdは生成しない。単発取得も監視と同じ参加者表示・操作（解決済み表示名、編集リンク、登録・紐付け、unavailable理由、順位・完走時間・結果ステータス）を使う。順位未設定は「—」と表示する。単発取得に監視用メタデータは表示しない。Player Managerの登録は公開APIのbeginRegistrationで得たURLへ遷移し、編集はProtocolの `playerEditUrl` を使う。beginRegistrationは登録セッションの開始で登録完了ではないため、開始直後の再取得は行わず、利用者が同じURLを「再取得」して最新の解決結果を反映できる。単発取得の古いHTTP応答と、表示対象が変わった後の古い登録結果は世代管理で破棄し、取得中と登録開始中の状態は互いの完了で解除しない。
 - Mappings: 左にGame Mapping一覧・検索、右に選択ゲームの詳細とCategory Mapping一覧を表示する。SRCは手動検索・選択のみで、自動マッピング・候補提案・類似度評価は行わない。競合時は最新状態の採用／最新状態からの再編集（差分表示）を提示し、解決まで保存を禁止する。設定変更（settings_changed）は新保存先を読み込み、旧編集を自動適用しない。
 - Settings: Spreadsheet URL/ID、両シート名、接続状態、Spreadsheetリンク、保存、初期化、エラー詳細を表示する。URLはIDへ正規化する。保存（updateSettings）で両シートを検証できた場合のみ「利用可能」と表示する。初期化は未保存入力に対して実行でき、保存や `settingsRevision` を変更しない。初期化中の入力変更・保存を禁止し、入力を変更したら初期化結果表示をクリアする。Google認証情報の入力UIは設けない。
 
 ## 検証
 
-境界テストはHTTP・WebSocket、初回購読失敗、複数利用者、単発取得でのPlayer解決（完走済み・進行中・Primary/Secondary・未登録・障害時フォールバック・RaceTime失敗・監視を開始しない・HTTP取得の重複なし・監視との解決結果一致）、Player Manager v3のPrimary/Secondary解決・Account移動・削除・不正Directory・v3以外、Revision非依存のdirectoryChanged、結果正規化、Game/Category MappingのCRUD、親子整合性、Revision競合、2シートの読込・保存・列順変更・追加カラム保持、設定切替の整合性、SRC検索・選択情報、Spreadsheet初期化（数式・範囲外・空白の保護、再実行、途中失敗）、起動時Settings復旧、Dashboardと公開APIの通信・編集ロック・競合復旧・単発取得表示、ビルド済みCommonJS拡張、ProtocolのESM/CommonJSを対象にする。
+境界テストはHTTP・WebSocket、初回購読失敗、複数利用者、単発取得でのPlayer解決（完走済み・進行中・Primary/Secondary・未登録・障害時フォールバック・RaceTime失敗・監視を開始しない・HTTP取得の重複なし・監視との解決結果一致）、Player Manager v3のPrimary/Secondary解決・Account移動・削除・不正Directory・v3以外、Revision非依存のdirectoryChanged、結果正規化、Game/Category MappingのCRUD、親子整合性、Revision競合、2シートの読込・保存・列順変更・追加カラム保持、設定切替の整合性、SRC検索・選択情報、Spreadsheet初期化（数式・範囲外・空白の保護、再実行、途中失敗）、起動時Settings復旧、Dashboardと公開APIの通信・編集ロック・競合復旧・単発取得表示・登録操作の競合、ビルド済みCommonJS拡張、ProtocolのESM/CommonJSを対象にする。
 
-`pnpm test` は12ファイル134件が成功する。typecheck / lint / buildも成功する。
+`pnpm test` は12ファイル140件が成功する。typecheck / lint / buildも成功する。
 
 未実施: 実NodeCG 2.8環境でのDashboard起動と公開APIとの実通信、実ADCによる対象Spreadsheetの読書き・初期化、実Speedrun.com API・実Player Manager v3を含む運用NodeCGでの通し確認、npmレジストリへのpublish。
 
