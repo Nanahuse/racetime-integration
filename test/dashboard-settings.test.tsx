@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import type {SettingsState} from "@nanahuse/racetime-protocol";
-import {act, cleanup, fireEvent, render, screen} from "@testing-library/react";
+import {
+	act,
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import {afterEach, beforeEach, expect, it, vi} from "vitest";
 import {Settings} from "../ui/dashboard/components/Settings";
 
@@ -23,7 +30,7 @@ const initial: SettingsState = {
 		categoryMappingsSheet: "CategoryMappings",
 	},
 };
-let updateResult: () => Envelope = () => ({
+let updateResult: () => Envelope | Promise<Envelope> = () => ({
 	ok: true,
 	data: {
 		revision: 1,
@@ -38,8 +45,10 @@ let initializeResult: () => Envelope | Promise<Envelope> = () => ({
 	ok: true,
 	data: {gameMappings: "created", categoryMappings: "created"},
 });
+let getSettingsResult: () => Envelope = () => ({ok: true, data: initial});
 
 beforeEach(() => {
+	getSettingsResult = () => ({ok: true, data: initial});
 	updateResult = () => ({
 		ok: true,
 		data: {
@@ -57,7 +66,7 @@ beforeEach(() => {
 	});
 	sendMessage.mockImplementation(async (name: string) => {
 		const operation = name.replace("racetime.v2.", "");
-		if (operation === "getSettings") return {ok: true, data: initial};
+		if (operation === "getSettings") return getSettingsResult();
 		if (operation === "updateSettings") return updateResult();
 		if (operation === "initializeSpreadsheet") return initializeResult();
 		throw new Error(`unexpected operation ${operation}`);
@@ -225,4 +234,91 @@ it("keeps the input when initialization fails", async () => {
 	fireEvent.click(screen.getByRole("button", {name: "Spreadsheetを初期化"}));
 	expect(await screen.findByText(/no access/)).toBeTruthy();
 	expect(screen.getByDisplayValue("abc")).toBeTruthy();
+});
+
+it("keeps saves blocked when the latest settings cannot be fetched", async () => {
+	render(<Settings />);
+	await screen.findByText("未設定");
+	fireEvent.change(screen.getByLabelText("Spreadsheet URL または ID"), {
+		target: {value: "abc"},
+	});
+	updateResult = () => ({
+		ok: false,
+		error: {code: "settings_changed", message: "stale"},
+	});
+	getSettingsResult = () => ({
+		ok: false,
+		error: {code: "spreadsheet_unavailable", message: "reload failed"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "保存"}));
+	expect(
+		await screen.findByRole("button", {name: /最新設定を再取得/}),
+	).toBeTruthy();
+	expect(
+		(screen.getByRole("button", {name: "保存"}) as HTMLButtonElement).disabled,
+	).toBe(true);
+	expect(screen.getByDisplayValue("abc")).toBeTruthy();
+	// Recovery: a successful refetch enables adoption without applying the input.
+	getSettingsResult = () => ({ok: true, data: initial});
+	fireEvent.click(screen.getByRole("button", {name: /最新設定を再取得/}));
+	expect(
+		await screen.findByRole("button", {name: /最新設定を採用/}),
+	).toBeTruthy();
+	expect(screen.queryByRole("button", {name: /最新設定を再取得/})).toBeNull();
+});
+
+it("blocks settings input while a save is in progress", async () => {
+	let resolve: (value: Envelope) => void = () => {};
+	updateResult = () =>
+		new Promise<Envelope>((res) => {
+			resolve = res;
+		});
+	render(<Settings />);
+	await screen.findByText("未設定");
+	fireEvent.change(screen.getByLabelText("Spreadsheet URL または ID"), {
+		target: {value: "abc"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "保存"}));
+	await waitFor(() =>
+		expect(
+			(screen.getByLabelText("Spreadsheet URL または ID") as HTMLInputElement)
+				.disabled,
+		).toBe(true),
+	);
+	expect(
+		(screen.getByLabelText("GameMappings シート名") as HTMLInputElement)
+			.disabled,
+	).toBe(true);
+	expect(
+		(
+			screen.getByRole("button", {
+				name: "Spreadsheetを初期化",
+			}) as HTMLButtonElement
+		).disabled,
+	).toBe(true);
+	await act(async () => {
+		resolve({ok: true, data: initial});
+	});
+	await waitFor(() =>
+		expect(
+			(screen.getByLabelText("Spreadsheet URL または ID") as HTMLInputElement)
+				.disabled,
+		).toBe(false),
+	);
+});
+
+it("clears the initialization result when the target input changes", async () => {
+	render(<Settings />);
+	await screen.findByText("未設定");
+	fireEvent.change(screen.getByLabelText("Spreadsheet URL または ID"), {
+		target: {value: "abc"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "Spreadsheetを初期化"}));
+	expect(await screen.findByText(/GameMappings: 新規作成/)).toBeTruthy();
+	fireEvent.change(screen.getByLabelText("GameMappings シート名"), {
+		target: {value: "Games"},
+	});
+	await waitFor(() =>
+		expect(screen.queryByText(/GameMappings: 新規作成/)).toBeNull(),
+	);
 });

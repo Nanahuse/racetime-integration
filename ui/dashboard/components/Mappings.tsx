@@ -255,6 +255,9 @@ export function Mappings({
 	const [variablesLoading, setVariablesLoading] = useState(false);
 
 	const [busy, setBusy] = useState(false);
+	// True only while a save/delete/reload replaces the editing state, so form
+	// inputs can be locked without blocking reference-only operations.
+	const [mutating, setMutating] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [message, setMessage] = useState<string | null>(null);
 	const [confirmDelete, setConfirmDelete] = useState<Kind | null>(null);
@@ -273,8 +276,8 @@ export function Mappings({
 	const dirty = gameDirty || categoryDirty;
 
 	useEffect(() => {
-		onStateChange?.({dirty, busy});
-	}, [dirty, busy, onStateChange]);
+		onStateChange?.({dirty, busy: busy || mutating});
+	}, [dirty, busy, mutating, onStateChange]);
 
 	const loadOptions = useCallback(async (gameId: string) => {
 		const gen = ++optionsGen.current;
@@ -521,7 +524,8 @@ export function Mappings({
 	};
 
 	const saveGame = async () => {
-		if (!gameSession || gameSession.status !== "normal") return;
+		if (mutating || !gameSession || gameSession.status !== "normal") return;
+		setMutating(true);
 		setBusy(true);
 		setError(null);
 		setMessage(null);
@@ -546,11 +550,14 @@ export function Mappings({
 			await handleSaveFailure(cause);
 		} finally {
 			setBusy(false);
+			setMutating(false);
 		}
 	};
 
 	const removeGame = async () => {
-		if (!gameSession || gameSession.baselineRevision === null) return;
+		if (mutating || !gameSession || gameSession.baselineRevision === null)
+			return;
+		setMutating(true);
 		setBusy(true);
 		setError(null);
 		setMessage(null);
@@ -569,11 +576,14 @@ export function Mappings({
 			await handleSaveFailure(cause);
 		} finally {
 			setBusy(false);
+			setMutating(false);
 		}
 	};
 
 	const saveCategory = async () => {
-		if (!categorySession || categorySession.status !== "normal") return;
+		if (mutating || !categorySession || categorySession.status !== "normal")
+			return;
+		setMutating(true);
 		setBusy(true);
 		setError(null);
 		setMessage(null);
@@ -598,11 +608,18 @@ export function Mappings({
 			await handleSaveFailure(cause);
 		} finally {
 			setBusy(false);
+			setMutating(false);
 		}
 	};
 
 	const removeCategory = async () => {
-		if (!categorySession || categorySession.baselineRevision === null) return;
+		if (
+			mutating ||
+			!categorySession ||
+			categorySession.baselineRevision === null
+		)
+			return;
+		setMutating(true);
 		setBusy(true);
 		setError(null);
 		setMessage(null);
@@ -622,10 +639,13 @@ export function Mappings({
 			await handleSaveFailure(cause);
 		} finally {
 			setBusy(false);
+			setMutating(false);
 		}
 	};
 
 	const reloadLatest = async () => {
+		if (mutating) return;
+		setMutating(true);
 		setBusy(true);
 		setError(null);
 		setMessage(null);
@@ -636,6 +656,7 @@ export function Mappings({
 			setError(errorMessage(cause));
 		} finally {
 			setBusy(false);
+			setMutating(false);
 		}
 	};
 
@@ -862,6 +883,7 @@ export function Mappings({
 									<input
 										value={gameSession.draft.racetime.categorySlug}
 										readOnly={gameSession.baseline !== null}
+										disabled={mutating}
 										onChange={(event) =>
 											setGameSession((session) =>
 												session
@@ -883,6 +905,7 @@ export function Mappings({
 								<Field label='RaceTime category name（表示用）'>
 									<input
 										value={gameSession.draft.racetime.categoryName}
+										disabled={mutating}
 										onChange={(event) =>
 											setGameSession((session) =>
 												session
@@ -927,13 +950,18 @@ export function Mappings({
 									<input
 										aria-label='SRCゲーム検索'
 										placeholder='ゲーム名で検索'
-										disabled={gameHasChildren}
+										disabled={gameHasChildren || mutating}
 										value={srcQuery}
 										onChange={(event) => setSrcQuery(event.target.value)}
 									/>
 									<button
 										type='button'
-										disabled={busy || gameHasChildren || srcQuery.trim() === ""}
+										disabled={
+											busy ||
+											mutating ||
+											gameHasChildren ||
+											srcQuery.trim() === ""
+										}
 										onClick={() => void searchGames()}
 									>
 										検索
@@ -944,7 +972,7 @@ export function Mappings({
 										key={game.id}
 										type='button'
 										className='choice'
-										disabled={gameHasChildren}
+										disabled={gameHasChildren || mutating}
 										onClick={() => chooseSrcGame(game)}
 									>
 										{game.name} ({game.abbreviation})
@@ -955,13 +983,13 @@ export function Mappings({
 							<div className='button-row'>
 								<button
 									type='submit'
-									disabled={busy || gameBlocked}
+									disabled={busy || mutating || gameBlocked}
 								>
 									{busy ? "保存中…" : "Game Mappingを保存"}
 								</button>
 								<button
 									type='button'
-									disabled={busy || !gameDirty}
+									disabled={busy || mutating || !gameDirty}
 									onClick={() =>
 										setGameSession((session) =>
 											session
@@ -986,7 +1014,7 @@ export function Mappings({
 											</span>
 											<button
 												type='button'
-												disabled={busy}
+												disabled={busy || mutating}
 												onClick={() => void removeGame()}
 											>
 												削除を確定
@@ -1001,6 +1029,7 @@ export function Mappings({
 									) : (
 										<button
 											type='button'
+											disabled={busy || mutating}
 											onClick={() => setConfirmDelete("game")}
 										>
 											削除
@@ -1102,6 +1131,7 @@ export function Mappings({
 											options={options}
 											variables={variables}
 											busy={busy}
+											disabled={mutating}
 											dirty={categoryDirty}
 											expected={categorySession.baselineRevision}
 											confirmDelete={confirmDelete === "category"}
@@ -1243,6 +1273,7 @@ function CategoryEditor({
 	options,
 	variables,
 	busy,
+	disabled,
 	dirty,
 	expected,
 	confirmDelete,
@@ -1263,6 +1294,7 @@ function CategoryEditor({
 	options: SpeedrunGameOptions | null;
 	variables: SpeedrunVariableOption[];
 	busy: boolean;
+	disabled: boolean;
 	dirty: boolean;
 	expected: string | null;
 	confirmDelete: boolean;
@@ -1286,7 +1318,8 @@ function CategoryEditor({
 		(option) => option.id === draft.speedrunCom.categoryId,
 	);
 	const goalReadOnly = expected !== null;
-	const saveDisabled = busy || missingMandatory || !variablesReady || blocked;
+	const saveDisabled =
+		busy || disabled || missingMandatory || !variablesReady || blocked;
 	return (
 		<form
 			className='subpanel category-editor'
@@ -1299,6 +1332,7 @@ function CategoryEditor({
 				<input
 					value={draft.racetime.goal}
 					readOnly={goalReadOnly}
+					disabled={disabled}
 					onChange={(event) => onGoal(event.target.value)}
 				/>
 			</Field>
@@ -1310,7 +1344,7 @@ function CategoryEditor({
 			<Field label='SRC Category（必須）'>
 				<select
 					value={draft.speedrunCom.categoryId}
-					disabled={!optionsReady}
+					disabled={disabled || !optionsReady}
 					onChange={(event) => {
 						const option = options?.categories.find(
 							(candidate) => candidate.id === event.target.value,
@@ -1333,6 +1367,7 @@ function CategoryEditor({
 				<Field label='Level'>
 					<select
 						value={draft.speedrunCom.levelId ?? ""}
+						disabled={disabled}
 						onChange={(event) => onField("levelId", event.target.value || null)}
 					>
 						<option value=''>指定なし</option>
@@ -1351,6 +1386,7 @@ function CategoryEditor({
 				<Field label='Platform'>
 					<select
 						value={draft.speedrunCom.platformId ?? ""}
+						disabled={disabled}
 						onChange={(event) =>
 							onField("platformId", event.target.value || null)
 						}
@@ -1369,6 +1405,7 @@ function CategoryEditor({
 				<Field label='Region'>
 					<select
 						value={draft.speedrunCom.regionId ?? ""}
+						disabled={disabled}
 						onChange={(event) =>
 							onField("regionId", event.target.value || null)
 						}
@@ -1393,6 +1430,7 @@ function CategoryEditor({
 									? "true"
 									: "false"
 						}
+						disabled={disabled}
 						onChange={(event) =>
 							onField(
 								"emulator",
@@ -1410,6 +1448,7 @@ function CategoryEditor({
 				<Field label='Timing Method'>
 					<select
 						value={draft.speedrunCom.timingMethod ?? ""}
+						disabled={disabled}
 						onChange={(event) =>
 							onField(
 								"timingMethod",
@@ -1447,6 +1486,7 @@ function CategoryEditor({
 								{variable.userDefined ? (
 									<input
 										value={draft.speedrunCom.variables[variable.id] ?? ""}
+										disabled={disabled}
 										onChange={(event) =>
 											onField("variables", {
 												...draft.speedrunCom.variables,
@@ -1457,6 +1497,7 @@ function CategoryEditor({
 								) : (
 									<select
 										value={draft.speedrunCom.variables[variable.id] ?? ""}
+										disabled={disabled}
 										onChange={(event) =>
 											onField("variables", {
 												...draft.speedrunCom.variables,
@@ -1494,7 +1535,7 @@ function CategoryEditor({
 				</button>
 				<button
 					type='button'
-					disabled={busy || !dirty}
+					disabled={busy || disabled || !dirty}
 					onClick={onRevert}
 				>
 					Revert
@@ -1505,7 +1546,7 @@ function CategoryEditor({
 							<span>このCategory Mappingを削除しますか？</span>
 							<button
 								type='button'
-								disabled={busy}
+								disabled={busy || disabled}
 								onClick={onDeleteConfirm}
 							>
 								削除を確定
@@ -1520,6 +1561,7 @@ function CategoryEditor({
 					) : (
 						<button
 							type='button'
+							disabled={busy || disabled}
 							onClick={onDeleteRequest}
 						>
 							削除

@@ -6,8 +6,16 @@
  */
 export type SpreadsheetValues = string[][];
 
+export type ReadValuesOptions = {
+	/** Return the stored formula instead of its computed value. */
+	valueRenderOption?: "FORMULA";
+};
+
 export interface SpreadsheetClient {
-	readValues(range: string): Promise<SpreadsheetValues>;
+	readValues(
+		range: string,
+		options?: ReadValuesOptions,
+	): Promise<SpreadsheetValues>;
 	updateValues(
 		updates: readonly {range: string; values: string[][]}[],
 	): Promise<void>;

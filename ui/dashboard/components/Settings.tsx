@@ -33,6 +33,11 @@ type SettingsInput = {
 	categoryMappingsSheet: string;
 };
 
+type ConflictState =
+	| {status: "none"}
+	| {status: "unavailable"; message: string}
+	| {status: "ready"; latest: SettingsState};
+
 export function Settings({
 	onStateChange,
 }: {
@@ -46,7 +51,7 @@ export function Settings({
 	const [message, setMessage] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [validation, setValidation] = useState<Validation>("unknown");
-	const [conflict, setConflict] = useState<SettingsState | null>(null);
+	const [conflict, setConflict] = useState<ConflictState>({status: "none"});
 	const [comparison, setComparison] = useState<SettingsInput | null>(null);
 	const [initializing, setInitializing] = useState(false);
 	const [initMessage, setInitMessage] = useState<string | null>(null);
@@ -57,6 +62,13 @@ export function Settings({
 		gameMappingsSheet: gameSheet.trim(),
 		categoryMappingsSheet: categorySheet.trim(),
 	});
+
+	// The initialization result only describes the inputs it ran against, so
+	// editing any target field clears it.
+	const changeTarget = () => {
+		setInitMessage(null);
+		setInitError(null);
+	};
 
 	const applySettings = useCallback((state: SettingsState) => {
 		setBaseline(state);
@@ -69,7 +81,7 @@ export function Settings({
 		const state = await request("getSettings", undefined);
 		applySettings(state);
 		setValidation("unknown");
-		setConflict(null);
+		setConflict({status: "none"});
 		setComparison(null);
 	}, [applySettings]);
 
@@ -86,6 +98,7 @@ export function Settings({
 	}, [inputsDirty, busy, initializing, onStateChange]);
 
 	const initialize = async () => {
+		if (busy || initializing) return;
 		// Snapshot the input so a mid-flight edit cannot retarget the operation.
 		const target = currentInput();
 		if (!target.spreadsheetId) {
@@ -113,7 +126,8 @@ export function Settings({
 	};
 
 	const save = async () => {
-		if (!baseline || conflict) return;
+		if (busy || initializing) return;
+		if (!baseline || conflict.status !== "none") return;
 		setBusy(true);
 		setError(null);
 		setMessage(null);
@@ -123,7 +137,7 @@ export function Settings({
 				expectedRevision: baseline.revision,
 			});
 			applySettings(next);
-			setConflict(null);
+			setConflict({status: "none"});
 			setComparison(null);
 			if (next.settings.spreadsheetId === null) {
 				setValidation("unknown");
@@ -138,16 +152,22 @@ export function Settings({
 			}
 		} catch (cause) {
 			if (isSettingsChanged(cause) || isConflict(cause)) {
+				// Block saving immediately, then try to fetch the latest revision.
+				setConflict({
+					status: "unavailable",
+					message: "最新設定を取得しています…",
+				});
+				setValidation("unknown");
+				setError(null);
 				try {
 					const latest = await request("getSettings", undefined);
-					setConflict(latest);
+					setConflict({status: "ready", latest});
 				} catch (reloadError) {
-					setError(errorMessage(reloadError));
+					setConflict({
+						status: "unavailable",
+						message: errorMessage(reloadError),
+					});
 				}
-				setValidation("unknown");
-				setError(
-					"設定が別の場所で更新されました。最新設定を採用するか、最新設定から再編集してください。入力内容は保持しています。",
-				);
 			} else {
 				setValidation("error");
 				setError(errorMessage(cause));
@@ -157,11 +177,25 @@ export function Settings({
 		}
 	};
 
+	const refetchLatest = async () => {
+		if (busy || conflict.status !== "unavailable") return;
+		setBusy(true);
+		setError(null);
+		try {
+			const latest = await request("getSettings", undefined);
+			setConflict({status: "ready", latest});
+		} catch (cause) {
+			setConflict({status: "unavailable", message: errorMessage(cause)});
+		} finally {
+			setBusy(false);
+		}
+	};
+
 	/** Replaces the form with the latest saved settings. */
 	const adoptLatest = () => {
-		if (!conflict) return;
-		applySettings(conflict);
-		setConflict(null);
+		if (conflict.status !== "ready") return;
+		applySettings(conflict.latest);
+		setConflict({status: "none"});
 		setComparison(null);
 		setValidation("unknown");
 		setError(null);
@@ -170,11 +204,11 @@ export function Settings({
 
 	/** Rebases on the latest settings, keeping the previous input for comparison. */
 	const reEditLatest = () => {
-		if (!conflict) return;
+		if (conflict.status !== "ready") return;
 		const previous = currentInput();
-		applySettings(conflict);
+		applySettings(conflict.latest);
 		setComparison(previous);
-		setConflict(null);
+		setConflict({status: "none"});
 		setValidation("unknown");
 		setError(null);
 		setMessage(
@@ -206,29 +240,53 @@ export function Settings({
 				tone={connection.tone}
 				title='保存時に両シートを実際に検証できた場合のみ「利用可能」になります'
 			/>
-			{conflict ? (
+			{conflict.status !== "none" ? (
 				<div className='callout warning'>
-					<p>{error}</p>
+					<p>
+						設定が別の場所で更新されました。入力内容は保持しています。
+						{conflict.status === "ready"
+							? " 最新設定を採用するか、最新設定から再編集してください。"
+							: " 最新設定を再取得してください。"}
+					</p>
+					{conflict.status === "unavailable" &&
+						conflict.message &&
+						conflict.message !== "最新設定を取得しています…" && (
+							<p className='muted'>{conflict.message}</p>
+						)}
 					<div className='button-row'>
-						<button
-							type='button'
-							disabled={busy}
-							onClick={adoptLatest}
-						>
-							最新設定を採用
-						</button>
-						<button
-							type='button'
-							disabled={busy}
-							onClick={reEditLatest}
-						>
-							最新設定から再編集
-						</button>
+						{conflict.status === "ready" ? (
+							<>
+								<button
+									type='button'
+									disabled={busy}
+									onClick={adoptLatest}
+								>
+									最新設定を採用
+								</button>
+								<button
+									type='button'
+									disabled={busy}
+									onClick={reEditLatest}
+								>
+									最新設定から再編集
+								</button>
+							</>
+						) : (
+							<button
+								type='button'
+								disabled={busy}
+								onClick={() => void refetchLatest()}
+							>
+								最新設定を再取得
+							</button>
+						)}
 					</div>
-					<DiffTable
-						before={conflict.settings}
-						after={currentInput()}
-					/>
+					{conflict.status === "ready" && (
+						<DiffTable
+							before={conflict.latest.settings}
+							after={currentInput()}
+						/>
+					)}
 				</div>
 			) : (
 				error && <Callout tone='error'>{error}</Callout>
@@ -264,28 +322,39 @@ export function Settings({
 					<input
 						value={urlInput}
 						placeholder='https://docs.google.com/spreadsheets/d/...'
-						disabled={initializing}
-						onChange={(event) => setUrlInput(event.target.value)}
+						disabled={busy || initializing}
+						onChange={(event) => {
+							setUrlInput(event.target.value);
+							changeTarget();
+						}}
 					/>
 				</Field>
 				<Field label='GameMappings シート名'>
 					<input
 						value={gameSheet}
-						disabled={initializing}
-						onChange={(event) => setGameSheet(event.target.value)}
+						disabled={busy || initializing}
+						onChange={(event) => {
+							setGameSheet(event.target.value);
+							changeTarget();
+						}}
 					/>
 				</Field>
 				<Field label='CategoryMappings シート名'>
 					<input
 						value={categorySheet}
-						disabled={initializing}
-						onChange={(event) => setCategorySheet(event.target.value)}
+						disabled={busy || initializing}
+						onChange={(event) => {
+							setCategorySheet(event.target.value);
+							changeTarget();
+						}}
 					/>
 				</Field>
 				<div className='button-row'>
 					<button
 						type='submit'
-						disabled={busy || initializing || !baseline || conflict !== null}
+						disabled={
+							busy || initializing || !baseline || conflict.status !== "none"
+						}
 					>
 						{busy ? "検証中…" : "保存"}
 					</button>

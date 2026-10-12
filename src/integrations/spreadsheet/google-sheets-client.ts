@@ -1,6 +1,10 @@
 import {sheets} from "@googleapis/sheets";
 import {GoogleAuth} from "google-auth-library";
-import type {SpreadsheetClient, SpreadsheetValues} from "./client";
+import type {
+	ReadValuesOptions,
+	SpreadsheetClient,
+	SpreadsheetValues,
+} from "./client";
 import {SpreadsheetClientError} from "./errors";
 
 type SpreadsheetsApi = ReturnType<typeof sheets>["spreadsheets"];
@@ -21,11 +25,17 @@ export class GoogleSheetsClient implements SpreadsheetClient {
 		);
 	}
 
-	async readValues(range: string): Promise<SpreadsheetValues> {
+	async readValues(
+		range: string,
+		options?: ReadValuesOptions,
+	): Promise<SpreadsheetValues> {
 		try {
 			const response = await this.api.values.get({
 				spreadsheetId: this.spreadsheetId,
 				range,
+				...(options?.valueRenderOption
+					? {valueRenderOption: options.valueRenderOption}
+					: {}),
 			});
 			return (response.data.values ?? []).map((row) =>
 				row.map((cell: unknown) => (cell == null ? "" : String(cell))),

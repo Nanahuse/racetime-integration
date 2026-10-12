@@ -40,6 +40,19 @@ type Inspection = {
 	issues: SheetIssue[];
 };
 
+/** Any non-empty cell, judged without trimming so whitespace is protected. */
+function hasContent(values: SpreadsheetValues): boolean {
+	return values.some((row) => row.some((cell) => cell !== ""));
+}
+
+function occupiedIssue(sheetName: string): SheetIssue {
+	return {
+		code: "sheet_occupied",
+		message: `Sheet "${sheetName}" already contains content and was not initialized.`,
+		row: null,
+	};
+}
+
 function inspectGameMappings(values: SpreadsheetValues): {
 	status: SheetParseStatus;
 	issues: SheetIssue[];
@@ -114,7 +127,17 @@ export async function initializeSpreadsheet(
 		if (!titles.has(name))
 			return {exists: false, status: "missing", issues: []};
 		const values = await client.readValues(sheetReadRange(name));
-		return {exists: true, ...parse(values)};
+		const result = parse(values);
+		if (result.status !== "empty") return {exists: true, ...result};
+		// The A1:ZZ read may miss formulas that evaluate to "" or content to the
+		// right of ZZ. Re-read the whole sheet as formulas before treating it as
+		// empty, and refuse to write over anything that is actually present.
+		const raw = await client.readValues(quoteSheetName(name), {
+			valueRenderOption: "FORMULA",
+		});
+		if (hasContent(raw))
+			return {exists: true, status: "invalid", issues: [occupiedIssue(name)]};
+		return {exists: true, status: "empty", issues: result.issues};
 	};
 
 	const initialTitles = new Set(await client.listSheets());

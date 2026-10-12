@@ -25,9 +25,18 @@ function sheetOf(range: string): string {
 	return match ? match[1]!.replace(/''/g, "'") : range.split("!")[0]!;
 }
 
-function fakeClient(store: Store, hooks: Hooks = {}) {
+function fakeClient(
+	store: Store,
+	hooks: Hooks = {},
+	formulas: Store = new Map(),
+) {
+	const formulaRanges: string[] = [];
 	const client: SpreadsheetClient = {
-		async readValues(range) {
+		async readValues(range, readOptions) {
+			if (readOptions?.valueRenderOption === "FORMULA") {
+				formulaRanges.push(range);
+				return structuredClone(formulas.get(sheetOf(range)) ?? []);
+			}
 			return structuredClone(store.get(sheetOf(range)) ?? []);
 		},
 		async updateValues(updates) {
@@ -63,7 +72,7 @@ function fakeClient(store: Store, hooks: Hooks = {}) {
 			if (!store.has(sheetName)) store.set(sheetName, []);
 		},
 	};
-	return {client, hooks};
+	return {client, hooks, formulaRanges};
 }
 
 const options = {
@@ -207,4 +216,56 @@ it("rejects identical sheet names before touching the spreadsheet", async () => 
 		}),
 	).rejects.toMatchObject({code: "invalid_input"});
 	expect(store.size).toBe(0);
+});
+
+it("refuses to initialize a worksheet whose formulas evaluate to empty", async () => {
+	const store: Store = new Map();
+	store.set("GameMappings", []);
+	store.set("CategoryMappings", [categoryHeader()]);
+	const formulas: Store = new Map([
+		["GameMappings", [['=IF(FALSE,"data","")']]],
+	]);
+	const {client} = fakeClient(store, {}, formulas);
+	await expect(initializeSpreadsheet(client, options)).rejects.toMatchObject({
+		name: "SheetValidationError",
+	});
+	expect(store.get("GameMappings")).toEqual([]);
+	expect(store.get("CategoryMappings")).toEqual([categoryHeader()]);
+});
+
+it("detects content beyond the A1:ZZ read using the whole-sheet FORMULA range", async () => {
+	const store: Store = new Map();
+	store.set("GameMappings", []);
+	store.set("CategoryMappings", [categoryHeader()]);
+	const formulas: Store = new Map([["GameMappings", [["far right"]]]]);
+	const {client, formulaRanges} = fakeClient(store, {}, formulas);
+	await expect(initializeSpreadsheet(client, options)).rejects.toMatchObject({
+		name: "SheetValidationError",
+	});
+	expect(formulaRanges).toContain("'GameMappings'");
+	expect(formulaRanges.some((range) => range.includes("A1:ZZ"))).toBe(false);
+});
+
+it("protects whitespace-only cells without trimming", async () => {
+	const store: Store = new Map();
+	store.set("GameMappings", []);
+	store.set("CategoryMappings", [categoryHeader()]);
+	const formulas: Store = new Map([["GameMappings", [["   "]]]]);
+	const {client} = fakeClient(store, {}, formulas);
+	await expect(initializeSpreadsheet(client, options)).rejects.toMatchObject({
+		name: "SheetValidationError",
+	});
+	expect(store.get("GameMappings")).toEqual([]);
+});
+
+it("does not re-read formulas for worksheets that already match the format", async () => {
+	const store: Store = new Map();
+	store.set("GameMappings", [gameHeader(), gameRow()]);
+	store.set("CategoryMappings", [categoryHeader()]);
+	const {client, formulaRanges} = fakeClient(store);
+	expect(await initializeSpreadsheet(client, options)).toEqual({
+		gameMappings: "unchanged",
+		categoryMappings: "unchanged",
+	});
+	expect(formulaRanges).toEqual([]);
 });

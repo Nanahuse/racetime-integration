@@ -53,9 +53,13 @@ let games: GameMappingRecord[] = [];
 let categories: CategoryMappingRecord[] = [];
 let variablesByCategory: Record<string, unknown[]> = {};
 let listRevision = 0;
-let saveGame: () => Envelope = () => ({
+let saveGame: () => Envelope | Promise<Envelope> = () => ({
 	ok: true,
 	data: {record: gameRecord, action: "updated", settingsRevision: 0},
+});
+let saveCategory: () => Envelope | Promise<Envelope> = () => ({
+	ok: true,
+	data: {record: childRecord, action: "created", settingsRevision: 0},
 });
 
 beforeEach(() => {
@@ -66,6 +70,10 @@ beforeEach(() => {
 	saveGame = () => ({
 		ok: true,
 		data: {record: gameRecord, action: "updated", settingsRevision: 0},
+	});
+	saveCategory = () => ({
+		ok: true,
+		data: {record: childRecord, action: "created", settingsRevision: 0},
 	});
 	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
 		const operation = name.replace("racetime.v2.", "");
@@ -127,6 +135,8 @@ beforeEach(() => {
 				return {ok: true, data: {games: []}};
 			case "saveGameMapping":
 				return saveGame();
+			case "saveCategoryMapping":
+				return saveCategory();
 			default:
 				throw new Error(`unexpected operation ${operation}`);
 		}
@@ -433,4 +443,90 @@ it("resets the level when the SRC category changes", async () => {
 			"",
 		),
 	);
+});
+
+it("blocks form input while a Game Mapping save is in progress", async () => {
+	games = [gameRecord];
+	let resolve: (value: Envelope) => void = () => {};
+	saveGame = () =>
+		new Promise<Envelope>((res) => {
+			resolve = res;
+		});
+	render(<Mappings />);
+	await selectFirstGame();
+	fireEvent.change(screen.getByDisplayValue("Game One"), {
+		target: {value: "Edited"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	await waitFor(() =>
+		expect(
+			(screen.getByDisplayValue("Edited") as HTMLInputElement).disabled,
+		).toBe(true),
+	);
+	expect((screen.getByDisplayValue("game") as HTMLInputElement).disabled).toBe(
+		true,
+	);
+	// The list selection is locked while the save replaces the editing state.
+	expect(
+		(screen.getByRole("button", {name: /Game One/}) as HTMLButtonElement)
+			.disabled,
+	).toBe(true);
+	await act(async () => {
+		resolve({
+			ok: true,
+			data: {record: gameRecord, action: "updated", settingsRevision: 0},
+		});
+	});
+	expect(await screen.findByText(/Game Mappingを保存しました/)).toBeTruthy();
+});
+
+it("blocks form input while a Category Mapping save is in progress", async () => {
+	games = [gameRecord];
+	let resolve: (value: Envelope) => void = () => {};
+	saveCategory = () =>
+		new Promise<Envelope>((res) => {
+			resolve = res;
+		});
+	render(<Mappings />);
+	await selectFirstGame();
+	await openNewCategory();
+	const select = screen.getByLabelText("SRC Category（必須）");
+	await act(async () => {
+		fireEvent.change(select, {target: {value: "c1"}});
+	});
+	await screen.findByText("このカテゴリにVariablesはありません。");
+	fireEvent.click(screen.getByRole("button", {name: /Category Mappingを保存/}));
+	await waitFor(() =>
+		expect(
+			(screen.getByLabelText("RaceTime Goal") as HTMLInputElement).disabled,
+		).toBe(true),
+	);
+	expect((screen.getByLabelText("Level") as HTMLSelectElement).disabled).toBe(
+		true,
+	);
+	await act(async () => {
+		resolve({
+			ok: true,
+			data: {record: childRecord, action: "created", settingsRevision: 0},
+		});
+	});
+	expect(
+		await screen.findByText(/Category Mappingを保存しました/),
+	).toBeTruthy();
+});
+
+it("keeps edits when a save fails", async () => {
+	games = [gameRecord];
+	saveGame = () => ({
+		ok: false,
+		error: {code: "internal_error", message: "boom"},
+	});
+	render(<Mappings />);
+	await selectFirstGame();
+	fireEvent.change(screen.getByDisplayValue("Game One"), {
+		target: {value: "Edited"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	expect(await screen.findByText(/boom|Operation failed/)).toBeTruthy();
+	expect(screen.getByDisplayValue("Edited")).toBeTruthy();
 });

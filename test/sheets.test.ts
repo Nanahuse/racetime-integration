@@ -266,6 +266,13 @@ it("uses RAW and disables write retries at the Google boundary", async () => {
 		"sheet-id",
 	);
 	expect(await client.readValues("range")).toEqual([["1", "false", ""]]);
+	expect(api.values.get.mock.calls[0]![0]).not.toHaveProperty(
+		"valueRenderOption",
+	);
+	await client.readValues("range", {valueRenderOption: "FORMULA"});
+	expect(api.values.get).toHaveBeenLastCalledWith(
+		expect.objectContaining({valueRenderOption: "FORMULA"}),
+	);
 	await client.updateValues([{range: "A2", values: [["=unsafe"]]}]);
 	expect(api.values.batchUpdate).toHaveBeenCalledWith(
 		{
