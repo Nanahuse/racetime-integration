@@ -1,8 +1,15 @@
 import type {SettingsState} from "@nanahuse/racetime-protocol";
 import {useCallback, useEffect, useState} from "react";
-import {errorMessage, isConflict, request} from "../api/client";
+import {
+	errorMessage,
+	isConflict,
+	isSettingsChanged,
+	request,
+} from "../api/client";
 import {spreadsheetEditUrl, spreadsheetIdFromInput} from "../model/spreadsheet";
 import {Badge, Callout, Field} from "./common";
+
+type Validation = "unknown" | "ok" | "error";
 
 export function Settings() {
 	const [settings, setSettings] = useState<SettingsState | null>(null);
@@ -12,7 +19,7 @@ export function Settings() {
 	const [busy, setBusy] = useState(false);
 	const [message, setMessage] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const [validated, setValidated] = useState(false);
+	const [validation, setValidation] = useState<Validation>("unknown");
 
 	const load = useCallback(async () => {
 		const state = await request("getSettings", undefined);
@@ -20,7 +27,7 @@ export function Settings() {
 		setUrlInput(state.settings.spreadsheetId ?? "");
 		setGameSheet(state.settings.gameMappingsSheet);
 		setCategorySheet(state.settings.categoryMappingsSheet);
-		setValidated(false);
+		setValidation("unknown");
 	}, []);
 
 	useEffect(() => {
@@ -42,31 +49,45 @@ export function Settings() {
 				expectedRevision: settings.revision,
 			});
 			setSettings(next);
-			setValidated(true);
-			setMessage(
-				"保存し、GameMappingsとCategoryMappingsの両シートを確認しました。",
-			);
+			if (next.settings.spreadsheetId === null) {
+				setValidation("unknown");
+				setMessage(
+					"Spreadsheetを未設定として保存しました（マッピングは無効）。",
+				);
+			} else {
+				setValidation("ok");
+				setMessage(
+					"保存し、GameMappingsとCategoryMappingsの両シートを確認しました。",
+				);
+			}
 		} catch (cause) {
-			setValidated(false);
+			setValidation("error");
 			setError(errorMessage(cause));
-			if (isConflict(cause)) await load();
+			if (isConflict(cause) || isSettingsChanged(cause)) await load();
 		} finally {
 			setBusy(false);
 		}
 	};
 
 	const spreadsheetId = settings?.settings.spreadsheetId ?? null;
-	const tone = validated ? "success" : spreadsheetId ? "warning" : "neutral";
-	const state = validated ? "利用可能" : spreadsheetId ? "未検証" : "未設定";
+	const connection = ((): {
+		state: string;
+		tone: "success" | "warning" | "error" | "neutral";
+	} => {
+		if (validation === "error") return {state: "エラー", tone: "error"};
+		if (!spreadsheetId) return {state: "未設定", tone: "neutral"};
+		if (validation === "ok") return {state: "利用可能", tone: "success"};
+		return {state: "未確認", tone: "warning"};
+	})();
 
 	return (
 		<div className='settings panel'>
 			<h2>Spreadsheet 設定</h2>
 			<Badge
 				label='接続状態'
-				state={state}
-				tone={tone}
-				title='保存時に両シートを実際に検証した場合のみ「利用可能」になります'
+				state={connection.state}
+				tone={connection.tone}
+				title='保存時に両シートを実際に検証できた場合のみ「利用可能」になります'
 			/>
 			{error && <Callout tone='error'>{error}</Callout>}
 			{message && <Callout tone='success'>{message}</Callout>}

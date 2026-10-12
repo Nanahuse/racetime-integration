@@ -333,6 +333,22 @@ table.participants tr.unavailable {
 	gap: 12px;
 }
 
+fieldset.variables {
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	padding: 12px;
+	margin: 12px 0;
+}
+
+fieldset.variables legend {
+	color: var(--muted);
+	padding: 0 6px;
+}
+
+input[readonly] {
+	opacity: 0.75;
+}
+
 @media (max-width: 900px) {
 	.layout-two {
 		grid-template-columns: 1fr;

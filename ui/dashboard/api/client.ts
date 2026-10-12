@@ -32,10 +32,17 @@ export function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+/** A stored row changed since it was loaded; the edit must be rebased. */
 export function isConflict(error: unknown): boolean {
-	return (
-		error instanceof ApiError &&
-		(error.code === "mapping_conflict" ||
-			error.code === "game_mapping_conflict")
-	);
+	return error instanceof ApiError && error.code === "mapping_conflict";
+}
+
+/** The spreadsheet destination changed; old edits must not auto-migrate. */
+export function isSettingsChanged(error: unknown): boolean {
+	return error instanceof ApiError && error.code === "settings_changed";
+}
+
+/** A parent/child integrity rule rejected the operation. */
+export function isGameMappingConflict(error: unknown): boolean {
+	return error instanceof ApiError && error.code === "game_mapping_conflict";
 }

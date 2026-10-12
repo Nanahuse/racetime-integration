@@ -119,7 +119,7 @@ function setup() {
 		})),
 		getCategoryVariables: vi.fn(async () => [
 			{
-				id: "v1",
+				id: "difficulty",
 				name: "Difficulty",
 				mandatory: false,
 				userDefined: false,
@@ -205,25 +205,95 @@ it("requires a parent Game Mapping and rejects a category from another SRC game"
 	).toMatchObject({ok: true, data: {action: "created"}});
 });
 
-it("rejects a category that omits a mandatory Speedrun.com variable", async () => {
-	const {api, speedrun} = setup();
+async function saveParent(api: ReturnType<typeof setup>["api"]) {
 	await api.request("saveGameMapping", {
 		mapping: gameMapping,
 		expectedRevision: null,
 		settingsRevision: 0,
 	});
+}
+
+it("rejects a category that omits a mandatory Speedrun.com variable", async () => {
+	const {api, speedrun} = setup();
+	await saveParent(api);
 	speedrun.getCategoryVariables.mockResolvedValueOnce([
 		{
-			id: "v1",
+			id: "difficulty",
 			name: "Difficulty",
 			mandatory: true,
 			userDefined: false,
 			values: [{id: "normal", label: "Normal"}],
 		},
 	]);
+	const bare = structuredClone(mapping);
+	bare.speedrunCom.variables = {};
 	expect(
 		await api.request("saveCategoryMapping", {
-			mapping,
+			mapping: bare,
+			expectedRevision: null,
+			settingsRevision: 0,
+		}),
+	).toMatchObject({ok: false, error: {code: "invalid_input"}});
+});
+
+it("rejects unknown variable ids and values outside the offered options", async () => {
+	const {api} = setup();
+	await saveParent(api);
+	const unknown = structuredClone(mapping);
+	unknown.speedrunCom.variables = {mystery: "x"};
+	expect(
+		await api.request("saveCategoryMapping", {
+			mapping: unknown,
+			expectedRevision: null,
+			settingsRevision: 0,
+		}),
+	).toMatchObject({ok: false, error: {code: "invalid_input"}});
+	const badValue = structuredClone(mapping);
+	badValue.speedrunCom.variables = {difficulty: "nightmare"};
+	expect(
+		await api.request("saveCategoryMapping", {
+			mapping: badValue,
+			expectedRevision: null,
+			settingsRevision: 0,
+		}),
+	).toMatchObject({ok: false, error: {code: "invalid_input"}});
+});
+
+it("accepts and length-checks user-defined variables", async () => {
+	const {api, speedrun} = setup();
+	await saveParent(api);
+	speedrun.getCategoryVariables.mockResolvedValue([
+		{
+			id: "runner",
+			name: "Runner",
+			mandatory: true,
+			userDefined: true,
+			values: [],
+		},
+	]);
+	const withValue = structuredClone(mapping);
+	withValue.speedrunCom.variables = {runner: "Somebody"};
+	expect(
+		await api.request("saveCategoryMapping", {
+			mapping: withValue,
+			expectedRevision: null,
+			settingsRevision: 0,
+		}),
+	).toMatchObject({ok: true, data: {action: "created"}});
+	const empty = structuredClone(mapping);
+	empty.speedrunCom.variables = {};
+	expect(
+		await api.request("saveCategoryMapping", {
+			mapping: empty,
+			expectedRevision: null,
+			settingsRevision: 0,
+		}),
+	).toMatchObject({ok: false, error: {code: "invalid_input"}});
+	const tooLong = structuredClone(mapping);
+	tooLong.speedrunCom.variables = {runner: "x".repeat(256)};
+	expect(
+		await api.request("saveCategoryMapping", {
+			mapping: tooLong,
 			expectedRevision: null,
 			settingsRevision: 0,
 		}),
@@ -334,7 +404,7 @@ it("validates settings through the API and forwards Speedrun.com discovery opera
 		await api.request("getSpeedrunCategoryVariables", {categoryId: "c1"}),
 	).toMatchObject({
 		ok: true,
-		data: {variables: [{id: "v1", mandatory: false}]},
+		data: {variables: [{id: "difficulty", mandatory: false}]},
 	});
 	expect(speedrun.searchGames).toHaveBeenCalledWith("mario");
 	expect(

@@ -4,8 +4,23 @@ import {Badge} from "./components/common";
 import {Mappings} from "./components/Mappings";
 import {Overview} from "./components/Overview";
 import {Settings} from "./components/Settings";
+import {usePlayerManagerStatus} from "./hooks/use-player-manager-status";
 import {useReplicant} from "./hooks/use-replicant";
 import {statusTone} from "./model/status";
+
+const PLAYER_MANAGER_LABELS = {
+	ready: "Ready",
+	loading: "Loading",
+	unavailable: "Unavailable",
+	error: "Error",
+} as const;
+
+const PLAYER_MANAGER_TONES = {
+	ready: "success",
+	loading: "progress",
+	unavailable: "warning",
+	error: "error",
+} as const;
 
 type Tab = "overview" | "mappings" | "settings";
 
@@ -18,7 +33,10 @@ const TABS: ReadonlyArray<{id: Tab; label: string}> = [
 export function App() {
 	const [tab, setTab] = useState<Tab>("overview");
 	const races = useReplicant<RacesState>(RACES_REPLICANT);
+	const playerManager = usePlayerManagerStatus();
 	const state = races.ready ? (races.value ? "ready" : "idle") : "loading";
+	const playerManagerMessage =
+		"message" in playerManager ? playerManager.message : undefined;
 
 	return (
 		<div className='app'>
@@ -37,6 +55,12 @@ export function App() {
 						label='監視中'
 						state={`${races.value?.races.length ?? 0}`}
 						tone='neutral'
+					/>
+					<Badge
+						label='Player Manager'
+						state={PLAYER_MANAGER_LABELS[playerManager.state]}
+						tone={PLAYER_MANAGER_TONES[playerManager.state]}
+						title={playerManagerMessage}
 					/>
 				</div>
 			</header>

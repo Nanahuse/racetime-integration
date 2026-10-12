@@ -7,6 +7,7 @@ import {
 	type Response,
 	type Settings,
 	type SettingsState,
+	type SpeedrunVariableOption,
 	type TimingMethod,
 } from "@nanahuse/racetime-protocol";
 import {IntegrationError} from "./errors";
@@ -76,6 +77,61 @@ export function parseSettingsState(raw: unknown): SettingsState {
 }
 
 const TIMING_METHODS = ["realtime", "realtime_noloads", "ingame"];
+const MAX_VARIABLE_VALUE_LENGTH = 2048;
+const MAX_USER_DEFINED_LENGTH = 255;
+
+function variableValue(value: unknown, field: string): string {
+	if (typeof value !== "string" || value.length > MAX_VARIABLE_VALUE_LENGTH)
+		throw new RequestError("invalid_input", `Invalid ${field}`);
+	return value;
+}
+
+function pruneVariables(
+	values: Record<string, string>,
+): Record<string, string> {
+	const result: Record<string, string> = {};
+	for (const [key, value] of Object.entries(values))
+		if (value !== "") result[key] = value;
+	return result;
+}
+
+/**
+ * Validates a category's variable selection against the Speedrun.com
+ * definitions: no unknown ids, enum values must be offered options, mandatory
+ * variables must be set, and user-defined values are length-checked.
+ */
+function validateVariables(
+	definitions: readonly SpeedrunVariableOption[],
+	values: Record<string, string>,
+): void {
+	const byId = new Map(definitions.map((variable) => [variable.id, variable]));
+	for (const [id, value] of Object.entries(values)) {
+		const variable = byId.get(id);
+		if (!variable)
+			throw new RequestError("invalid_input", `Unknown variable "${id}"`);
+		if (variable.userDefined) {
+			if (value.length > MAX_USER_DEFINED_LENGTH)
+				throw new RequestError("invalid_input", `Variable "${id}" is too long`);
+			if (variable.mandatory && value.trim() === "")
+				throw new RequestError(
+					"invalid_input",
+					`Missing mandatory variable "${id}"`,
+				);
+			continue;
+		}
+		if (!variable.values.some((option) => option.id === value))
+			throw new RequestError(
+				"invalid_input",
+				`Invalid value for variable "${id}"`,
+			);
+	}
+	for (const variable of definitions)
+		if (variable.mandatory && !values[variable.id])
+			throw new RequestError(
+				"invalid_input",
+				`Missing mandatory variable "${variable.id}"`,
+			);
+}
 
 function gameMapping(raw: unknown): GameMapping {
 	const input = object(raw, "game mapping");
@@ -98,8 +154,12 @@ function categoryMapping(raw: unknown): CategoryMapping {
 	const race = object(input.racetime, "categoryMapping.racetime");
 	const src = object(input.speedrunCom, "categoryMapping.speedrunCom");
 	const variables = object(src.variables, "variables");
-	for (const [key, value] of Object.entries(variables))
-		text(value, `variables.${key}`);
+	const normalizedVariables: Record<string, string> = {};
+	for (const [key, value] of Object.entries(variables)) {
+		if (key.trim() === "")
+			throw new RequestError("invalid_input", "Invalid variable id");
+		normalizedVariables[key] = variableValue(value, `variables.${key}`);
+	}
 	if (src.emulator !== null && typeof src.emulator !== "boolean")
 		throw new RequestError("invalid_input", "emulator must be boolean or null");
 	if (
@@ -116,7 +176,7 @@ function categoryMapping(raw: unknown): CategoryMapping {
 			categoryId: text(src.categoryId, "categoryId"),
 			categoryName: text(src.categoryName, "categoryName"),
 			levelId: nullableText(src.levelId, "levelId"),
-			variables: {...variables} as Record<string, string>,
+			variables: normalizedVariables,
 			platformId: nullableText(src.platformId, "platformId"),
 			regionId: nullableText(src.regionId, "regionId"),
 			emulator: src.emulator,
@@ -192,9 +252,17 @@ export function createAPI(
 						text(data.goal),
 					);
 					break;
-				case "saveCategoryMapping":
+				case "saveCategoryMapping": {
+					const parsed = categoryMapping(data.mapping);
+					const mapping: CategoryMapping = {
+						...parsed,
+						speedrunCom: {
+							...parsed.speedrunCom,
+							variables: pruneVariables(parsed.speedrunCom.variables),
+						},
+					};
 					value = await mappings.saveCategory(
-						categoryMapping(data.mapping),
+						mapping,
 						expectedRevision(data.expectedRevision),
 						revision(data.settingsRevision),
 						async (game, category) => {
@@ -206,19 +274,14 @@ export function createAPI(
 									"category_not_in_game",
 									`Category "${category.categoryId}" does not belong to game "${game.gameId}"`,
 								);
-							const variables = await speedrun.getCategoryVariables(
+							const definitions = await speedrun.getCategoryVariables(
 								category.categoryId,
 							);
-							for (const variable of variables) {
-								if (variable.mandatory && !category.variables[variable.id])
-									throw new RequestError(
-										"invalid_input",
-										`Missing mandatory variable "${variable.id}"`,
-									);
-							}
+							validateVariables(definitions, category.variables);
 						},
 					);
 					break;
+				}
 				case "deleteCategoryMapping":
 					value = await mappings.deleteCategory(
 						text(data.categorySlug),

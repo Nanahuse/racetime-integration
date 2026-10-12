@@ -1,9 +1,16 @@
 import {afterEach, expect, it, vi} from "vitest";
-import {ApiError, request} from "../ui/dashboard/api/client";
+import {
+	ApiError,
+	isConflict,
+	isSettingsChanged,
+	request,
+} from "../ui/dashboard/api/client";
 import {
 	beginRegistration,
 	playerEditUrl,
+	playerManagerStatus,
 } from "../ui/dashboard/api/player-manager";
+import {diffValues} from "../ui/dashboard/model/diff";
 import {
 	spreadsheetEditUrl,
 	spreadsheetIdFromInput,
@@ -67,4 +74,57 @@ it("normalizes spreadsheet URLs and IDs", () => {
 	expect(spreadsheetIdFromInput(" abc_123 ")).toBe("abc_123");
 	expect(spreadsheetIdFromInput("")).toBeNull();
 	expect(spreadsheetEditUrl("abc")).toContain("/spreadsheets/d/abc/edit");
+});
+
+it("maps the public Player Manager status to dashboard states", async () => {
+	sendMessageToBundle.mockResolvedValue({
+		ok: true,
+		data: {ready: true, error: null},
+	});
+	expect(await playerManagerStatus()).toEqual({state: "ready"});
+	sendMessageToBundle.mockResolvedValue({
+		ok: true,
+		data: {ready: false, error: null},
+	});
+	expect(await playerManagerStatus()).toEqual({state: "loading"});
+	sendMessageToBundle.mockResolvedValue({
+		ok: true,
+		data: {ready: false, error: "boom"},
+	});
+	expect(await playerManagerStatus()).toEqual({
+		state: "error",
+		message: "boom",
+	});
+	sendMessageToBundle.mockResolvedValue({
+		ok: false,
+		error: {code: "directory_unavailable", message: "down"},
+	});
+	expect(await playerManagerStatus()).toMatchObject({state: "unavailable"});
+	sendMessageToBundle.mockRejectedValue(new Error("no bundle"));
+	expect(await playerManagerStatus()).toMatchObject({
+		state: "unavailable",
+		message: "no bundle",
+	});
+	expect(sendMessageToBundle).toHaveBeenCalledWith(
+		"player-manager.v2.status",
+		"player-manager",
+		undefined,
+	);
+});
+
+it("separates revision conflicts from spreadsheet settings changes", () => {
+	expect(isConflict(new ApiError("mapping_conflict", "x"))).toBe(true);
+	expect(isConflict(new ApiError("game_mapping_conflict", "x"))).toBe(false);
+	expect(isSettingsChanged(new ApiError("settings_changed", "x"))).toBe(true);
+	expect(isSettingsChanged(new ApiError("mapping_conflict", "x"))).toBe(false);
+});
+
+it("diffs mapping values leaf-by-leaf for conflict review", () => {
+	expect(diffValues({a: 1, b: {c: "x"}}, {a: 2, b: {c: "x"}})).toEqual([
+		{path: "a", before: "1", after: "2"},
+	]);
+	expect(diffValues({a: 1}, {a: 1})).toEqual([]);
+	expect(diffValues({a: null}, {a: "y"})).toEqual([
+		{path: "a", before: "—", after: "y"},
+	]);
 });

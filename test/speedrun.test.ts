@@ -70,6 +70,18 @@ const routes: Record<string, unknown> = {
 		pagination: {size: 1},
 	},
 	"/api/v1/categories/c1": {data: {id: "c1", game: "g1"}},
+	"/api/v1/categories/c3/variables": {
+		data: [
+			{
+				id: "runner",
+				name: "Runner",
+				mandatory: true,
+				"user-defined": true,
+				values: {values: {}},
+			},
+		],
+		pagination: {size: 1},
+	},
 };
 
 it("searches games by name through the Speedrun.com API", async () => {
@@ -108,6 +120,19 @@ it("returns category variables with their selectable values and resolves the own
 		},
 	]);
 	expect(await client.getCategoryGameId("c1")).toBe("g1");
+});
+
+it("maps user-defined variables without offered values", async () => {
+	const {client} = clientWith(routes);
+	expect(await client.getCategoryVariables("c3")).toEqual([
+		{
+			id: "runner",
+			name: "Runner",
+			mandatory: true,
+			userDefined: true,
+			values: [],
+		},
+	]);
 });
 
 it("maps missing resources to not_found and server failures to speedrun_unavailable", async () => {

@@ -146,10 +146,7 @@ function mapLevel(value: unknown): SpeedrunLevelOption {
 function mapVariable(value: unknown): SpeedrunVariableOption {
 	const record = requireRecord(value, "variable");
 	const valuesWrapper = requireRecord(record.values, "variable.values");
-	const valuesMap = requireRecord(
-		valuesWrapper.values,
-		"variable.values.values",
-	);
+	const valuesMap = isRecord(valuesWrapper.values) ? valuesWrapper.values : {};
 	const values: SpeedrunVariableValueOption[] = [];
 	for (const [id, entry] of Object.entries(valuesMap)) {
 		const entryRecord = requireRecord(entry, `variable.values.values.${id}`);

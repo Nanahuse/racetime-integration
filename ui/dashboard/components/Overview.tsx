@@ -1,5 +1,7 @@
 import type {
+	Entrant,
 	Participant,
+	Race,
 	RaceState,
 	RacesState,
 } from "@nanahuse/racetime-protocol";
@@ -24,34 +26,49 @@ function orderParticipants(participants: readonly Participant[]) {
 	return [...participants].sort((a, b) => rank[a.status] - rank[b.status]);
 }
 
-function RaceDetails({race}: {race: RaceState}) {
-	const summary = counts(race.participants);
+function entrantNames(entrants: readonly Entrant[]) {
+	return new Map(entrants.map((entrant) => [entrant.userId, entrant.name]));
+}
+
+/** Fields common to a single Race, used by both monitored and fetched views. */
+function RaceFields({race}: {race: Race}) {
+	return (
+		<dl className='details'>
+			<div>
+				<dt>Race ID</dt>
+				<dd>{race.raceId}</dd>
+			</div>
+			<div>
+				<dt>Game / Goal</dt>
+				<dd>
+					{race.category.name} / {race.category.goal}
+				</dd>
+			</div>
+			<div>
+				<dt>RaceTime status</dt>
+				<dd>{race.status}</dd>
+			</div>
+			<div>
+				<dt>Entrants</dt>
+				<dd>{race.entrants.length}</dd>
+			</div>
+		</dl>
+	);
+}
+
+function MonitoredDetails({state}: {state: RaceState}) {
+	const summary = counts(state.participants);
 	return (
 		<div className='subpanel'>
+			{state.race ? (
+				<RaceFields race={state.race} />
+			) : (
+				<p className='muted'>レース情報を取得できていません。</p>
+			)}
 			<dl className='details'>
 				<div>
-					<dt>Race ID</dt>
-					<dd>{race.race?.raceId ?? "—"}</dd>
-				</div>
-				<div>
-					<dt>Game / Goal</dt>
-					<dd>
-						{race.race
-							? `${race.race.category.name} / ${race.race.category.goal}`
-							: "—"}
-					</dd>
-				</div>
-				<div>
-					<dt>RaceTime status</dt>
-					<dd>{race.race?.status ?? "—"}</dd>
-				</div>
-				<div>
 					<dt>Connection</dt>
-					<dd>{race.connection}</dd>
-				</div>
-				<div>
-					<dt>Entrants</dt>
-					<dd>{race.race?.entrants.length ?? 0}</dd>
+					<dd>{state.connection}</dd>
 				</div>
 				<div>
 					<dt>Matched / Unresolved / Unavailable</dt>
@@ -61,27 +78,84 @@ function RaceDetails({race}: {race: RaceState}) {
 				</div>
 				<div>
 					<dt>Race revision</dt>
-					<dd>{race.raceRevision}</dd>
+					<dd>{state.raceRevision}</dd>
 				</div>
 				<div>
 					<dt>Participants revision</dt>
-					<dd>{race.participantsRevision}</dd>
+					<dd>{state.participantsRevision}</dd>
 				</div>
 			</dl>
-			{race.error && <Callout tone='error'>{race.error}</Callout>}
+			{state.error && <Callout tone='error'>{state.error}</Callout>}
 		</div>
 	);
 }
 
+function FetchedDetails({race}: {race: Race}) {
+	return (
+		<div className='subpanel'>
+			<RaceFields race={race} />
+			<p className='muted'>
+				単発取得の結果です（watchIdなし・Player解決なし）。
+			</p>
+		</div>
+	);
+}
+
+function Entrants({entrants}: {entrants: readonly Entrant[]}) {
+	return (
+		<ul className='list'>
+			{entrants.map((entrant) => (
+				<li key={entrant.userId}>
+					<strong>{entrant.name}</strong>
+					<small>{entrant.userId}</small>
+				</li>
+			))}
+		</ul>
+	);
+}
+
+function ParticipantActions({
+	participant,
+	onRegister,
+}: {
+	participant: Participant;
+	onRegister: (participant: Participant) => void;
+}) {
+	if (participant.status === "matched" && participant.playerId)
+		return (
+			<a
+				className='link'
+				href={playerEditUrl(participant.playerId)}
+				target='_blank'
+				rel='noopener noreferrer'
+			>
+				編集 ↗
+			</a>
+		);
+	if (participant.status === "unresolved")
+		return (
+			<button
+				type='button'
+				onClick={() => onRegister(participant)}
+			>
+				登録・紐付け
+			</button>
+		);
+	return null;
+}
+
 function Participants({
 	participants,
+	entrants,
 	onRegister,
 }: {
 	participants: readonly Participant[];
+	entrants: readonly Entrant[];
 	onRegister: (participant: Participant) => void;
 }) {
 	if (participants.length === 0)
-		return <p className='muted'>参加者は未解決です。</p>;
+		return <p className='muted'>参加者はまだ解決されていません。</p>;
+	const names = entrantNames(entrants);
 	return (
 		<table className='participants'>
 			<thead>
@@ -100,7 +174,11 @@ function Participants({
 						className={participant.status}
 					>
 						<td>
-							<div>{participant.player?.racetime?.name ?? "—"}</div>
+							<div>
+								{names.get(participant.racetimeUserId) ??
+									participant.player?.racetime?.name ??
+									"—"}
+							</div>
 							<small>{participant.racetimeUserId}</small>
 						</td>
 						<td>
@@ -124,23 +202,10 @@ function Participants({
 							{participant.message && <small>{participant.message}</small>}
 						</td>
 						<td>
-							{participant.playerId ? (
-								<a
-									className='link'
-									href={playerEditUrl(participant.playerId)}
-									target='_blank'
-									rel='noopener noreferrer'
-								>
-									編集 ↗
-								</a>
-							) : (
-								<button
-									type='button'
-									onClick={() => onRegister(participant)}
-								>
-									登録・紐付け
-								</button>
-							)}
+							<ParticipantActions
+								participant={participant}
+								onRegister={onRegister}
+							/>
 						</td>
 					</tr>
 				))}
@@ -152,25 +217,27 @@ function Participants({
 export function Overview({races}: {races: RacesState | undefined}) {
 	const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
 	const [urlInput, setUrlInput] = useState("");
-	const [fetched, setFetched] = useState<RaceState | null>(null);
+	const [fetched, setFetched] = useState<Race | null>(null);
 	const [registrationUrl, setRegistrationUrl] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
 	const list = races?.races ?? [];
-	const monitored = list.find((race) => race.url === selectedUrl) ?? null;
-	const detail = monitored ?? fetched;
+	const monitored =
+		selectedUrl === null
+			? null
+			: (list.find((race) => race.url === selectedUrl) ?? null);
 
 	const runFetch = async () => {
 		setBusy(true);
 		setError(null);
 		setRegistrationUrl(null);
 		try {
-			await request("fetchRace", {url: urlInput.trim()});
-			setFetched(null);
+			const race = await request("fetchRace", {url: urlInput.trim()});
+			setFetched(race);
 			setSelectedUrl(null);
-			setError(null);
 		} catch (cause) {
+			setFetched(null);
 			setError(errorMessage(cause));
 		} finally {
 			setBusy(false);
@@ -207,6 +274,7 @@ export function Overview({races}: {races: RacesState | undefined}) {
 								onClick={() => {
 									setSelectedUrl(race.url);
 									setFetched(null);
+									setError(null);
 								}}
 							>
 								<strong>{race.race?.raceId ?? race.url}</strong>
@@ -228,7 +296,7 @@ export function Overview({races}: {races: RacesState | undefined}) {
 						/>
 						<button
 							type='button'
-							disabled={busy}
+							disabled={busy || urlInput.trim() === ""}
 							onClick={() => void runFetch()}
 						>
 							{busy ? "取得中…" : "取得"}
@@ -253,14 +321,25 @@ export function Overview({races}: {races: RacesState | undefined}) {
 						</a>
 					</Callout>
 				)}
-				{detail ? (
+				{monitored ? (
 					<>
-						<RaceDetails race={detail} />
+						<MonitoredDetails state={monitored} />
 						<h3>参加者</h3>
 						<Participants
-							participants={orderParticipants(detail.participants)}
+							participants={orderParticipants(monitored.participants)}
+							entrants={monitored.race?.entrants ?? []}
 							onRegister={(participant) => void register(participant)}
 						/>
+					</>
+				) : fetched ? (
+					<>
+						<FetchedDetails race={fetched} />
+						<h3>参加者</h3>
+						{fetched.entrants.length > 0 ? (
+							<Entrants entrants={fetched.entrants} />
+						) : (
+							<p className='muted'>参加者はいません。</p>
+						)}
 					</>
 				) : (
 					<p className='muted'>レースを選択するかURLで取得してください。</p>
