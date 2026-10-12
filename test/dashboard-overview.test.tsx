@@ -382,6 +382,104 @@ it("keeps a fetch busy when an older registration completes", async () => {
 	});
 });
 
+it("disables registration while another race is being fetched", async () => {
+	const otherRace: Race = {...race, raceId: "other/race"};
+	const pending = deferred<unknown>();
+	let fetches = 0;
+	sendMessage.mockImplementation((name: string) => {
+		if (name !== "racetime.v3.fetchRace")
+			throw new Error(`unexpected operation ${name}`);
+		fetches += 1;
+		return fetches === 1
+			? Promise.resolve({ok: true, data: resolved()})
+			: pending.promise;
+	});
+	render(<Overview races={undefined} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: race.url},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	const register = await screen.findByRole("button", {name: "登録・紐付け"});
+	expect((register as HTMLButtonElement).disabled).toBe(false);
+
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: "https://racetime.gg/other/race"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	expect(
+		(screen.getByRole("button", {name: "登録・紐付け"}) as HTMLButtonElement)
+			.disabled,
+	).toBe(true);
+
+	await act(async () => {
+		pending.resolve({ok: true, data: resolved(otherRace)});
+	});
+	expect(await screen.findByText("other/race")).toBeTruthy();
+	expect(
+		(screen.getByRole("button", {name: "登録・紐付け"}) as HTMLButtonElement)
+			.disabled,
+	).toBe(false);
+});
+
+it("registers the same account after switching races without stale effects", async () => {
+	const open = vi.spyOn(window, "open").mockReturnValue(null);
+	const raceA: Race = {...race, raceId: "a/race"};
+	const raceB: Race = {...race, raceId: "b/race"};
+	const registrations: Array<(value: unknown) => void> = [];
+	sendMessageToBundle.mockImplementation(
+		() =>
+			new Promise((resolve) => {
+				registrations.push(resolve);
+			}),
+	);
+	let fetches = 0;
+	sendMessage.mockImplementation(async (name: string) => {
+		if (name !== "racetime.v3.fetchRace")
+			throw new Error(`unexpected operation ${name}`);
+		fetches += 1;
+		return {ok: true, data: resolved(fetches === 1 ? raceA : raceB)};
+	});
+	render(<Overview races={undefined} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: "https://racetime.gg/game/a"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	expect(await screen.findByText("a/race")).toBeTruthy();
+	fireEvent.click(screen.getByRole("button", {name: "登録・紐付け"}));
+	expect(sendMessageToBundle).toHaveBeenCalledTimes(1);
+
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: "https://racetime.gg/game/b"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	expect(await screen.findByText("b/race")).toBeTruthy();
+	fireEvent.click(screen.getByRole("button", {name: "登録・紐付け"}));
+	expect(sendMessageToBundle).toHaveBeenCalledTimes(2);
+
+	await act(async () => {
+		registrations[0]!({
+			ok: true,
+			data: {registrationId: "rA", url: "/RegistrationA.html"},
+		});
+	});
+	expect(open).not.toHaveBeenCalled();
+	expect(screen.queryByText(/登録画面を開きました/)).toBeNull();
+	expect(screen.getByText("b/race")).toBeTruthy();
+
+	await act(async () => {
+		registrations[1]!({
+			ok: true,
+			data: {registrationId: "rB", url: "/RegistrationB.html"},
+		});
+	});
+	expect(open).toHaveBeenCalledWith(
+		"/RegistrationB.html",
+		"_blank",
+		"noopener,noreferrer",
+	);
+	expect(screen.getByText(/登録画面を開きました/)).toBeTruthy();
+});
+
 it("renders an unset place as a dash instead of 位", () => {
 	render(<Overview races={races} />);
 	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));

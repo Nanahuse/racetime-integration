@@ -114,9 +114,11 @@ function FetchedDetails({resolved}: {resolved: ResolvedRace}) {
 function ParticipantActions({
 	participant,
 	onRegister,
+	registerDisabled,
 }: {
 	participant: Participant;
 	onRegister: (participant: Participant) => void;
+	registerDisabled: boolean;
 }) {
 	if (participant.status === "matched" && participant.playerId)
 		return (
@@ -133,6 +135,7 @@ function ParticipantActions({
 		return (
 			<button
 				type='button'
+				disabled={registerDisabled}
 				onClick={() => onRegister(participant)}
 			>
 				登録・紐付け
@@ -145,10 +148,12 @@ function Participants({
 	participants,
 	race,
 	onRegister,
+	registerDisabled,
 }: {
 	participants: readonly Participant[];
 	race: Race | null;
 	onRegister: (participant: Participant) => void;
+	registerDisabled: boolean;
 }) {
 	if (participants.length === 0)
 		return race && race.entrants.length === 0 ? (
@@ -223,6 +228,7 @@ function Participants({
 								<ParticipantActions
 									participant={participant}
 									onRegister={onRegister}
+									registerDisabled={registerDisabled}
 								/>
 							</td>
 						</tr>
@@ -245,7 +251,10 @@ export function Overview({races}: {races: RacesState | undefined}) {
 	// after the user moved on cannot change the view.
 	const viewRef = useRef(0);
 	const registerGen = useRef(0);
-	const activeRegistration = useRef<string | null>(null);
+	const activeRegistration = useRef<{
+		view: number;
+		participant: string;
+	} | null>(null);
 
 	const list = races?.races ?? [];
 	const monitored =
@@ -284,10 +293,18 @@ export function Overview({races}: {races: RacesState | undefined}) {
 	};
 
 	const register = async (participant: Participant) => {
-		if (activeRegistration.current === participant.racetimeUserId) return;
+		const active = activeRegistration.current;
+		if (
+			active?.view === viewRef.current &&
+			active.participant === participant.racetimeUserId
+		)
+			return;
 		const view = viewRef.current;
 		const gen = ++registerGen.current;
-		activeRegistration.current = participant.racetimeUserId;
+		activeRegistration.current = {
+			view,
+			participant: participant.racetimeUserId,
+		};
 		setError(null);
 		try {
 			const session = await beginRegistration(participant.racetimeUserId);
@@ -298,9 +315,7 @@ export function Overview({races}: {races: RacesState | undefined}) {
 			if (gen !== registerGen.current || view !== viewRef.current) return;
 			setError(errorMessage(cause));
 		} finally {
-			if (gen === registerGen.current) {
-				activeRegistration.current = null;
-			}
+			if (gen === registerGen.current) activeRegistration.current = null;
 		}
 	};
 
@@ -371,6 +386,7 @@ export function Overview({races}: {races: RacesState | undefined}) {
 							participants={orderParticipants(monitored.participants)}
 							race={monitored.race}
 							onRegister={(participant) => void register(participant)}
+							registerDisabled={false}
 						/>
 					</>
 				) : fetched ? (
@@ -381,6 +397,7 @@ export function Overview({races}: {races: RacesState | undefined}) {
 							participants={orderParticipants(fetched.participants)}
 							race={fetched.race}
 							onRegister={(participant) => void register(participant)}
+							registerDisabled={fetching}
 						/>
 						<div className='formrow'>
 							<button

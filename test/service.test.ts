@@ -504,7 +504,7 @@ it("resolves participants for a single fetch without creating a watch or session
 it("resolves Primary and Secondary accounts for a completed race and keeps its results", async () => {
 	const {service, client, sockets, directory} = setup();
 	directory.players = [player("Runner", 1, ["user1", "user2"])];
-	const completed = dto(1, "race", "done");
+	const completed = dto(1, "race", "finished");
 	completed.entrants = [
 		{
 			userId: "user1",
@@ -528,7 +528,7 @@ it("resolves Primary and Secondary accounts for a completed race and keeps its r
 	const result = await service.fetch(url);
 
 	expect(client.fetchRaceDetail).toHaveBeenCalledTimes(1);
-	expect(result.race.status).toBe("done");
+	expect(result.race.status).toBe("finished");
 	expect(result.participants).toMatchObject([
 		{racetimeUserId: "user1", status: "matched", playerId: "p1"},
 		{racetimeUserId: "user2", status: "matched", playerId: "p1"},
