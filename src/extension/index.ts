@@ -16,7 +16,9 @@ import type NodeCG from "@nodecg/types";
 import {createAPI, parseSettingsState} from "../api";
 import {ParticipantResolver} from "../integrations/players";
 import {HttpRaceTimeClient} from "../integrations/racetime/client";
+import {HttpSpeedrunClient} from "../integrations/speedrun/client";
 import {SpreadsheetCategoryMappingsRepository} from "../integrations/spreadsheet/category-mappings-repository";
+import {SpreadsheetGameMappingsRepository} from "../integrations/spreadsheet/game-mappings-repository";
 import {GoogleSheetsClient} from "../integrations/spreadsheet/google-sheets-client";
 import {MappingService} from "../mappings";
 import {RaceService} from "../service";
@@ -24,6 +26,7 @@ import {RaceService} from "../service";
 export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 	const config = nodecg.bundleConfig as {
 		spreadsheetId?: string;
+		gameMappingsSheet?: string;
 		categoryMappingsSheet?: string;
 	};
 	const state = nodecg.Replicant<RacesState>(RACES_REPLICANT, {
@@ -47,26 +50,35 @@ export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 			revision: 0,
 			settings: {
 				spreadsheetId: config.spreadsheetId ?? null,
+				gameMappingsSheet: config.gameMappingsSheet ?? "GameMappings",
 				categoryMappingsSheet:
 					config.categoryMappingsSheet ?? "CategoryMappings",
 			},
 		},
 	});
 	const initialSettings = parseSettingsState(settings.value);
+	const speedrun = new HttpSpeedrunClient({
+		userAgent: `racetime-integration/${nodecg.bundleVersion}`,
+	});
 	const mappings = new MappingService(
 		initialSettings,
 		(next) => {
 			settings.value = next;
 		},
-		(current) =>
-			current.spreadsheetId
-				? new SpreadsheetCategoryMappingsRepository(
-						GoogleSheetsClient.create(current.spreadsheetId),
-						{sheetName: current.categoryMappingsSheet},
-					)
-				: null,
+		(current) => {
+			if (!current.spreadsheetId) return null;
+			const client = GoogleSheetsClient.create(current.spreadsheetId);
+			return {
+				games: new SpreadsheetGameMappingsRepository(client, {
+					sheetName: current.gameMappingsSheet,
+				}),
+				categories: new SpreadsheetCategoryMappingsRepository(client, {
+					sheetName: current.categoryMappingsSheet,
+				}),
+			};
+		},
 	);
-	const api = createAPI(races, mappings);
+	const api = createAPI(races, mappings, speedrun);
 	const directoryChanged = (data: {directoryRevision?: unknown}) => {
 		if (typeof data?.directoryRevision === "number")
 			races.directoryChanged(data.directoryRevision);

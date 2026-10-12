@@ -313,13 +313,20 @@ it("validates new public write contracts and reports disabled Sheets without aff
 			revision: 0,
 			settings: {
 				spreadsheetId: null,
+				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 			},
 		},
 		() => {},
 		() => null,
 	);
-	const api = createAPI(service, mappings);
+	const speedrun = {
+		searchGames: vi.fn(),
+		getGameOptions: vi.fn(),
+		getCategoryVariables: vi.fn(),
+		getCategoryGameId: vi.fn(),
+	};
+	const api = createAPI(service, mappings, speedrun as never);
 	expect(await api.request("watchRace", {url: 123} as never)).toMatchObject({
 		ok: false,
 		error: {code: "invalid_input"},

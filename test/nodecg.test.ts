@@ -154,6 +154,7 @@ it("loads the built extension, subscribes to the v2 event, and refreshes its pub
 			revision: 0,
 			settings: {
 				spreadsheetId: null,
+				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 			},
 		},
@@ -214,7 +215,7 @@ it("exports the protocol from ESM and CommonJS without server dependencies", () 
     import {createRequire} from 'node:module'; import * as esm from '@nanahuse/racetime-protocol';
     const cjs = createRequire(import.meta.url)('@nanahuse/racetime-protocol');
     assert.deepEqual(Object.keys(esm).sort(), Object.keys(cjs).sort()); assert.equal(esm.API_VERSION, cjs.API_VERSION);
-    assert.equal(cjs.operationMessageName('watchRace'), 'racetime.v1.watchRace');`,
+    assert.equal(cjs.operationMessageName('watchRace'), 'racetime.v2.watchRace');`,
 		],
 		{cwd: process.cwd()},
 	);
@@ -227,6 +228,7 @@ it("initializes from a Proxy-backed settings Replicant and reads the defaults", 
 			revision: 0,
 			settings: {
 				spreadsheetId: null,
+				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 			},
 		},
@@ -237,6 +239,7 @@ it("loads persisted settings exposed through a Proxy-backed Replicant", async ()
 		revision: 4,
 		settings: {
 			spreadsheetId: "abc_123-XYZ",
+			gameMappingsSheet: "Games",
 			categoryMappingsSheet: "Mappings",
 		},
 	});
@@ -246,6 +249,7 @@ it("loads persisted settings exposed through a Proxy-backed Replicant", async ()
 			revision: 4,
 			settings: {
 				spreadsheetId: "abc_123-XYZ",
+				gameMappingsSheet: "Games",
 				categoryMappingsSheet: "Mappings",
 			},
 		},
@@ -255,27 +259,43 @@ it("persists updates through the Replicant and restarts from the saved settings"
 	const [api, replicants] = loadExtension();
 	expect(
 		await api.request("updateSettings", {
-			settings: {spreadsheetId: null, categoryMappingsSheet: "Other"},
+			settings: {
+				spreadsheetId: null,
+				gameMappingsSheet: "Games",
+				categoryMappingsSheet: "Other",
+			},
 			expectedRevision: 0,
 		}),
 	).toEqual({
 		ok: true,
 		data: {
 			revision: 1,
-			settings: {spreadsheetId: null, categoryMappingsSheet: "Other"},
+			settings: {
+				spreadsheetId: null,
+				gameMappingsSheet: "Games",
+				categoryMappingsSheet: "Other",
+			},
 		},
 	});
 	const saved = replicants.get(SETTINGS_REPLICANT)?.stored();
 	expect(saved).toEqual({
 		revision: 1,
-		settings: {spreadsheetId: null, categoryMappingsSheet: "Other"},
+		settings: {
+			spreadsheetId: null,
+			gameMappingsSheet: "Games",
+			categoryMappingsSheet: "Other",
+		},
 	});
 	const [restarted] = loadExtension(saved as SettingsState);
 	expect(await restarted.request("getSettings", undefined)).toEqual({
 		ok: true,
 		data: {
 			revision: 1,
-			settings: {spreadsheetId: null, categoryMappingsSheet: "Other"},
+			settings: {
+				spreadsheetId: null,
+				gameMappingsSheet: "Games",
+				categoryMappingsSheet: "Other",
+			},
 		},
 	});
 });
@@ -287,6 +307,7 @@ it("rejects invalid persisted settings with an identifiable error", () => {
 				revision: -1,
 				settings: {
 					spreadsheetId: null,
+					gameMappingsSheet: "GameMappings",
 					categoryMappingsSheet: "CategoryMappings",
 				},
 			},
@@ -297,6 +318,7 @@ it("rejects invalid persisted settings with an identifiable error", () => {
 				revision: 1.5,
 				settings: {
 					spreadsheetId: null,
+					gameMappingsSheet: "GameMappings",
 					categoryMappingsSheet: "CategoryMappings",
 				},
 			},
@@ -307,6 +329,7 @@ it("rejects invalid persisted settings with an identifiable error", () => {
 				revision: 0,
 				settings: {
 					spreadsheetId: "not a valid id",
+					gameMappingsSheet: "GameMappings",
 					categoryMappingsSheet: "CategoryMappings",
 				},
 			},
@@ -317,6 +340,7 @@ it("rejects invalid persisted settings with an identifiable error", () => {
 				revision: 0,
 				settings: {
 					spreadsheetId: "",
+					gameMappingsSheet: "GameMappings",
 					categoryMappingsSheet: "CategoryMappings",
 				},
 			},
@@ -325,7 +349,11 @@ it("rejects invalid persisted settings with an identifiable error", () => {
 			/categoryMappingsSheet/,
 			{
 				revision: 0,
-				settings: {spreadsheetId: null, categoryMappingsSheet: ""},
+				settings: {
+					spreadsheetId: null,
+					gameMappingsSheet: "GameMappings",
+					categoryMappingsSheet: "",
+				},
 			},
 		],
 		[/settings/, {revision: 0, settings: null as never}],

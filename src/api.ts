@@ -1,14 +1,18 @@
 import {
 	API_VERSION,
 	type CategoryMapping,
+	type GameMapping,
 	type Operations,
 	type RaceTimeAPI,
 	type Response,
 	type Settings,
 	type SettingsState,
+	type TimingMethod,
 } from "@nanahuse/racetime-protocol";
 import {IntegrationError} from "./errors";
 import {RaceTimeError} from "./integrations/racetime/errors";
+import type {SpeedrunClient} from "./integrations/speedrun/client";
+import {SpeedrunError} from "./integrations/speedrun/errors";
 import {
 	SheetValidationError,
 	SpreadsheetIntegrationError,
@@ -43,6 +47,9 @@ function revision(value: unknown, field?: string): number {
 		);
 	return value;
 }
+function nullableText(value: unknown, field: string): string | null {
+	return value === null ? null : text(value, field);
+}
 export function parseSettings(raw: unknown): Settings {
 	const input = object(raw, "settings");
 	const spreadsheetId =
@@ -53,6 +60,7 @@ export function parseSettings(raw: unknown): Settings {
 		throw new RequestError("invalid_input", "Invalid spreadsheetId");
 	return {
 		spreadsheetId,
+		gameMappingsSheet: text(input.gameMappingsSheet, "gameMappingsSheet"),
 		categoryMappingsSheet: text(
 			input.categoryMappingsSheet,
 			"categoryMappingsSheet",
@@ -66,49 +74,65 @@ export function parseSettingsState(raw: unknown): SettingsState {
 		settings: parseSettings(input.settings),
 	};
 }
-function mapping(raw: unknown): CategoryMapping {
-	const input = object(raw),
-		race = object(input.racetime),
-		src = object(input.speedrunCom);
-	const nullable = (value: unknown) => (value === null ? null : text(value));
-	const variables = object(src.variables);
-	for (const value of Object.values(variables)) text(value);
+
+const TIMING_METHODS = ["realtime", "realtime_noloads", "ingame"];
+
+function gameMapping(raw: unknown): GameMapping {
+	const input = object(raw, "game mapping");
+	const race = object(input.racetime, "gameMapping.racetime");
+	const src = object(input.speedrunCom, "gameMapping.speedrunCom");
+	return {
+		racetime: {
+			categorySlug: text(race.categorySlug, "categorySlug"),
+			categoryName: text(race.categoryName, "categoryName"),
+		},
+		speedrunCom: {
+			gameId: text(src.gameId, "gameId"),
+			gameName: text(src.gameName, "gameName"),
+		},
+	};
+}
+
+function categoryMapping(raw: unknown): CategoryMapping {
+	const input = object(raw, "category mapping");
+	const race = object(input.racetime, "categoryMapping.racetime");
+	const src = object(input.speedrunCom, "categoryMapping.speedrunCom");
+	const variables = object(src.variables, "variables");
+	for (const [key, value] of Object.entries(variables))
+		text(value, `variables.${key}`);
 	if (src.emulator !== null && typeof src.emulator !== "boolean")
 		throw new RequestError("invalid_input", "emulator must be boolean or null");
 	if (
 		src.timingMethod !== null &&
-		!["realtime", "realtime_noloads", "ingame"].includes(
-			String(src.timingMethod),
-		)
+		!TIMING_METHODS.includes(String(src.timingMethod))
 	)
 		throw new RequestError("invalid_input", "Invalid timingMethod");
-	if (typeof race.categoryName !== "string")
-		throw new RequestError("invalid_input", "categoryName must be a string");
 	return {
 		racetime: {
-			categorySlug: text(race.categorySlug),
-			categoryName: race.categoryName.trim(),
-			goal: text(race.goal),
+			categorySlug: text(race.categorySlug, "categorySlug"),
+			goal: text(race.goal, "goal"),
 		},
 		speedrunCom: {
-			gameId: text(src.gameId),
-			gameName: text(src.gameName),
-			categoryId: text(src.categoryId),
-			categoryName: text(src.categoryName),
-			levelId: nullable(src.levelId),
-			platformId: nullable(src.platformId),
-			regionId: nullable(src.regionId),
+			categoryId: text(src.categoryId, "categoryId"),
+			categoryName: text(src.categoryName, "categoryName"),
+			levelId: nullableText(src.levelId, "levelId"),
 			variables: {...variables} as Record<string, string>,
+			platformId: nullableText(src.platformId, "platformId"),
+			regionId: nullableText(src.regionId, "regionId"),
 			emulator: src.emulator,
-			timingMethod:
-				src.timingMethod as CategoryMapping["speedrunCom"]["timingMethod"],
+			timingMethod: src.timingMethod as TimingMethod | null,
 		},
 	};
+}
+
+function expectedRevision(value: unknown): string | null {
+	return value === null ? null : text(value, "expectedRevision");
 }
 
 export function createAPI(
 	races: RaceService,
 	mappings: MappingService,
+	speedrun: SpeedrunClient,
 ): RaceTimeAPI {
 	async function request<K extends keyof Operations>(
 		operation: K,
@@ -139,6 +163,89 @@ export function createAPI(
 				case "resolveParticipants":
 					value = await races.resolve(text(data.url));
 					break;
+				case "listGameMappings":
+					value = await mappings.listGames();
+					break;
+				case "findGameMapping":
+					value = await mappings.findGame(text(data.categorySlug));
+					break;
+				case "saveGameMapping":
+					value = await mappings.saveGame(
+						gameMapping(data.mapping),
+						expectedRevision(data.expectedRevision),
+						revision(data.settingsRevision),
+					);
+					break;
+				case "deleteGameMapping":
+					value = await mappings.deleteGame(
+						text(data.categorySlug),
+						text(data.expectedRevision),
+						revision(data.settingsRevision),
+					);
+					break;
+				case "listCategoryMappings":
+					value = await mappings.listCategories();
+					break;
+				case "findCategoryMapping":
+					value = await mappings.findCategory(
+						text(data.categorySlug),
+						text(data.goal),
+					);
+					break;
+				case "saveCategoryMapping":
+					value = await mappings.saveCategory(
+						categoryMapping(data.mapping),
+						expectedRevision(data.expectedRevision),
+						revision(data.settingsRevision),
+						async (game, category) => {
+							const gameId = await speedrun.getCategoryGameId(
+								category.categoryId,
+							);
+							if (gameId !== game.gameId)
+								throw new RequestError(
+									"category_not_in_game",
+									`Category "${category.categoryId}" does not belong to game "${game.gameId}"`,
+								);
+							const variables = await speedrun.getCategoryVariables(
+								category.categoryId,
+							);
+							for (const variable of variables) {
+								if (variable.mandatory && !category.variables[variable.id])
+									throw new RequestError(
+										"invalid_input",
+										`Missing mandatory variable "${variable.id}"`,
+									);
+							}
+						},
+					);
+					break;
+				case "deleteCategoryMapping":
+					value = await mappings.deleteCategory(
+						text(data.categorySlug),
+						text(data.goal),
+						text(data.expectedRevision),
+						revision(data.settingsRevision),
+					);
+					break;
+				case "resolveCategoryMapping":
+					value = await mappings.resolve(
+						text(data.categorySlug),
+						text(data.goal),
+					);
+					break;
+				case "searchSpeedrunGames":
+					value = {games: await speedrun.searchGames(text(data.query))};
+					break;
+				case "getSpeedrunGameOptions":
+					value = await speedrun.getGameOptions(text(data.gameId));
+					break;
+				case "getSpeedrunCategoryVariables":
+					value = {
+						variables: await speedrun.getCategoryVariables(
+							text(data.categoryId),
+						),
+					};
+					break;
 				case "getSettings":
 					value = mappings.settings();
 					break;
@@ -146,29 +253,6 @@ export function createAPI(
 					value = await mappings.update(
 						parseSettings(data.settings),
 						revision(data.expectedRevision),
-					);
-					break;
-				case "listCategoryMappings":
-					value = await mappings.list();
-					break;
-				case "findCategoryMapping":
-					value = await mappings.find(text(data.categorySlug), text(data.goal));
-					break;
-				case "saveCategoryMapping": {
-					const incoming = mapping(data.mapping);
-					value = await mappings.save(
-						incoming,
-						data.expectedRevision === null ? null : text(data.expectedRevision),
-						revision(data.settingsRevision),
-					);
-					break;
-				}
-				case "deleteCategoryMapping":
-					value = await mappings.delete(
-						text(data.categorySlug),
-						text(data.goal),
-						text(data.expectedRevision),
-						revision(data.settingsRevision),
 					);
 					break;
 				default:
@@ -179,11 +263,13 @@ export function createAPI(
 			const code =
 				error instanceof IntegrationError || error instanceof RaceTimeError
 					? error.code
-					: error instanceof SheetValidationError
-						? "invalid_sheet"
-						: error instanceof SpreadsheetIntegrationError
-							? "spreadsheet_unavailable"
-							: "internal_error";
+					: error instanceof SpeedrunError
+						? error.code
+						: error instanceof SheetValidationError
+							? "invalid_sheet"
+							: error instanceof SpreadsheetIntegrationError
+								? "spreadsheet_unavailable"
+								: "internal_error";
 			return {
 				ok: false,
 				error: {

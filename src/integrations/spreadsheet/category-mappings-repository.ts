@@ -1,6 +1,9 @@
 // Adapted and modified from Nanahuse/nodecg-race-layouts (Apache-2.0).
 import {createHash} from "node:crypto";
-import type {CategoryMapping, MappingRecord} from "@nanahuse/racetime-protocol";
+import type {
+	CategoryMapping,
+	CategoryMappingRecord,
+} from "@nanahuse/racetime-protocol";
 import {IntegrationError} from "../../errors";
 import {
 	CATEGORY_MAPPING_ROW_ISSUE_CODES,
@@ -23,12 +26,15 @@ import {type SheetIssue, SheetValidationError} from "./errors";
 import {buildColumnMap, type ColumnMap, valuesToRawRow} from "./sheet-columns";
 
 export interface CategoryMappingsRepository {
-	find(categorySlug: string, goal: string): Promise<MappingRecord | null>;
-	list(): Promise<MappingRecord[]>;
+	find(
+		categorySlug: string,
+		goal: string,
+	): Promise<CategoryMappingRecord | null>;
+	list(): Promise<CategoryMappingRecord[]>;
 	save(
 		mapping: CategoryMapping,
 		expectedRevision: string | null,
-	): Promise<{record: MappingRecord; action: "created" | "updated"}>;
+	): Promise<{record: CategoryMappingRecord; action: "created" | "updated"}>;
 	delete(
 		categorySlug: string,
 		goal: string,
@@ -94,7 +100,7 @@ export class SpreadsheetCategoryMappingsRepository
 	async find(
 		categorySlug: string,
 		goal: string,
-	): Promise<MappingRecord | null> {
+	): Promise<CategoryMappingRecord | null> {
 		const values = await this.client.readValues(sheetReadRange(this.sheetName));
 		const parsed = this.parse(values);
 		const key = mappingKey(categorySlug, goal);
@@ -108,20 +114,22 @@ export class SpreadsheetCategoryMappingsRepository
 		return entry ? {mapping: entry.mapping, revision: entry.revision} : null;
 	}
 
-	async list(): Promise<MappingRecord[]> {
+	async list(): Promise<CategoryMappingRecord[]> {
 		return this.parse(
 			await this.client.readValues(sheetReadRange(this.sheetName)),
 		).entries.map(({mapping, revision}) => ({mapping, revision}));
 	}
+
 	private serialize<T>(operation: () => Promise<T>): Promise<T> {
 		const write = this.writes.then(operation);
 		this.writes = write.catch(() => {});
 		return write;
 	}
+
 	save(
 		mapping: CategoryMapping,
 		expectedRevision: string | null,
-	): Promise<{record: MappingRecord; action: "created" | "updated"}> {
+	): Promise<{record: CategoryMappingRecord; action: "created" | "updated"}> {
 		const snapshot = structuredClone(mapping);
 		return this.serialize(() => this.write(snapshot, expectedRevision));
 	}
@@ -155,10 +163,11 @@ export class SpreadsheetCategoryMappingsRepository
 			);
 		});
 	}
+
 	private async write(
 		mapping: CategoryMapping,
 		expectedRevision: string | null,
-	): Promise<{record: MappingRecord; action: "created" | "updated"}> {
+	): Promise<{record: CategoryMappingRecord; action: "created" | "updated"}> {
 		const incomingIssues = validateCategoryMapping(mapping);
 		if (incomingIssues.length > 0) {
 			throw new SheetValidationError(

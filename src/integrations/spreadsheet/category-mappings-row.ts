@@ -3,10 +3,7 @@ import type {CategoryMapping, TimingMethod} from "@nanahuse/racetime-protocol";
 
 export const CATEGORY_MAPPING_SHEET_COLUMNS = [
 	"racetime_category_slug",
-	"racetime_category_name",
 	"racetime_goal",
-	"src_game_id",
-	"src_game_name",
 	"src_category_id",
 	"src_category_name",
 	"src_level_id",
@@ -28,8 +25,6 @@ export type CategoryMappingSheetRow = {
 export const CATEGORY_MAPPING_ROW_ISSUE_CODES = {
 	categorySlugMissing: "racetime_category_slug_missing",
 	goalMissing: "racetime_goal_missing",
-	gameIdMissing: "src_game_id_missing",
-	gameNameMissing: "src_game_name_missing",
 	categoryIdMissing: "src_category_id_missing",
 	categoryNameMissing: "src_category_name_missing",
 	variablesInvalid: "src_variables_invalid",
@@ -147,12 +142,6 @@ export function emptyCategoryMappingSheetRow(): CategoryMappingSheetRow {
 	) as CategoryMappingSheetRow;
 }
 
-export function categoryMappingSheetRowToValues(
-	row: CategoryMappingSheetRow,
-): string[] {
-	return CATEGORY_MAPPING_SHEET_COLUMNS.map((column) => row[column]);
-}
-
 export function validateCategoryMapping(
 	mapping: CategoryMapping,
 ): CategoryMappingIssue[] {
@@ -167,18 +156,6 @@ export function validateCategoryMapping(
 		issues.push({
 			code: CATEGORY_MAPPING_ROW_ISSUE_CODES.goalMissing,
 			message: "racetime goal is required.",
-		});
-	}
-	if (mapping.speedrunCom.gameId.trim() === "") {
-		issues.push({
-			code: CATEGORY_MAPPING_ROW_ISSUE_CODES.gameIdMissing,
-			message: "src_game_id is required.",
-		});
-	}
-	if (mapping.speedrunCom.gameName.trim() === "") {
-		issues.push({
-			code: CATEGORY_MAPPING_ROW_ISSUE_CODES.gameNameMissing,
-			message: "src_game_name is required.",
 		});
 	}
 	if (mapping.speedrunCom.categoryId.trim() === "") {
@@ -202,11 +179,8 @@ export function categoryMappingToSheetRow(
 ): CategoryMappingSheetRow {
 	const row = emptyCategoryMappingSheetRow();
 	row.racetime_category_slug = mapping.racetime.categorySlug;
-	row.racetime_category_name = mapping.racetime.categoryName;
 	row.racetime_goal = mapping.racetime.goal;
 
-	row.src_game_id = mapping.speedrunCom.gameId;
-	row.src_game_name = mapping.speedrunCom.gameName;
 	row.src_category_id = mapping.speedrunCom.categoryId;
 	row.src_category_name = mapping.speedrunCom.categoryName;
 	row.src_level_id = mapping.speedrunCom.levelId ?? "";
@@ -243,20 +217,6 @@ export function categoryMappingSheetRowToMapping(
 		});
 	}
 
-	const gameId = normalizeCell(row.src_game_id);
-	if (gameId === "") {
-		issues.push({
-			code: CATEGORY_MAPPING_ROW_ISSUE_CODES.gameIdMissing,
-			message: "src_game_id is required.",
-		});
-	}
-	const gameName = normalizeCell(row.src_game_name);
-	if (gameName === "") {
-		issues.push({
-			code: CATEGORY_MAPPING_ROW_ISSUE_CODES.gameNameMissing,
-			message: "src_game_name is required.",
-		});
-	}
 	const categoryId = normalizeCell(row.src_category_id);
 	if (categoryId === "") {
 		issues.push({
@@ -283,14 +243,8 @@ export function categoryMappingSheetRowToMapping(
 	return {
 		ok: true,
 		mapping: {
-			racetime: {
-				categorySlug,
-				categoryName: normalizeCell(row.racetime_category_name),
-				goal,
-			},
+			racetime: {categorySlug, goal},
 			speedrunCom: {
-				gameId,
-				gameName,
 				categoryId,
 				categoryName,
 				levelId: nullableCell(row.src_level_id),

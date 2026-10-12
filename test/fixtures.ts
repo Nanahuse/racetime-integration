@@ -1,4 +1,4 @@
-import type {CategoryMapping} from "@nanahuse/racetime-protocol";
+import type {CategoryMapping, GameMapping} from "@nanahuse/racetime-protocol";
 import {vi} from "vitest";
 import {parseRaceDetail} from "../src/integrations/racetime/client";
 import type {Socket} from "../src/integrations/racetime/watcher";
@@ -25,11 +25,13 @@ export const payload = (version = 1, race = "race") => ({
 });
 export const dto = (version = 1, race = "race") =>
 	parseRaceDetail(payload(version, race));
+export const gameMapping: GameMapping = {
+	racetime: {categorySlug: "game", categoryName: "Game"},
+	speedrunCom: {gameId: "g1", gameName: "Game"},
+};
 export const mapping: CategoryMapping = {
-	racetime: {categorySlug: "game", categoryName: "Game", goal: "Any%"},
+	racetime: {categorySlug: "game", goal: "Any%"},
 	speedrunCom: {
-		gameId: "g1",
-		gameName: "Game",
 		categoryId: "c1",
 		categoryName: "Any%",
 		levelId: null,

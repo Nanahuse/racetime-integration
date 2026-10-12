@@ -4,35 +4,65 @@ import {
 	CATEGORY_MAPPING_SHEET_COLUMNS,
 	categoryMappingToSheetRow,
 } from "../src/integrations/spreadsheet/category-mappings-row";
-import type {SpreadsheetClient} from "../src/integrations/spreadsheet/client";
+import type {SpreadsheetValues} from "../src/integrations/spreadsheet/client";
+import {SpreadsheetGameMappingsRepository} from "../src/integrations/spreadsheet/game-mappings-repository";
+import {GAME_MAPPING_SHEET_COLUMNS} from "../src/integrations/spreadsheet/game-mappings-row";
 import {GoogleSheetsClient} from "../src/integrations/spreadsheet/google-sheets-client";
-import {MappingService} from "../src/mappings";
-import {mapping} from "./fixtures";
+import {MappingService, type MappingsRepository} from "../src/mappings";
+import {gameMapping, mapping} from "./fixtures";
 
-function setup(header: string[] = [...CATEGORY_MAPPING_SHEET_COLUMNS]) {
-	const values: string[][] = [header];
-	let tick = 0;
-	const client = {
-		readValues: vi.fn(async () => structuredClone(values)),
-		updateValues: vi
-			.fn<SpreadsheetClient["updateValues"]>()
-			.mockImplementation(async (updates) => {
+type Store = Map<string, string[][]>;
+
+function sheetOf(range: string): string {
+	const match = /^'((?:[^']|'')*)'/.exec(range);
+	return match ? match[1]!.replace(/''/g, "'") : range.split("!")[0]!;
+}
+
+function makeClient(store: Store) {
+	return {
+		readValues: vi.fn(
+			async (range: string): Promise<SpreadsheetValues> =>
+				structuredClone(store.get(sheetOf(range)) ?? []),
+		),
+		updateValues: vi.fn(
+			async (
+				updates: readonly {range: string; values: string[][]}[],
+			): Promise<void> => {
 				for (const update of updates) {
+					const name = sheetOf(update.range);
 					const match = /!([A-Z]+)(\d+)$/.exec(update.range)!;
 					const column =
 						[...match[1]!].reduce((n, c) => n * 26 + c.charCodeAt(0) - 64, 0) -
 						1;
-					values[Number(match[2]) - 1]![column] = update.values[0]![0]!;
+					const sheet = store.get(name) ?? [];
+					while (sheet.length < Number(match[2])) sheet.push([]);
+					sheet[Number(match[2]) - 1]![column] = update.values[0]![0]!;
+					store.set(name, sheet);
 				}
-			}),
-		appendValues: vi
-			.fn<SpreadsheetClient["appendValues"]>()
-			.mockImplementation(async (_, rows) => {
-				values.push(...rows.map((r) => [...r]));
-			}),
+			},
+		),
+		appendValues: vi.fn(
+			async (
+				range: string,
+				rows: readonly (readonly string[])[],
+			): Promise<void> => {
+				const name = sheetOf(range);
+				const sheet = store.get(name) ?? [];
+				sheet.push(...rows.map((row) => [...row]));
+				store.set(name, sheet);
+			},
+		),
 	};
+}
+
+let tick = 0;
+function categoryRepository(
+	store: Store,
+	header: readonly string[] = CATEGORY_MAPPING_SHEET_COLUMNS,
+) {
+	store.set("Category'Mappings", [[...header]]);
+	const client = makeClient(store);
 	return {
-		values,
 		client,
 		repository: new SpreadsheetCategoryMappingsRepository(client, {
 			sheetName: "Category'Mappings",
@@ -40,12 +70,36 @@ function setup(header: string[] = [...CATEGORY_MAPPING_SHEET_COLUMNS]) {
 		}),
 	};
 }
-it("reads and lists existing mappings with reordered columns, blanks and optional fields", async () => {
+
+function gameRepository(store: Store) {
+	store.set("GameMappings", [[...GAME_MAPPING_SHEET_COLUMNS]]);
+	const client = makeClient(store);
+	return {
+		client,
+		repository: new SpreadsheetGameMappingsRepository(client, {
+			sheetName: "GameMappings",
+			now: () => new Date(1791676800000 + tick++),
+		}),
+	};
+}
+
+function categoryRow(): string[] {
+	const row = categoryMappingToSheetRow(mapping, "");
+	return CATEGORY_MAPPING_SHEET_COLUMNS.map((column) => row[column]);
+}
+
+it("reads and lists existing category mappings with reordered columns, blanks and optional fields", async () => {
+	const store: Store = new Map();
 	const header = [...CATEGORY_MAPPING_SHEET_COLUMNS].reverse();
-	const {values, repository, client} = setup(header);
-	values.push(
+	const {repository, client} = categoryRepository(store, header);
+	store.get("Category'Mappings")!.push(
 		[],
-		header.map((key) => categoryMappingToSheetRow(mapping, "")[key]),
+		header.map(
+			(key) =>
+				categoryMappingToSheetRow(mapping, "")[
+					key as keyof ReturnType<typeof categoryMappingToSheetRow>
+				],
+		),
 	);
 	expect(await repository.find(" game ", "Any%")).toMatchObject({
 		mapping,
@@ -57,12 +111,14 @@ it("reads and lists existing mappings with reordered columns, blanks and optiona
 	expect(await repository.find("game", "other")).toBeNull();
 	expect(client.readValues).toHaveBeenCalledWith("'Category''Mappings'!A1:ZZ");
 });
+
 it("distinguishes create and update and rejects stale edits, duplicate creates and missing updates", async () => {
-	const {repository, client} = setup();
+	const store: Store = new Map();
+	const {repository, client} = categoryRepository(store);
 	const created = await repository.save(mapping, null);
 	expect(created.action).toBe("created");
 	const changed = structuredClone(mapping);
-	changed.speedrunCom.gameName = "Changed";
+	changed.speedrunCom.categoryName = "Changed";
 	const updated = await repository.save(changed, created.record.revision);
 	expect(updated.action).toBe("updated");
 	expect(updated.record.revision).not.toBe(created.record.revision);
@@ -79,15 +135,19 @@ it("distinguishes create and update and rejects stale edits, duplicate creates a
 		repository.save(mapping, updated.record.revision),
 	).rejects.toMatchObject({code: "mapping_conflict"});
 });
+
 it("updates and deletes only owned cells while retaining unknown columns and formulas", async () => {
+	const store: Store = new Map();
 	const header = ["notes", ...[...CATEGORY_MAPPING_SHEET_COLUMNS].reverse()];
-	const {repository, values, client} = setup(header);
+	const {repository, client} = categoryRepository(store, header);
 	const row = categoryMappingToSheetRow(mapping, "old");
-	values.push(
-		header.map((key) =>
-			key === "notes" ? "=SUM(Z1:Z2)" : row[key as keyof typeof row],
-		),
-	);
+	store
+		.get("Category'Mappings")!
+		.push(
+			header.map((key) =>
+				key === "notes" ? "=SUM(Z1:Z2)" : row[key as keyof typeof row],
+			),
+		);
 	const record = (await repository.find("game", "Any%"))!;
 	const saved = await repository.save(mapping, record.revision);
 	expect(
@@ -97,20 +157,31 @@ it("updates and deletes only owned cells while retaining unknown columns and for
 		repository.delete("game", "Any%", record.revision),
 	).rejects.toMatchObject({code: "mapping_conflict"});
 	await repository.delete("game", "Any%", saved.record.revision);
-	expect(values[1]![0]).toBe("=SUM(Z1:Z2)");
-	expect(values[1]!.slice(1).every((cell) => cell === "")).toBe(true);
+	expect(store.get("Category'Mappings")![1]![0]).toBe("=SUM(Z1:Z2)");
+	expect(
+		store
+			.get("Category'Mappings")![1]!
+			.slice(1)
+			.every((cell) => cell === ""),
+	).toBe(true);
 	expect(await repository.list()).toEqual([]);
 });
-it("serializes concurrent creates so one wins and the other reports conflict", async () => {
-	const {repository, client} = setup();
+
+it("serializes concurrent category creates so one wins and the other reports conflict", async () => {
+	const store: Store = new Map();
+	const {repository, client} = categoryRepository(store);
 	const results = await Promise.allSettled([
 		repository.save(mapping, null),
 		repository.save(mapping, null),
 	]);
-	expect(results.map((r) => r.status)).toEqual(["fulfilled", "rejected"]);
+	expect(results.map((result) => result.status)).toEqual([
+		"fulfilled",
+		"rejected",
+	]);
 	expect(client.appendValues).toHaveBeenCalledOnce();
 });
-it("rejects duplicate keys/headers, missing headers and malformed cells before mutation", async () => {
+
+it("rejects duplicate keys/headers, missing headers and malformed category cells before mutation", async () => {
 	for (const kind of [
 		"key",
 		"header",
@@ -119,17 +190,17 @@ it("rejects duplicate keys/headers, missing headers and malformed cells before m
 		"boolean",
 		"timing",
 	]) {
-		const {repository, values, client} = setup();
-		const row = CATEGORY_MAPPING_SHEET_COLUMNS.map(
-			(key) => categoryMappingToSheetRow(mapping, "")[key],
-		);
-		values.push(row);
-		if (kind === "key") values.push([...row]);
-		if (kind === "header") values[0]!.push("src_game_id");
-		if (kind === "missing") values[0]![0] = "wrong";
-		if (kind === "json") row[8] = '{"difficulty":1}';
-		if (kind === "boolean") row[11] = "maybe";
-		if (kind === "timing") row[12] = "unknown";
+		const store: Store = new Map();
+		const {repository, client} = categoryRepository(store);
+		const row = categoryRow();
+		store.get("Category'Mappings")!.push(row);
+		if (kind === "key") store.get("Category'Mappings")!.push([...row]);
+		if (kind === "header")
+			store.get("Category'Mappings")![0]!.push("src_category_id");
+		if (kind === "missing") store.get("Category'Mappings")![0]![0] = "wrong";
+		if (kind === "json") row[5] = '{"difficulty":1}';
+		if (kind === "boolean") row[8] = "maybe";
+		if (kind === "timing") row[9] = "unknown";
 		await expect(repository.save(mapping, null)).rejects.toMatchObject({
 			name: "SheetValidationError",
 		});
@@ -137,13 +208,35 @@ it("rejects duplicate keys/headers, missing headers and malformed cells before m
 		expect(client.appendValues).not.toHaveBeenCalled();
 	}
 });
-it("recovers the write queue after a failed read", async () => {
-	const {repository, client} = setup();
+
+it("recovers the category write queue after a failed read", async () => {
+	const store: Store = new Map();
+	const {repository, client} = categoryRepository(store);
 	client.readValues.mockRejectedValueOnce(new Error("offline"));
 	await expect(repository.save(mapping, null)).rejects.toThrow("offline");
 	await repository.save(mapping, null);
 	expect(client.appendValues).toHaveBeenCalledOnce();
 });
+
+it("keeps game mappings unique by RaceTime slug and manages create/update/delete", async () => {
+	const store: Store = new Map();
+	const {repository, client} = gameRepository(store);
+	const created = await repository.save(gameMapping, null);
+	expect(created.action).toBe("created");
+	const changed = structuredClone(gameMapping);
+	changed.speedrunCom.gameName = "Renamed";
+	const updated = await repository.save(changed, created.record.revision);
+	expect(updated.action).toBe("updated");
+	await expect(repository.save(gameMapping, null)).rejects.toMatchObject({
+		code: "mapping_conflict",
+	});
+	expect((await repository.find(" game "))!.mapping).toEqual(changed);
+	expect(await repository.list()).toHaveLength(1);
+	await repository.delete("game", updated.record.revision);
+	expect(await repository.list()).toEqual([]);
+	expect(client.appendValues).toHaveBeenCalledOnce();
+});
+
 it("uses RAW and disables write retries at the Google boundary", async () => {
 	const api = {
 		get: vi.fn().mockResolvedValue({data: {values: [[1, false, null]]}}),
@@ -179,46 +272,118 @@ it("uses RAW and disables write retries at the Google boundary", async () => {
 		name: "SpreadsheetClientError",
 	});
 });
-it("validates settings before committing and rejects stale writes after a destination switch", async () => {
-	const a = setup(),
-		b = setup();
+
+it("requires a parent Game Mapping before saving a category and defends children", async () => {
+	const store: Store = new Map();
+	const games = gameRepository(store);
+	const categories = categoryRepository(store);
+	const bundle: MappingsRepository = {
+		games: games.repository,
+		categories: categories.repository,
+	};
 	const persist = vi.fn();
 	const service = new MappingService(
 		{
 			revision: 0,
-			settings: {spreadsheetId: "a", categoryMappingsSheet: "CategoryMappings"},
+			settings: {
+				spreadsheetId: "sheet",
+				gameMappingsSheet: "GameMappings",
+				categoryMappingsSheet: "Category'Mappings",
+			},
 		},
 		persist,
-		(settings) =>
-			settings.spreadsheetId === "a" ? a.repository : b.repository,
+		() => bundle,
 	);
-	const created = await service.save(mapping, null, 0);
-	b.client.readValues.mockRejectedValueOnce(new Error("no access"));
+
+	await expect(service.saveCategory(mapping, null, 0)).rejects.toMatchObject({
+		code: "game_mapping_missing",
+	});
+	await service.saveGame(gameMapping, null, 0);
+	await service.saveCategory(mapping, null, 0);
 	await expect(
-		service.update({spreadsheetId: "b", categoryMappingsSheet: "Other"}, 0),
+		service.deleteGame(
+			"game",
+			(await service.findGame("game")).record!.revision,
+			0,
+		),
+	).rejects.toMatchObject({code: "game_mapping_conflict"});
+	const changedGame = structuredClone(gameMapping);
+	changedGame.speedrunCom.gameId = "g2";
+	await expect(
+		service.saveGame(
+			changedGame,
+			(await service.findGame("game")).record!.revision,
+			0,
+		),
+	).rejects.toMatchObject({code: "game_mapping_conflict"});
+	await expect(service.resolve("game", "Any%")).resolves.toMatchObject({
+		status: "resolved",
+		mapping: {game: {gameId: "g1"}, category: {categoryId: "c1"}},
+	});
+	await expect(service.resolve("game", "No%")).resolves.toEqual({
+		status: "unregistered",
+	});
+});
+
+it("validates both sheets before committing settings and rejects stale writes", async () => {
+	const a: Store = new Map();
+	const b: Store = new Map();
+	const aGames = gameRepository(a);
+	const aCategories = categoryRepository(a);
+	const bGames = gameRepository(b);
+	const bCategories = categoryRepository(b);
+	const repositories: Record<string, MappingsRepository> = {
+		a: {games: aGames.repository, categories: aCategories.repository},
+		b: {games: bGames.repository, categories: bCategories.repository},
+	};
+	const persist = vi.fn();
+	const service = new MappingService(
+		{
+			revision: 0,
+			settings: {
+				spreadsheetId: "a",
+				gameMappingsSheet: "GameMappings",
+				categoryMappingsSheet: "Category'Mappings",
+			},
+		},
+		persist,
+		(settings) => repositories[settings.spreadsheetId ?? ""] ?? null,
+	);
+	const createdGame = await service.saveGame(gameMapping, null, 0);
+	bCategories.client.readValues.mockRejectedValueOnce(new Error("no access"));
+	await expect(
+		service.update(
+			{
+				spreadsheetId: "b",
+				gameMappingsSheet: "GameMappings",
+				categoryMappingsSheet: "Category'Mappings",
+			},
+			0,
+		),
 	).rejects.toThrow("no access");
 	expect(service.settings().settings.spreadsheetId).toBe("a");
 	expect(persist).not.toHaveBeenCalled();
-	await service.update({spreadsheetId: "b", categoryMappingsSheet: "Other"}, 0);
+	await service.update(
+		{
+			spreadsheetId: "b",
+			gameMappingsSheet: "GameMappings",
+			categoryMappingsSheet: "Category'Mappings",
+		},
+		0,
+	);
 	expect(persist).toHaveBeenCalledWith({
 		revision: 1,
-		settings: {spreadsheetId: "b", categoryMappingsSheet: "Other"},
+		settings: {
+			spreadsheetId: "b",
+			gameMappingsSheet: "GameMappings",
+			categoryMappingsSheet: "Category'Mappings",
+		},
 	});
 	await expect(
-		service.save(mapping, created.record.revision, 0),
+		service.saveGame(gameMapping, createdGame.record.revision, 0),
 	).rejects.toMatchObject({code: "settings_changed"});
-	await expect(
-		service.delete("game", "Any%", created.record.revision, 0),
-	).rejects.toMatchObject({code: "settings_changed"});
-	expect(await service.list()).toEqual({records: [], settingsRevision: 1});
-	const saved = await service.save(mapping, null, 1);
-	expect(saved.action).toBe("created");
-	await service.delete("game", "Any%", saved.record.revision, 1);
-	expect((await service.list()).records).toEqual([]);
-	await expect(
-		service.update(
-			{spreadsheetId: "a", categoryMappingsSheet: "CategoryMappings"},
-			0,
-		),
-	).rejects.toMatchObject({code: "settings_changed"});
+	await expect(service.listCategories()).resolves.toMatchObject({
+		records: [],
+		settingsRevision: 1,
+	});
 });
