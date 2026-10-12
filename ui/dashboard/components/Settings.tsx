@@ -1,4 +1,8 @@
-import type {SettingsState} from "@nanahuse/racetime-protocol";
+import type {
+	SettingsState,
+	SpreadsheetInitialization,
+	SpreadsheetSheetOutcome,
+} from "@nanahuse/racetime-protocol";
 import {useCallback, useEffect, useState} from "react";
 import {
 	errorMessage,
@@ -12,6 +16,16 @@ import {Badge, Callout, Field} from "./common";
 import {DiffTable} from "./DiffTable";
 
 type Validation = "unknown" | "ok" | "error";
+
+const OUTCOME_LABELS: Record<SpreadsheetSheetOutcome, string> = {
+	created: "新規作成",
+	initialized: "ヘッダーを設定",
+	unchanged: "変更なし",
+};
+
+function formatInitialization(result: SpreadsheetInitialization): string {
+	return `初期化しました。GameMappings: ${OUTCOME_LABELS[result.gameMappings]} / CategoryMappings: ${OUTCOME_LABELS[result.categoryMappings]}`;
+}
 
 type SettingsInput = {
 	spreadsheetId: string | null;
@@ -34,6 +48,9 @@ export function Settings({
 	const [validation, setValidation] = useState<Validation>("unknown");
 	const [conflict, setConflict] = useState<SettingsState | null>(null);
 	const [comparison, setComparison] = useState<SettingsInput | null>(null);
+	const [initializing, setInitializing] = useState(false);
+	const [initMessage, setInitMessage] = useState<string | null>(null);
+	const [initError, setInitError] = useState<string | null>(null);
 
 	const currentInput = (): SettingsInput => ({
 		spreadsheetId: spreadsheetIdFromInput(urlInput),
@@ -65,8 +82,35 @@ export function Settings({
 		: false;
 
 	useEffect(() => {
-		onStateChange?.({dirty: inputsDirty, busy});
-	}, [inputsDirty, busy, onStateChange]);
+		onStateChange?.({dirty: inputsDirty, busy: busy || initializing});
+	}, [inputsDirty, busy, initializing, onStateChange]);
+
+	const initialize = async () => {
+		// Snapshot the input so a mid-flight edit cannot retarget the operation.
+		const target = currentInput();
+		if (!target.spreadsheetId) {
+			setInitError("Spreadsheet URL または ID を入力してください。");
+			setInitMessage(null);
+			return;
+		}
+		setInitializing(true);
+		setInitError(null);
+		setInitMessage(null);
+		try {
+			const result = await request("initializeSpreadsheet", {
+				settings: {
+					spreadsheetId: target.spreadsheetId,
+					gameMappingsSheet: target.gameMappingsSheet,
+					categoryMappingsSheet: target.categoryMappingsSheet,
+				},
+			});
+			setInitMessage(formatInitialization(result));
+		} catch (cause) {
+			setInitError(errorMessage(cause));
+		} finally {
+			setInitializing(false);
+		}
+	};
 
 	const save = async () => {
 		if (!baseline || conflict) return;
@@ -190,6 +234,8 @@ export function Settings({
 				error && <Callout tone='error'>{error}</Callout>
 			)}
 			{message && <Callout tone='success'>{message}</Callout>}
+			{initError && <Callout tone='error'>{initError}</Callout>}
+			{initMessage && <Callout tone='success'>{initMessage}</Callout>}
 			{comparison && baseline && (
 				<div className='subpanel'>
 					<h3>以前の入力内容（比較用・自動適用しません）</h3>
@@ -218,27 +264,37 @@ export function Settings({
 					<input
 						value={urlInput}
 						placeholder='https://docs.google.com/spreadsheets/d/...'
+						disabled={initializing}
 						onChange={(event) => setUrlInput(event.target.value)}
 					/>
 				</Field>
 				<Field label='GameMappings シート名'>
 					<input
 						value={gameSheet}
+						disabled={initializing}
 						onChange={(event) => setGameSheet(event.target.value)}
 					/>
 				</Field>
 				<Field label='CategoryMappings シート名'>
 					<input
 						value={categorySheet}
+						disabled={initializing}
 						onChange={(event) => setCategorySheet(event.target.value)}
 					/>
 				</Field>
 				<div className='button-row'>
 					<button
 						type='submit'
-						disabled={busy || !baseline || conflict !== null}
+						disabled={busy || initializing || !baseline || conflict !== null}
 					>
 						{busy ? "検証中…" : "保存"}
+					</button>
+					<button
+						type='button'
+						disabled={busy || initializing || !hasInput}
+						onClick={() => void initialize()}
+					>
+						{initializing ? "初期化中…" : "Spreadsheetを初期化"}
 					</button>
 					{spreadsheetId && (
 						<a

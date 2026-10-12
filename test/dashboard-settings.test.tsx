@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type {SettingsState} from "@nanahuse/racetime-protocol";
-import {cleanup, fireEvent, render, screen} from "@testing-library/react";
+import {act, cleanup, fireEvent, render, screen} from "@testing-library/react";
 import {afterEach, beforeEach, expect, it, vi} from "vitest";
 import {Settings} from "../ui/dashboard/components/Settings";
 
@@ -34,6 +34,10 @@ let updateResult: () => Envelope = () => ({
 		},
 	},
 });
+let initializeResult: () => Envelope | Promise<Envelope> = () => ({
+	ok: true,
+	data: {gameMappings: "created", categoryMappings: "created"},
+});
 
 beforeEach(() => {
 	updateResult = () => ({
@@ -47,10 +51,15 @@ beforeEach(() => {
 			},
 		},
 	});
+	initializeResult = () => ({
+		ok: true,
+		data: {gameMappings: "created", categoryMappings: "created"},
+	});
 	sendMessage.mockImplementation(async (name: string) => {
 		const operation = name.replace("racetime.v2.", "");
 		if (operation === "getSettings") return {ok: true, data: initial};
 		if (operation === "updateSettings") return updateResult();
+		if (operation === "initializeSpreadsheet") return initializeResult();
 		throw new Error(`unexpected operation ${operation}`);
 	});
 });
@@ -136,4 +145,84 @@ it("adopts the latest saved settings after a conflict", async () => {
 	fireEvent.click(screen.getByRole("button", {name: /最新設定を採用/}));
 	expect(await screen.findByDisplayValue("GameMappings")).toBeTruthy();
 	expect(screen.queryByDisplayValue("mine")).toBeNull();
+});
+
+it("initializes from unsaved input and can still save afterwards", async () => {
+	render(<Settings />);
+	await screen.findByText("未設定");
+	fireEvent.change(screen.getByLabelText("Spreadsheet URL または ID"), {
+		target: {value: "abc"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "Spreadsheetを初期化"}));
+	expect(await screen.findByText(/GameMappings: 新規作成/)).toBeTruthy();
+	expect(sendMessage).toHaveBeenCalledWith(
+		"racetime.v2.initializeSpreadsheet",
+		{
+			settings: {
+				spreadsheetId: "abc",
+				gameMappingsSheet: "GameMappings",
+				categoryMappingsSheet: "CategoryMappings",
+			},
+		},
+	);
+	// A successful initialization must not mark the unsaved settings available.
+	expect(screen.queryByText("利用可能")).toBeNull();
+	fireEvent.click(screen.getByRole("button", {name: "保存"}));
+	expect(await screen.findByText("利用可能")).toBeTruthy();
+});
+
+it("cannot initialize without a spreadsheet id", async () => {
+	render(<Settings />);
+	await screen.findByText("未設定");
+	expect(
+		(
+			screen.getByRole("button", {
+				name: "Spreadsheetを初期化",
+			}) as HTMLButtonElement
+		).disabled,
+	).toBe(true);
+});
+
+it("blocks duplicate initialization and input edits while running", async () => {
+	let resolve: (value: Envelope) => void = () => {};
+	initializeResult = () =>
+		new Promise<Envelope>((res) => {
+			resolve = res;
+		});
+	render(<Settings />);
+	await screen.findByText("未設定");
+	fireEvent.change(screen.getByLabelText("Spreadsheet URL または ID"), {
+		target: {value: "abc"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "Spreadsheetを初期化"}));
+	expect(await screen.findByRole("button", {name: "初期化中…"})).toBeTruthy();
+	expect(
+		(screen.getByLabelText("Spreadsheet URL または ID") as HTMLInputElement)
+			.disabled,
+	).toBe(true);
+	expect(
+		(screen.getByRole("button", {name: "保存"}) as HTMLButtonElement).disabled,
+	).toBe(true);
+	await act(async () => {
+		resolve({
+			ok: true,
+			data: {gameMappings: "created", categoryMappings: "created"},
+		});
+	});
+	expect(await screen.findByText(/CategoryMappings: 新規作成/)).toBeTruthy();
+});
+
+it("keeps the input when initialization fails", async () => {
+	initializeResult = () => ({
+		ok: false,
+		error: {code: "spreadsheet_unavailable", message: "no access"},
+	});
+	render(<Settings />);
+	await screen.findByText("未設定");
+	fireEvent.change(screen.getByLabelText("Spreadsheet URL または ID"), {
+		target: {value: "abc"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "Spreadsheetを初期化"}));
+	expect(await screen.findByText(/no access/)).toBeTruthy();
+	expect(screen.getByDisplayValue("abc")).toBeTruthy();
 });

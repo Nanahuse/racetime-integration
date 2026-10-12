@@ -7,6 +7,9 @@ import type {
 import {expect, it, vi} from "vitest";
 import {createAPI} from "../src/api";
 import {IntegrationError} from "../src/errors";
+import {CATEGORY_MAPPING_SHEET_COLUMNS} from "../src/integrations/spreadsheet/category-mappings-row";
+import type {SpreadsheetClient} from "../src/integrations/spreadsheet/client";
+import {GAME_MAPPING_SHEET_COLUMNS} from "../src/integrations/spreadsheet/game-mappings-row";
 import {MappingService, type MappingsRepository} from "../src/mappings";
 import {gameMapping, mapping} from "./fixtures";
 
@@ -83,7 +86,13 @@ function memoryRepository() {
 	return {repository, games, categories};
 }
 
-function setup() {
+function setup(
+	createSpreadsheetClient: (
+		spreadsheetId: string,
+	) => SpreadsheetClient = () => {
+		throw new Error("spreadsheet client is not available in this test");
+	},
+) {
 	const memory = memoryRepository();
 	const persist = vi.fn();
 	const service = new MappingService(
@@ -130,9 +139,48 @@ function setup() {
 			categoryId === "c1" ? "g1" : "other",
 		),
 	};
-	const api = createAPI({} as never, service, speedrun);
+	const api = createAPI(
+		{} as never,
+		service,
+		speedrun,
+		createSpreadsheetClient,
+	);
 	return {api, service, speedrun, persist, memory};
 }
+
+it("initializes the destination through the API without changing saved settings", async () => {
+	const store = new Map<string, string[][]>([
+		["GameMappings", [[...GAME_MAPPING_SHEET_COLUMNS]]],
+		["CategoryMappings", [[...CATEGORY_MAPPING_SHEET_COLUMNS]]],
+	]);
+	const client: SpreadsheetClient = {
+		readValues: async (range) =>
+			structuredClone(
+				store.get(/^'([^']+)'/.exec(range)?.[1] ?? range.split("!")[0]!) ?? [],
+			),
+		updateValues: async () => {},
+		appendValues: async () => {},
+		listSheets: async () => [...store.keys()],
+		createSheet: async (name) => {
+			if (!store.has(name)) store.set(name, []);
+		},
+	};
+	const {api, service} = setup(() => client);
+	const before = service.settings();
+	const result = await api.request("initializeSpreadsheet", {
+		settings: {
+			spreadsheetId: "sheet",
+			gameMappingsSheet: "GameMappings",
+			categoryMappingsSheet: "CategoryMappings",
+		},
+	});
+	expect(result).toEqual({
+		ok: true,
+		data: {gameMappings: "unchanged", categoryMappings: "unchanged"},
+	});
+	expect(service.settings()).toEqual(before);
+	expect(service.settings().revision).toBe(0);
+});
 
 it("exposes Game Mapping CRUD through the public API with conflict detection", async () => {
 	const {api} = setup();

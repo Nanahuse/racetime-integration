@@ -22,8 +22,9 @@ import {
 	sheetAppendRange,
 	sheetReadRange,
 } from "./client";
-import {type SheetIssue, SheetValidationError} from "./errors";
-import {buildColumnMap, type ColumnMap, valuesToRawRow} from "./sheet-columns";
+import {SheetValidationError} from "./errors";
+import type {ColumnMap} from "./sheet-columns";
+import {parseSheetValues} from "./sheet-parse";
 
 export interface CategoryMappingsRepository {
 	find(
@@ -61,10 +62,6 @@ type ParsedCategoryMappingsSheet = {
 
 function mappingKey(categorySlug: string, goal: string): string {
 	return `${categorySlug.trim()}\u0000${goal.trim()}`;
-}
-
-function isBlankRow(values: readonly string[]): boolean {
-	return values.every((value) => (value ?? "").trim() === "");
 }
 
 function positionRow(
@@ -219,73 +216,33 @@ export class SpreadsheetCategoryMappingsRepository
 	}
 
 	private parse(values: SpreadsheetValues): ParsedCategoryMappingsSheet {
-		const headerResult = buildColumnMap(
-			values[0] ?? [],
-			CATEGORY_MAPPING_SHEET_COLUMNS,
-		);
-		if (!headerResult.ok) {
-			throw new SheetValidationError(this.sheetName, headerResult.issues);
-		}
-
-		const {map, columnCount} = headerResult;
-		const entries: CategoryMappingEntry[] = [];
-		const issues: SheetIssue[] = [];
-		const seenKeys = new Map<string, number>();
-
-		for (let index = 1; index < values.length; index += 1) {
-			const rawValues = values[index] ?? [];
-			if (isBlankRow(rawValues)) {
-				continue;
-			}
-
-			const rowNumber = index + 1;
-			const row = valuesToRawRow(
-				rawValues,
-				map,
-				CATEGORY_MAPPING_SHEET_COLUMNS,
-			);
-			if (isBlankRow(Object.values(row))) continue;
-			const conversion = categoryMappingSheetRowToMapping(row);
-			if (!conversion.ok) {
-				for (const issue of conversion.issues) {
-					issues.push({
-						code: issue.code,
-						message: issue.message,
-						row: rowNumber,
-					});
-				}
-				continue;
-			}
-
-			const key = mappingKey(
-				conversion.mapping.racetime.categorySlug,
-				conversion.mapping.racetime.goal,
-			);
-			const previousRow = seenKeys.get(key);
-			if (previousRow !== undefined) {
-				issues.push({
-					code: CATEGORY_MAPPING_ROW_ISSUE_CODES.duplicateKey,
-					message: `Duplicate mapping key "${conversion.mapping.racetime.categorySlug}" + "${conversion.mapping.racetime.goal}" (also on row ${previousRow}).`,
-					row: rowNumber,
-				});
-				continue;
-			}
-			seenKeys.set(key, rowNumber);
-			entries.push({
-				rowNumber,
-				mapping: conversion.mapping,
-				revision: rowRevision(row),
-			});
-		}
-
-		if (issues.length > 0) {
-			throw new SheetValidationError(this.sheetName, issues);
-		}
-
+		const result = parseSheetValues(values, {
+			columns: CATEGORY_MAPPING_SHEET_COLUMNS,
+			convert: (row) => {
+				const conversion = categoryMappingSheetRowToMapping(row);
+				return conversion.ok
+					? {ok: true as const, value: conversion.mapping}
+					: conversion;
+			},
+			key: (mapping) =>
+				mappingKey(mapping.racetime.categorySlug, mapping.racetime.goal),
+			duplicateCode: CATEGORY_MAPPING_ROW_ISSUE_CODES.duplicateKey,
+			duplicateMessage: (mapping, previousRow) =>
+				`Duplicate mapping key "${mapping.racetime.categorySlug}" + "${mapping.racetime.goal}" (also on row ${previousRow}).`,
+		});
+		if (result.status !== "valid" || !result.map)
+			throw new SheetValidationError(this.sheetName, result.issues);
 		return {
-			map,
-			columnCount: Math.max(columnCount, CATEGORY_MAPPING_SHEET_COLUMNS.length),
-			entries,
+			map: result.map,
+			columnCount: Math.max(
+				result.columnCount,
+				CATEGORY_MAPPING_SHEET_COLUMNS.length,
+			),
+			entries: result.entries.map((entry) => ({
+				rowNumber: entry.rowNumber,
+				mapping: entry.value,
+				revision: rowRevision(entry.row),
+			})),
 		};
 	}
 }

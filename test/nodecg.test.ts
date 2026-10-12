@@ -39,13 +39,15 @@ class FakeReplicant {
 
 function loadExtension(
 	stored?: SettingsState,
-): [RaceTimeAPI, Map<string, FakeReplicant>] {
+): [RaceTimeAPI, Map<string, FakeReplicant>, ReturnType<typeof vi.fn>] {
 	const handlers = new Map<string, Handler>();
 	const events = new Map<string, () => void>();
 	const replicants = new Map<string, FakeReplicant>();
+	const warn = vi.fn();
 	const nodecg = {
 		bundleConfig: {},
 		extensions: {},
+		log: {warn, info: vi.fn(), error: vi.fn()},
 		once: (event: string, callback: () => void) => events.set(event, callback),
 		unlisten: vi.fn(),
 		Replicant: vi.fn(
@@ -74,7 +76,7 @@ function loadExtension(
 	const extension = createRequire(import.meta.url)("../extension/index.js") as (
 		nodecg: unknown,
 	) => RaceTimeAPI;
-	return [extension(nodecg), replicants];
+	return [extension(nodecg), replicants, warn];
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -119,6 +121,7 @@ it("loads the built extension, subscribes to the v3 event, and refreshes its pub
 	);
 	const nodecg = {
 		bundleConfig: {},
+		log: {warn: vi.fn(), info: vi.fn(), error: vi.fn()},
 		extensions: {
 			"player-manager": {
 				apiVersion: 3,
@@ -314,65 +317,146 @@ it("persists updates through the Replicant and restarts from the saved settings"
 		},
 	});
 });
-it("rejects invalid persisted settings with an identifiable error", () => {
-	const invalid: Array<[RegExp, SettingsState]> = [
-		[
-			/revision/,
-			{
-				revision: -1,
-				settings: {
-					spreadsheetId: null,
-					gameMappingsSheet: "GameMappings",
-					categoryMappingsSheet: "CategoryMappings",
-				},
+const DEFAULT_SETTINGS: SettingsState = {
+	revision: 0,
+	settings: {
+		spreadsheetId: null,
+		gameMappingsSheet: "GameMappings",
+		categoryMappingsSheet: "CategoryMappings",
+	},
+};
+
+it("resets invalid persisted settings to defaults and keeps the extension running", async () => {
+	const invalid: SettingsState[] = [
+		{
+			revision: -1,
+			settings: {
+				spreadsheetId: null,
+				gameMappingsSheet: "GameMappings",
+				categoryMappingsSheet: "CategoryMappings",
 			},
-		],
-		[
-			/revision/,
-			{
-				revision: 1.5,
-				settings: {
-					spreadsheetId: null,
-					gameMappingsSheet: "GameMappings",
-					categoryMappingsSheet: "CategoryMappings",
-				},
+		},
+		{
+			revision: 1.5,
+			settings: {
+				spreadsheetId: null,
+				gameMappingsSheet: "GameMappings",
+				categoryMappingsSheet: "CategoryMappings",
 			},
-		],
-		[
-			/spreadsheetId/,
-			{
-				revision: 0,
-				settings: {
-					spreadsheetId: "not a valid id",
-					gameMappingsSheet: "GameMappings",
-					categoryMappingsSheet: "CategoryMappings",
-				},
+		},
+		{
+			revision: 0,
+			settings: {
+				spreadsheetId: "not a valid id",
+				gameMappingsSheet: "GameMappings",
+				categoryMappingsSheet: "CategoryMappings",
 			},
-		],
-		[
-			/spreadsheetId/,
-			{
-				revision: 0,
-				settings: {
-					spreadsheetId: "",
-					gameMappingsSheet: "GameMappings",
-					categoryMappingsSheet: "CategoryMappings",
-				},
+		},
+		{
+			revision: 0,
+			settings: {
+				spreadsheetId: "",
+				gameMappingsSheet: "GameMappings",
+				categoryMappingsSheet: "CategoryMappings",
 			},
-		],
-		[
-			/categoryMappingsSheet/,
-			{
-				revision: 0,
-				settings: {
-					spreadsheetId: null,
-					gameMappingsSheet: "GameMappings",
-					categoryMappingsSheet: "",
-				},
+		},
+		{
+			revision: 0,
+			settings: {
+				spreadsheetId: null,
+				gameMappingsSheet: "GameMappings",
+				categoryMappingsSheet: "",
 			},
-		],
-		[/settings/, {revision: 0, settings: null as never}],
+		},
+		{
+			revision: 0,
+			settings: {
+				spreadsheetId: null,
+				categoryMappingsSheet: "CategoryMappings",
+			} as never,
+		},
+		{revision: 0, settings: null as never},
 	];
-	for (const [message, stored] of invalid)
-		expect(() => loadExtension(stored)).toThrow(message);
+	for (const stored of invalid) {
+		const [api, replicants, warn] = loadExtension(stored);
+		expect(await api.request("getSettings", undefined)).toEqual({
+			ok: true,
+			data: DEFAULT_SETTINGS,
+		});
+		expect(replicants.get(SETTINGS_REPLICANT)?.stored()).toEqual(
+			DEFAULT_SETTINGS,
+		);
+		expect(warn).toHaveBeenCalledTimes(1);
+	}
+});
+
+it("starts even when the persisted settings omit gameMappingsSheet", async () => {
+	const [api, , warn] = loadExtension({
+		revision: 0,
+		settings: {
+			spreadsheetId: null,
+			categoryMappingsSheet: "CategoryMappings",
+		} as never,
+	});
+	expect(await api.request("getSettings", undefined)).toEqual({
+		ok: true,
+		data: DEFAULT_SETTINGS,
+	});
+	expect(warn).toHaveBeenCalledTimes(1);
+});
+
+it("keeps valid persisted settings unchanged", async () => {
+	const stored: SettingsState = {
+		revision: 4,
+		settings: {
+			spreadsheetId: "abc_123-XYZ",
+			gameMappingsSheet: "Games",
+			categoryMappingsSheet: "Mappings",
+		},
+	};
+	const [api, , warn] = loadExtension(stored);
+	expect(await api.request("getSettings", undefined)).toEqual({
+		ok: true,
+		data: stored,
+	});
+	expect(warn).not.toHaveBeenCalled();
+});
+
+it("reloads the persisted defaults after a reset without warning again", async () => {
+	const [api, replicants] = loadExtension({
+		revision: -1,
+		settings: null as never,
+	});
+	expect(await api.request("getSettings", undefined)).toEqual({
+		ok: true,
+		data: DEFAULT_SETTINGS,
+	});
+	const saved = replicants.get(SETTINGS_REPLICANT)?.stored();
+	const [restarted, , warn] = loadExtension(saved as SettingsState);
+	expect(await restarted.request("getSettings", undefined)).toEqual({
+		ok: true,
+		data: DEFAULT_SETTINGS,
+	});
+	expect(warn).not.toHaveBeenCalled();
+});
+
+it("does not hide startup failures unrelated to settings validation", () => {
+	const extension = createRequire(import.meta.url)("../extension/index.js") as (
+		nodecg: unknown,
+	) => RaceTimeAPI;
+	const nodecg = {
+		bundleConfig: {},
+		extensions: {},
+		log: {warn: vi.fn(), info: vi.fn(), error: vi.fn()},
+		once: vi.fn(),
+		unlisten: vi.fn(),
+		Replicant: vi.fn(() => ({
+			get value(): never {
+				throw new TypeError("boom");
+			},
+			set value(_next: unknown) {},
+		})),
+		listenFor: vi.fn(),
+	};
+	expect(() => extension(nodecg)).toThrow("boom");
 });

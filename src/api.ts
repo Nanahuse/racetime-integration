@@ -8,16 +8,19 @@ import {
 	type Settings,
 	type SettingsState,
 	type SpeedrunVariableOption,
+	type SpreadsheetInitializationSettings,
 	type TimingMethod,
 } from "@nanahuse/racetime-protocol";
 import {IntegrationError} from "./errors";
 import {RaceTimeError} from "./integrations/racetime/errors";
 import type {SpeedrunClient} from "./integrations/speedrun/client";
 import {SpeedrunError} from "./integrations/speedrun/errors";
+import type {SpreadsheetClient} from "./integrations/spreadsheet/client";
 import {
 	SheetValidationError,
 	SpreadsheetIntegrationError,
 } from "./integrations/spreadsheet/errors";
+import {initializeSpreadsheet} from "./integrations/spreadsheet/initialize";
 import type {MappingService} from "./mappings";
 import type {RaceService} from "./service";
 
@@ -189,10 +192,28 @@ function expectedRevision(value: unknown): string | null {
 	return value === null ? null : text(value, "expectedRevision");
 }
 
+function initializationSettings(
+	raw: unknown,
+): SpreadsheetInitializationSettings {
+	const input = object(raw, "settings");
+	const spreadsheetId = text(input.spreadsheetId, "spreadsheetId");
+	if (!/^[A-Za-z0-9_-]+$/.test(spreadsheetId))
+		throw new RequestError("invalid_input", "Invalid spreadsheetId");
+	return {
+		spreadsheetId,
+		gameMappingsSheet: text(input.gameMappingsSheet, "gameMappingsSheet"),
+		categoryMappingsSheet: text(
+			input.categoryMappingsSheet,
+			"categoryMappingsSheet",
+		),
+	};
+}
+
 export function createAPI(
 	races: RaceService,
 	mappings: MappingService,
 	speedrun: SpeedrunClient,
+	createSpreadsheetClient: (spreadsheetId: string) => SpreadsheetClient,
 ): RaceTimeAPI {
 	async function request<K extends keyof Operations>(
 		operation: K,
@@ -309,6 +330,17 @@ export function createAPI(
 						),
 					};
 					break;
+				case "initializeSpreadsheet": {
+					const target = initializationSettings(data.settings);
+					value = await initializeSpreadsheet(
+						createSpreadsheetClient(target.spreadsheetId),
+						{
+							gameMappingsSheet: target.gameMappingsSheet,
+							categoryMappingsSheet: target.categoryMappingsSheet,
+						},
+					);
+					break;
+				}
 				case "getSettings":
 					value = mappings.settings();
 					break;

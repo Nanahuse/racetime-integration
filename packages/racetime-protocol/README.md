@@ -40,6 +40,7 @@ if (watched.ok) {
 | searchSpeedrunGames | `{query}` | `{games}` |
 | getSpeedrunGameOptions | `{gameId}` | `{game, categories, levels, platforms, regions, timingMethods}` |
 | getSpeedrunCategoryVariables | `{categoryId}` | `{variables}` |
+| initializeSpreadsheet | `{settings}` | `{gameMappings, categoryMappings}` |
 | getSettings | `undefined` | `{revision, settings}` |
 | updateSettings | `{settings, expectedRevision}` | `{revision, settings}` |
 
@@ -79,6 +80,8 @@ if (watched.ok) {
 各書込みにはfind/listと同時に得たsettingsRevisionも必要です。接続先変更後の古いリクエストはsettings_changedになります。保存成功時のactionはcreated / updatedです。
 
 `resolveCategoryMapping` はGame MappingとCategory Mappingを結合したSRCゲーム・カテゴリ情報を返します。未登録は `unregistered`、Category Mappingはあるが親Game Mappingが無い場合は `inconsistent` を返します。利用側が2シートを直接結合する必要はありません。
+
+`initializeSpreadsheet` は指定されたSpreadsheetへ `GameMappings` と `CategoryMappings` のワークシートを準備します。不足シートは作成（`created`）、空シートにはヘッダーを設定（`initialized`）し、正常な既存シートは変更しません（`unchanged`）。不正な既存データがある場合は変更せずエラーを返します。初期化はSettingsを永続化せず、`settingsRevision` も変更しません。保存前に利用者が明示的に接続先を確定してください。
 
 設定は `{spreadsheetId: string | null, gameMappingsSheet: string, categoryMappingsSheet: string}`。spreadsheetIdがnullなら無効化します。updateSettingsは両シートを読込み・検証してから切替え、失敗時は旧設定を保持します。`SETTINGS_REPLICANT`（racetime-settings）へ永続化されます。設定ReplicantとレースReplicantは参照専用として扱い、変更にはAPIを使ってください。
 

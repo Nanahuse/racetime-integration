@@ -14,6 +14,7 @@ import {
 } from "@nanahuse/racetime-protocol";
 import type NodeCG from "@nodecg/types";
 import {createAPI, parseSettingsState} from "../api";
+import {IntegrationError} from "../errors";
 import {ParticipantResolver} from "../integrations/players";
 import {HttpRaceTimeClient} from "../integrations/racetime/client";
 import {HttpSpeedrunClient} from "../integrations/speedrun/client";
@@ -44,19 +45,32 @@ export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 			state.value = value;
 		},
 	);
+	const defaultSettings: SettingsState = {
+		revision: 0,
+		settings: {
+			spreadsheetId: config.spreadsheetId ?? null,
+			gameMappingsSheet: config.gameMappingsSheet ?? "GameMappings",
+			categoryMappingsSheet: config.categoryMappingsSheet ?? "CategoryMappings",
+		},
+	};
 	const settings = nodecg.Replicant<SettingsState>(SETTINGS_REPLICANT, {
 		persistent: true,
-		defaultValue: {
-			revision: 0,
-			settings: {
-				spreadsheetId: config.spreadsheetId ?? null,
-				gameMappingsSheet: config.gameMappingsSheet ?? "GameMappings",
-				categoryMappingsSheet:
-					config.categoryMappingsSheet ?? "CategoryMappings",
-			},
-		},
+		defaultValue: defaultSettings,
 	});
-	const initialSettings = parseSettingsState(settings.value);
+	let initialSettings: SettingsState;
+	try {
+		initialSettings = parseSettingsState(settings.value);
+	} catch (error) {
+		// Only a malformed persisted configuration is recoverable; anything else
+		// must keep failing the mount.
+		if (!(error instanceof IntegrationError) || error.code !== "invalid_input")
+			throw error;
+		nodecg.log.warn(
+			`racetime-settings was invalid and has been reset to defaults: ${error.message}`,
+		);
+		initialSettings = structuredClone(defaultSettings);
+		settings.value = structuredClone(initialSettings);
+	}
 	const speedrun = new HttpSpeedrunClient({
 		userAgent: `racetime-integration/${nodecg.bundleVersion}`,
 	});
@@ -78,7 +92,9 @@ export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 			};
 		},
 	);
-	const api = createAPI(races, mappings, speedrun);
+	const api = createAPI(races, mappings, speedrun, (spreadsheetId) =>
+		GoogleSheetsClient.create(spreadsheetId),
+	);
 	const directoryChanged = (data: {directoryRevision?: unknown}) => {
 		if (typeof data?.directoryRevision === "number")
 			races.directoryChanged(data.directoryRevision);

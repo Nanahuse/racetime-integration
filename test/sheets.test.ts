@@ -31,12 +31,15 @@ function makeClient(store: Store) {
 				for (const update of updates) {
 					const name = sheetOf(update.range);
 					const match = /!([A-Z]+)(\d+)$/.exec(update.range)!;
-					const column =
+					const startColumn =
 						[...match[1]!].reduce((n, c) => n * 26 + c.charCodeAt(0) - 64, 0) -
 						1;
 					const sheet = store.get(name) ?? [];
 					while (sheet.length < Number(match[2])) sheet.push([]);
-					sheet[Number(match[2]) - 1]![column] = update.values[0]![0]!;
+					const row = sheet[Number(match[2]) - 1]!;
+					update.values[0]!.forEach((cell, offset) => {
+						row[startColumn + offset] = cell;
+					});
 					store.set(name, sheet);
 				}
 			},
@@ -52,6 +55,10 @@ function makeClient(store: Store) {
 				store.set(name, sheet);
 			},
 		),
+		listSheets: vi.fn(async () => [...store.keys()]),
+		createSheet: vi.fn(async (name: string) => {
+			if (!store.has(name)) store.set(name, []);
+		}),
 	};
 }
 
@@ -239,9 +246,20 @@ it("keeps game mappings unique by RaceTime slug and manages create/update/delete
 
 it("uses RAW and disables write retries at the Google boundary", async () => {
 	const api = {
-		get: vi.fn().mockResolvedValue({data: {values: [[1, false, null]]}}),
+		values: {
+			get: vi.fn().mockResolvedValue({data: {values: [[1, false, null]]}}),
+			batchUpdate: vi.fn().mockResolvedValue({}),
+			append: vi.fn().mockResolvedValue({}),
+		},
+		get: vi.fn().mockResolvedValue({
+			data: {
+				sheets: [
+					{properties: {title: "GameMappings"}},
+					{properties: {title: "CategoryMappings"}},
+				],
+			},
+		}),
 		batchUpdate: vi.fn().mockResolvedValue({}),
-		append: vi.fn().mockResolvedValue({}),
 	};
 	const client = new GoogleSheetsClient(
 		api as unknown as ConstructorParameters<typeof GoogleSheetsClient>[0],
@@ -249,7 +267,7 @@ it("uses RAW and disables write retries at the Google boundary", async () => {
 	);
 	expect(await client.readValues("range")).toEqual([["1", "false", ""]]);
 	await client.updateValues([{range: "A2", values: [["=unsafe"]]}]);
-	expect(api.batchUpdate).toHaveBeenCalledWith(
+	expect(api.values.batchUpdate).toHaveBeenCalledWith(
 		{
 			spreadsheetId: "sheet-id",
 			requestBody: {
@@ -260,14 +278,32 @@ it("uses RAW and disables write retries at the Google boundary", async () => {
 		{retry: false},
 	);
 	await client.appendValues("A1", [["value"]]);
-	expect(api.append).toHaveBeenCalledWith(
+	expect(api.values.append).toHaveBeenCalledWith(
 		expect.objectContaining({
 			valueInputOption: "RAW",
 			insertDataOption: "INSERT_ROWS",
 		}),
 		{retry: false},
 	);
-	api.get.mockRejectedValueOnce(new Error("credentials"));
+	expect(await client.listSheets()).toEqual([
+		"GameMappings",
+		"CategoryMappings",
+	]);
+	expect(api.get).toHaveBeenCalledWith({
+		spreadsheetId: "sheet-id",
+		fields: "sheets.properties.title",
+	});
+	await client.createSheet("NewSheet");
+	expect(api.batchUpdate).toHaveBeenCalledWith(
+		{
+			spreadsheetId: "sheet-id",
+			requestBody: {
+				requests: [{addSheet: {properties: {title: "NewSheet"}}}],
+			},
+		},
+		{retry: false},
+	);
+	api.values.get.mockRejectedValueOnce(new Error("credentials"));
 	await expect(client.readValues("range")).rejects.toMatchObject({
 		name: "SpreadsheetClientError",
 	});

@@ -448,7 +448,9 @@ it("validates new public write contracts and reports disabled Sheets without aff
 		getCategoryVariables: vi.fn(),
 		getCategoryGameId: vi.fn(),
 	};
-	const api = createAPI(service, mappings, speedrun as never);
+	const api = createAPI(service, mappings, speedrun as never, () => {
+		throw new Error("spreadsheet client is not available in this test");
+	});
 	expect(await api.request("watchRace", {url: 123} as never)).toMatchObject({
 		ok: false,
 		error: {code: "invalid_input"},

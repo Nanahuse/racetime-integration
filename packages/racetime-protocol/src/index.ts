@@ -142,6 +142,18 @@ export type CategoryMappingList = {
 	records: CategoryMappingRecord[];
 	settingsRevision: number;
 };
+/** Per-worksheet result of preparing a spreadsheet destination. */
+export type SpreadsheetSheetOutcome = "created" | "initialized" | "unchanged";
+export type SpreadsheetInitialization = {
+	gameMappings: SpreadsheetSheetOutcome;
+	categoryMappings: SpreadsheetSheetOutcome;
+};
+/** Explicit destination for spreadsheet initialization (never persisted). */
+export type SpreadsheetInitializationSettings = {
+	spreadsheetId: string;
+	gameMappingsSheet: string;
+	categoryMappingsSheet: string;
+};
 export type Operations = {
 	fetchRace: {request: {url: string}; response: Race};
 	watchRace: {
@@ -212,6 +224,10 @@ export type Operations = {
 		request: {categoryId: string};
 		response: {variables: SpeedrunVariableOption[]};
 	};
+	initializeSpreadsheet: {
+		request: {settings: SpreadsheetInitializationSettings};
+		response: SpreadsheetInitialization;
+	};
 	getSettings: {request: undefined; response: SettingsState};
 	updateSettings: {
 		request: {settings: Settings; expectedRevision: number};
@@ -238,6 +254,7 @@ export const OPERATIONS = [
 	"searchSpeedrunGames",
 	"getSpeedrunGameOptions",
 	"getSpeedrunCategoryVariables",
+	"initializeSpreadsheet",
 	"getSettings",
 	"updateSettings",
 ] as const satisfies readonly (keyof Operations)[];

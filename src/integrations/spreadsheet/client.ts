@@ -15,6 +15,9 @@ export interface SpreadsheetClient {
 		range: string,
 		values: readonly (readonly string[])[],
 	): Promise<void>;
+	/** Titles of every worksheet in the spreadsheet, in API order. */
+	listSheets(): Promise<string[]>;
+	createSheet(sheetName: string): Promise<void>;
 }
 
 /** Quote a sheet name for use in A1 notation. */
