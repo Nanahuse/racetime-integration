@@ -7,10 +7,16 @@ import type {
 	RacesState,
 	ResolvedRace,
 } from "@nanahuse/racetime-protocol";
-import {useRef, useState} from "react";
+import {useCallback, useEffect, useRef, useState} from "react";
 import {errorMessage, request} from "../api/client";
 import {beginRegistration, playerEditUrl} from "../api/player-manager";
+import type {EditorState} from "../model/editor";
 import {Callout} from "./common";
+import {
+	MappingWorkspace,
+	type RaceMappingTarget,
+	targetKeyOf,
+} from "./Mappings";
 
 function counts(participants: readonly Participant[]) {
 	const matched = participants.filter((p) => p.status === "matched").length;
@@ -36,6 +42,14 @@ function resultByUser(race: Race | null) {
 	const results = new Map<string, RaceResult>();
 	for (const result of race?.results ?? []) results.set(result.userId, result);
 	return results;
+}
+
+function raceTarget(race: Race): RaceMappingTarget {
+	return {
+		categorySlug: race.category.slug,
+		categoryName: race.category.name,
+		goal: race.category.goal,
+	};
 }
 
 /** Fields common to a single Race, used by both monitored and fetched views. */
@@ -239,39 +253,261 @@ function Participants({
 	);
 }
 
-export function Overview({races}: {races: RacesState | undefined}) {
+export function Overview({
+	races,
+	onStateChange,
+}: {
+	races: RacesState | undefined;
+	onStateChange?: (state: EditorState) => void;
+}) {
 	const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
 	const [urlInput, setUrlInput] = useState("");
 	const [fetched, setFetched] = useState<ResolvedRace | null>(null);
 	const [registrationUrl, setRegistrationUrl] = useState<string | null>(null);
+	const [registrationError, setRegistrationError] = useState<string | null>(
+		null,
+	);
+	const [fetchNotice, setFetchNotice] = useState<string | null>(null);
 	const [fetching, setFetching] = useState(false);
+	const [mappingBusy, setMappingBusy] = useState(false);
+	const [mappingDirty, setMappingDirty] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	// The monitored race snapshot currently shown. It is pinned while there are
+	// unsaved mapping edits so an external Replicant update cannot discard them.
+	const [monitoredTarget, setMonitoredTarget] = useState<{
+		key: string;
+		state: RaceState;
+	} | null>(null);
+	const [externalPrompt, setExternalPrompt] = useState<
+		"changed" | "removed" | null
+	>(null);
+	const [externalNotice, setExternalNotice] = useState<
+		"changed" | "removed" | null
+	>(null);
+	const [pendingRace, setPendingRace] = useState<(() => void) | null>(null);
 	const fetchGen = useRef(0);
 	// Identifies the currently displayed race so a registration that finishes
 	// after the user moved on cannot change the view.
 	const viewRef = useRef(0);
 	const displayRef = useRef<string | null>(null);
+	const displaySourceRef = useRef<"monitored" | "fetched" | null>(null);
 	const registerGen = useRef(0);
 	const activeRegistration = useRef<{
 		view: number;
 		participant: string;
 	} | null>(null);
+	const mappingRef = useRef<EditorState>({dirty: false, busy: false});
+	const acknowledgedExternalRef = useRef<string | null>(null);
 
 	const list = races?.races ?? [];
-	const monitored =
+	const liveMonitored =
 		selectedUrl === null
 			? null
 			: (list.find((race) => race.url === selectedUrl) ?? null);
+	const monitoredDisplay = monitoredTarget?.state ?? liveMonitored;
+	const isMonitored = selectedUrl !== null && monitoredDisplay !== null;
+	const displayedRace = isMonitored
+		? (monitoredDisplay?.race ?? null)
+		: (fetched?.race ?? null);
+	const target: RaceMappingTarget | null = displayedRace
+		? raceTarget(displayedRace)
+		: null;
+	const targetKey = target ? targetKeyOf(target) : null;
+	const targetKeyRef = useRef<string | null>(null);
+	targetKeyRef.current = targetKey;
 
-	const selectMonitored = (url: string) => {
+	const reportMapping = useCallback(
+		(state: EditorState) => {
+			mappingRef.current = state;
+			setMappingBusy(state.busy);
+			setMappingDirty(state.dirty);
+			onStateChange?.(state);
+		},
+		[onStateChange],
+	);
+
+	const clearRegistration = useCallback(() => {
+		setRegistrationUrl(null);
+		setRegistrationError(null);
+	}, []);
+
+	// Invalidate the registration in-flight for the race that is being dismissed
+	// so a late response cannot open the registration screen.
+	const endDisplay = useCallback(() => {
+		viewRef.current++;
+		displayRef.current = null;
+		displaySourceRef.current = null;
+		clearRegistration();
+	}, [clearRegistration]);
+
+	useEffect(() => {
+		if (targetKey !== null) return;
+		mappingRef.current = {dirty: false, busy: false};
+		setMappingBusy(false);
+		setMappingDirty(false);
+		onStateChange?.({dirty: false, busy: false});
+	}, [targetKey, onStateChange]);
+
+	// External Replicant updates must not silently replace the mapping target
+	// while the user has unsaved edits. Follow normal updates, but hold the
+	// current target and ask before switching when only the target changed.
+	useEffect(() => {
+		if (selectedUrl === null) {
+			setMonitoredTarget(null);
+			setExternalPrompt(null);
+			setExternalNotice(null);
+			acknowledgedExternalRef.current = null;
+			return;
+		}
+		const live = list.find((race) => race.url === selectedUrl) ?? null;
+		if (live === null) {
+			// The monitored race was removed from the Replicant.
+			if (monitoredTarget === null) {
+				setSelectedUrl(null);
+				return;
+			}
+			if (mappingBusy) return;
+			if (mappingDirty) {
+				if (acknowledgedExternalRef.current === "removed")
+					setExternalNotice((current) => current ?? "removed");
+				else setExternalPrompt((current) => current ?? "removed");
+				return;
+			}
+			endDisplay();
+			setMonitoredTarget(null);
+			setSelectedUrl(null);
+			setExternalPrompt(null);
+			setExternalNotice(null);
+			acknowledgedExternalRef.current = null;
+			return;
+		}
+		if (live.race === null) {
+			// The entry still exists but its snapshot is temporarily missing.
+			// Keep the displayed race, its target and any in-flight registration.
+			return;
+		}
+		const liveKey = targetKeyOf(raceTarget(live.race));
+		if (monitoredTarget === null) {
+			setMonitoredTarget({key: liveKey, state: live});
+			return;
+		}
+		if (liveKey === monitoredTarget.key) {
+			if (live !== monitoredTarget.state)
+				setMonitoredTarget({key: liveKey, state: live});
+			if (externalPrompt !== null) setExternalPrompt(null);
+			if (externalNotice !== null) setExternalNotice(null);
+			acknowledgedExternalRef.current = null;
+			return;
+		}
+		if (mappingBusy) return;
+		if (mappingDirty) {
+			if (acknowledgedExternalRef.current === liveKey)
+				setExternalNotice((current) => current ?? "changed");
+			else setExternalPrompt((current) => current ?? "changed");
+			return;
+		}
+		// Same race, only its goal/category changed: switching the mapping target
+		// must not invalidate an in-flight participant registration.
+		setMonitoredTarget({key: liveKey, state: live});
+		setExternalPrompt(null);
+		setExternalNotice(null);
+		acknowledgedExternalRef.current = null;
+	}, [
+		selectedUrl,
+		list,
+		monitoredTarget,
+		mappingBusy,
+		mappingDirty,
+		externalPrompt,
+		externalNotice,
+		endDisplay,
+	]);
+
+	const markExternalAcknowledged = () => {
+		const live =
+			selectedUrl === null
+				? null
+				: (list.find((race) => race.url === selectedUrl) ?? null);
+		acknowledgedExternalRef.current = live?.race
+			? targetKeyOf(raceTarget(live.race))
+			: "removed";
+	};
+
+	const keepEditing = () => {
+		markExternalAcknowledged();
+		setExternalNotice(externalPrompt);
+		setExternalPrompt(null);
+	};
+
+	const showLatest = () => {
+		if (mappingRef.current.busy) return;
+		const live =
+			selectedUrl === null
+				? null
+				: (list.find((race) => race.url === selectedUrl) ?? null);
+		if (live === null) {
+			// The monitored race was removed: dismissing invalidates any
+			// in-flight registration.
+			endDisplay();
+			setMonitoredTarget(null);
+			setSelectedUrl(null);
+		} else if (live.race === null) {
+			// The entry still exists but its snapshot is temporarily missing.
+			// Keep the displayed race, workspace, draft and registration, and
+			// keep waiting so the latest state can be applied once available.
+			return;
+		} else {
+			setMonitoredTarget({
+				key: targetKeyOf(raceTarget(live.race)),
+				state: live,
+			});
+		}
+		setExternalPrompt(null);
+		setExternalNotice(null);
+		acknowledgedExternalRef.current = null;
+	};
+
+	const applySelection = (url: string) => {
 		fetchGen.current++;
 		viewRef.current++;
 		displayRef.current = url;
+		displaySourceRef.current = "monitored";
+		const live = list.find((race) => race.url === url) ?? null;
+		setMonitoredTarget(
+			live?.race
+				? {key: targetKeyOf(raceTarget(live.race)), state: live}
+				: null,
+		);
+		setExternalPrompt(null);
+		setExternalNotice(null);
+		acknowledgedExternalRef.current = null;
 		setSelectedUrl(url);
 		setFetched(null);
-		setRegistrationUrl(null);
+		clearRegistration();
+		setFetchNotice(null);
 		setError(null);
 		setFetching(false);
+	};
+
+	const guardRaceChange = (nextKey: string | null, action: () => void) => {
+		if (mappingRef.current.busy) return;
+		if (mappingRef.current.dirty && nextKey !== targetKeyRef.current) {
+			setPendingRace(() => action);
+			return;
+		}
+		action();
+	};
+
+	const selectMonitored = (url: string) => {
+		const next = list.find((race) => race.url === url)?.race ?? null;
+		const nextKey = next
+			? targetKeyOf({
+					categorySlug: next.category.slug,
+					categoryName: next.category.name,
+					goal: next.category.goal,
+				})
+			: null;
+		guardRaceChange(nextKey, () => applySelection(url));
 	};
 
 	const applyFetched = (resolved: ResolvedRace) => {
@@ -279,32 +515,54 @@ export function Overview({races}: {races: RacesState | undefined}) {
 			viewRef.current++;
 			displayRef.current = resolved.race.url;
 			// Registration results belong to the race that was displayed.
-			setRegistrationUrl(null);
-			setError(null);
+			clearRegistration();
 		}
+		displaySourceRef.current = "fetched";
+		setFetchNotice(null);
 		setFetched(resolved);
 		setSelectedUrl(null);
 	};
 
 	const loadFetch = async (url: string) => {
+		if (mappingRef.current.busy) return;
 		const gen = ++fetchGen.current;
 		setFetching(true);
 		setError(null);
+		setFetchNotice(null);
 		try {
 			const resolved = await request("fetchRace", {url});
 			if (gen !== fetchGen.current) return;
+			// A save that started while this request was in flight must not have
+			// its workspace unmounted from under it.
+			if (mappingRef.current.busy) {
+				setFetchNotice(
+					"マッピングの保存処理中だったため、取得したレースは表示に反映されませんでした。保存完了後に再度取得してください。",
+				);
+				return;
+			}
+			const nextKey = targetKeyOf({
+				categorySlug: resolved.race.category.slug,
+				categoryName: resolved.race.category.name,
+				goal: resolved.race.category.goal,
+			});
+			if (mappingRef.current.dirty && nextKey !== targetKeyRef.current) {
+				setPendingRace(() => () => applyFetched(resolved));
+				return;
+			}
 			applyFetched(resolved);
 		} catch (cause) {
 			if (gen !== fetchGen.current) return;
-			if (fetched && displayRef.current === fetched.race.url) {
-				// The displayed fetched race is discarded: drop its registration
-				// result and invalidate any in-flight registration for it.
-				viewRef.current++;
+			setError(errorMessage(cause));
+			// A workspace that is saving or holds unsaved edits must survive a
+			// failed fetch of another race.
+			if (mappingRef.current.busy || mappingRef.current.dirty) return;
+			if (displaySourceRef.current === "fetched") {
 				displayRef.current = null;
-				setRegistrationUrl(null);
+				displaySourceRef.current = null;
+				viewRef.current++;
+				clearRegistration();
 			}
 			setFetched(null);
-			setError(errorMessage(cause));
 		} finally {
 			if (gen === fetchGen.current) setFetching(false);
 		}
@@ -323,15 +581,16 @@ export function Overview({races}: {races: RacesState | undefined}) {
 			view,
 			participant: participant.racetimeUserId,
 		};
-		setError(null);
+		setRegistrationError(null);
 		try {
 			const session = await beginRegistration(participant.racetimeUserId);
 			if (gen !== registerGen.current || view !== viewRef.current) return;
 			setRegistrationUrl(session.url);
+			setRegistrationError(null);
 			window.open(session.url, "_blank", "noopener,noreferrer");
 		} catch (cause) {
 			if (gen !== registerGen.current || view !== viewRef.current) return;
-			setError(errorMessage(cause));
+			setRegistrationError(errorMessage(cause));
 		} finally {
 			if (gen === registerGen.current) activeRegistration.current = null;
 		}
@@ -371,7 +630,7 @@ export function Overview({races}: {races: RacesState | undefined}) {
 						/>
 						<button
 							type='button'
-							disabled={fetching || urlInput.trim() === ""}
+							disabled={fetching || mappingBusy || urlInput.trim() === ""}
 							onClick={() => void loadFetch(urlInput.trim())}
 						>
 							{fetching ? "取得中…" : "取得"}
@@ -383,6 +642,24 @@ export function Overview({races}: {races: RacesState | undefined}) {
 			<section className='panel'>
 				<h2>レース詳細</h2>
 				{error && <Callout tone='error'>{error}</Callout>}
+				{registrationError && (
+					<Callout tone='error'>{registrationError}</Callout>
+				)}
+				{fetchNotice && <Callout tone='info'>{fetchNotice}</Callout>}
+				{externalNotice && (
+					<Callout tone='warning'>
+						{externalNotice === "changed"
+							? "監視中のレース情報が更新され、Mappingの対象が変更されました。"
+							: "監視中のレースが監視対象から削除されました。"}
+						<button
+							type='button'
+							disabled={mappingBusy}
+							onClick={showLatest}
+						>
+							{externalNotice === "changed" ? "最新状態を表示" : "表示を解除"}
+						</button>
+					</Callout>
+				)}
 				{registrationUrl && (
 					<Callout tone='success'>
 						登録画面を開きました:{" "}
@@ -396,13 +673,21 @@ export function Overview({races}: {races: RacesState | undefined}) {
 						</a>
 					</Callout>
 				)}
-				{monitored ? (
+				{isMonitored && monitoredDisplay ? (
 					<>
-						<MonitoredDetails state={monitored} />
+						<MonitoredDetails state={monitoredDisplay} />
+						{target && (
+							<MappingWorkspace
+								key={targetKey}
+								mode='race'
+								target={target}
+								onStateChange={reportMapping}
+							/>
+						)}
 						<h3>参加者</h3>
 						<Participants
-							participants={orderParticipants(monitored.participants)}
-							race={monitored.race}
+							participants={orderParticipants(monitoredDisplay.participants)}
+							race={monitoredDisplay.race}
 							onRegister={(participant) => void register(participant)}
 							registerDisabled={false}
 						/>
@@ -410,6 +695,14 @@ export function Overview({races}: {races: RacesState | undefined}) {
 				) : fetched ? (
 					<>
 						<FetchedDetails resolved={fetched} />
+						{target && (
+							<MappingWorkspace
+								key={targetKey}
+								mode='race'
+								target={target}
+								onStateChange={reportMapping}
+							/>
+						)}
 						<h3>参加者</h3>
 						<Participants
 							participants={orderParticipants(fetched.participants)}
@@ -420,7 +713,7 @@ export function Overview({races}: {races: RacesState | undefined}) {
 						<div className='formrow'>
 							<button
 								type='button'
-								disabled={fetching}
+								disabled={fetching || mappingBusy}
 								onClick={() => void loadFetch(fetched.race.url)}
 							>
 								{fetching ? "取得中…" : "再取得"}
@@ -431,6 +724,58 @@ export function Overview({races}: {races: RacesState | undefined}) {
 					<p className='muted'>レースを選択するかURLで取得してください。</p>
 				)}
 			</section>
+			{pendingRace && (
+				<div className='dialog-backdrop'>
+					<div className='dialog'>
+						<p>未保存のマッピング変更があります。破棄して移動しますか？</p>
+						<div className='button-row'>
+							<button
+								type='button'
+								onClick={() => {
+									if (mappingRef.current.busy) return;
+									const action = pendingRace;
+									setPendingRace(null);
+									action();
+								}}
+							>
+								破棄して移動
+							</button>
+							<button
+								type='button'
+								onClick={() => setPendingRace(null)}
+							>
+								キャンセル
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+			{externalPrompt && (
+				<div className='dialog-backdrop'>
+					<div className='dialog'>
+						<p>
+							{externalPrompt === "changed"
+								? "監視中のレース情報が更新され、Mappingの対象が変更されました。未保存の変更を破棄して最新のレース情報を表示しますか？"
+								: "監視中のレースが監視対象から削除されました。未保存の変更を破棄して表示を解除しますか？"}
+						</p>
+						<div className='button-row'>
+							<button
+								type='button'
+								disabled={mappingBusy}
+								onClick={showLatest}
+							>
+								{externalPrompt === "changed" ? "最新状態を表示" : "表示を解除"}
+							</button>
+							<button
+								type='button'
+								onClick={keepEditing}
+							>
+								編集を続ける
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }

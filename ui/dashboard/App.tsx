@@ -67,6 +67,14 @@ export function App() {
 		switchTab(next);
 	};
 
+	const confirmDiscardAndSwitch = () => {
+		if (editorState.busy) return;
+		const next = confirmTab;
+		if (next === null) return;
+		setConfirmTab(null);
+		switchTab(next);
+	};
+
 	return (
 		<div className='app'>
 			<header>
@@ -107,7 +115,12 @@ export function App() {
 				))}
 			</nav>
 			<main>
-				{tab === "overview" && <Overview races={races.value} />}
+				{tab === "overview" && (
+					<Overview
+						races={races.value}
+						onStateChange={setEditorState}
+					/>
+				)}
 				{tab === "mappings" && <Mappings onStateChange={setEditorState} />}
 				{tab === "settings" && <Settings onStateChange={setEditorState} />}
 			</main>
@@ -118,11 +131,8 @@ export function App() {
 						<div className='button-row'>
 							<button
 								type='button'
-								onClick={() => {
-									const next = confirmTab;
-									setConfirmTab(null);
-									switchTab(next);
-								}}
+								disabled={editorState.busy}
+								onClick={confirmDiscardAndSwitch}
 							>
 								破棄して移動
 							</button>
