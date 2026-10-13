@@ -1462,7 +1462,7 @@ function RaceMappingSummary({
 				<div className='button-row'>
 					<button
 						type='button'
-						disabled={busy || error !== null}
+						disabled={busy || !ready || error !== null}
 						onClick={onToggle}
 					>
 						{expanded ? "編集を閉じる" : "編集"}

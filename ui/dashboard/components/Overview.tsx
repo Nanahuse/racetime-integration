@@ -264,6 +264,7 @@ export function Overview({
 	// after the user moved on cannot change the view.
 	const viewRef = useRef(0);
 	const displayRef = useRef<string | null>(null);
+	const displaySourceRef = useRef<"monitored" | "fetched" | null>(null);
 	const registerGen = useRef(0);
 	const activeRegistration = useRef<{
 		view: number;
@@ -306,6 +307,7 @@ export function Overview({
 		fetchGen.current++;
 		viewRef.current++;
 		displayRef.current = url;
+		displaySourceRef.current = "monitored";
 		setSelectedUrl(url);
 		setFetched(null);
 		setRegistrationUrl(null);
@@ -339,6 +341,7 @@ export function Overview({
 			viewRef.current++;
 			displayRef.current = resolved.race.url;
 		}
+		displaySourceRef.current = "fetched";
 		setFetched(resolved);
 		setSelectedUrl(null);
 	};
@@ -352,6 +355,9 @@ export function Overview({
 		try {
 			const resolved = await request("fetchRace", {url});
 			if (gen !== fetchGen.current) return;
+			// A save that started while this request was in flight must not have
+			// its workspace unmounted from under it.
+			if (mappingRef.current.busy) return;
 			const nextKey = targetKeyOf({
 				categorySlug: resolved.race.category.slug,
 				categoryName: resolved.race.category.name,
@@ -364,8 +370,15 @@ export function Overview({
 			applyFetched(resolved);
 		} catch (cause) {
 			if (gen !== fetchGen.current) return;
-			setFetched(null);
 			setError(errorMessage(cause));
+			// Unsaved mapping edits must survive a failed fetch of another race.
+			if (mappingRef.current.dirty) return;
+			if (displaySourceRef.current === "fetched") {
+				displayRef.current = null;
+				displaySourceRef.current = null;
+				viewRef.current++;
+			}
+			setFetched(null);
 		} finally {
 			if (gen === fetchGen.current) setFetching(false);
 		}
@@ -516,6 +529,7 @@ export function Overview({
 							<button
 								type='button'
 								onClick={() => {
+									if (mappingRef.current.busy) return;
 									const action = pendingRace;
 									setPendingRace(null);
 									action();

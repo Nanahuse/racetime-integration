@@ -181,6 +181,70 @@ function mapRegion(value: unknown): SpeedrunRegionOption {
 	};
 }
 
+/**
+ * The category detail endpoint links to the owning game rather than embedding
+ * its id: `{"links": [{"rel": "game", "uri": ".../games/<id>"}]}`.
+ */
+function gameIdFromCategory(value: unknown): string {
+	const category = requireRecord(value, "category");
+	const links = category.links;
+	if (!Array.isArray(links))
+		throw new SpeedrunError(
+			"invalid_payload",
+			"category.links must be an array.",
+		);
+	for (const entry of links) {
+		if (!isRecord(entry) || entry.rel !== "game") continue;
+		if (typeof entry.uri !== "string" || entry.uri === "")
+			throw new SpeedrunError(
+				"invalid_payload",
+				'category game link must include a non-empty "uri".',
+			);
+		return gameIdFromLinkUri(entry.uri);
+	}
+	throw new SpeedrunError(
+		"invalid_payload",
+		'category.links must include a link with rel "game".',
+	);
+}
+
+function gameIdFromLinkUri(uri: string): string {
+	let url: URL;
+	try {
+		url = new URL(uri);
+	} catch {
+		throw new SpeedrunError(
+			"invalid_payload",
+			`category game link uri is not a valid URL: ${uri}`,
+		);
+	}
+	const base = new URL(`${SPEEDRUN_API_BASE_URL}/games/`);
+	if (
+		url.protocol !== base.protocol ||
+		url.host !== base.host ||
+		!url.pathname.startsWith(base.pathname)
+	)
+		throw new SpeedrunError(
+			"invalid_payload",
+			`category game link uri is not a Speedrun.com games URL: ${uri}`,
+		);
+	let id: string;
+	try {
+		id = decodeURIComponent(url.pathname.slice(base.pathname.length));
+	} catch {
+		throw new SpeedrunError(
+			"invalid_payload",
+			`category game link uri has an invalid game id: ${uri}`,
+		);
+	}
+	if (!/^[A-Za-z0-9_-]+$/.test(id))
+		throw new SpeedrunError(
+			"invalid_payload",
+			`category game link uri has an invalid game id: ${uri}`,
+		);
+	return id;
+}
+
 type CacheEntry = {expires: number; value: unknown};
 
 export class HttpSpeedrunClient implements SpeedrunClient {
@@ -357,8 +421,9 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 
 	getCategoryGameId(categoryId: string): Promise<string> {
 		return this.cached(`category-game:${categoryId}`, () =>
-			this.single(`/categories/${encodeURIComponent(categoryId)}`, (value) =>
-				requireString(requireRecord(value, "category"), "game", "category"),
+			this.single(
+				`/categories/${encodeURIComponent(categoryId)}`,
+				gameIdFromCategory,
 			),
 		);
 	}

@@ -711,6 +711,17 @@ const racesSameTarget: RacesState = {
 	races: [raceState, raceStateB],
 };
 
+async function openMappingEditor() {
+	await waitFor(() =>
+		expect(
+			(screen.getByRole("button", {name: "編集"}) as HTMLButtonElement)
+				.disabled,
+		).toBe(false),
+	);
+	const button = screen.getByRole("button", {name: "編集"});
+	fireEvent.click(button);
+}
+
 it("registers Game then Category mappings from Overview", async () => {
 	const savedGames: GameMappingRecord[] = [];
 	const savedCategories: CategoryMappingRecord[] = [];
@@ -741,9 +752,9 @@ it("registers Game then Category mappings from Overview", async () => {
 	fireEvent.click(screen.getByRole("button", {name: "取得"}));
 
 	expect(await screen.findByText("Speedrun.com マッピング")).toBeTruthy();
-	expect(screen.getAllByText("未登録")).toHaveLength(2);
+	expect(await screen.findAllByText("未登録")).toHaveLength(2);
 
-	fireEvent.click(screen.getByRole("button", {name: "編集"}));
+	await openMappingEditor();
 	const slug = (await screen.findByDisplayValue("game")) as HTMLInputElement;
 	expect(slug.readOnly).toBe(true);
 	expect(screen.getByDisplayValue("Game")).toBeTruthy();
@@ -811,7 +822,7 @@ it("shows existing mappings and updates with the saved revision", async () => {
 	expect(await screen.findByText("登録済み: SRC Game")).toBeTruthy();
 	expect(screen.getByText("登録済み: Any%")).toBeTruthy();
 
-	fireEvent.click(screen.getByRole("button", {name: "編集"}));
+	await openMappingEditor();
 	expect(
 		((await screen.findByDisplayValue("game")) as HTMLInputElement).readOnly,
 	).toBe(true);
@@ -856,7 +867,8 @@ it("surfaces a mapping save conflict in Overview", async () => {
 		target: {value: race.url},
 	});
 	fireEvent.click(screen.getByRole("button", {name: "取得"}));
-	fireEvent.click(await screen.findByRole("button", {name: "編集"}));
+	await openMappingEditor();
+
 	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
 		target: {value: "src"},
 	});
@@ -901,7 +913,8 @@ it("asks before discarding unsaved mapping edits when switching races", async ()
 	render(<Overview races={racesTwo} />);
 	const [firstRace] = screen.getAllByRole("button", {name: /game\/race/});
 	fireEvent.click(firstRace!);
-	fireEvent.click(await screen.findByRole("button", {name: "編集"}));
+	await openMappingEditor();
+
 	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
 		target: {value: "src"},
 	});
@@ -928,7 +941,8 @@ it("keeps the mapping edit session when switching to a race with the same target
 	render(<Overview races={racesSameTarget} />);
 	const [firstRace] = screen.getAllByRole("button", {name: /game\/race/});
 	fireEvent.click(firstRace!);
-	fireEvent.click(await screen.findByRole("button", {name: "編集"}));
+	await openMappingEditor();
+
 	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
 		target: {value: "src"},
 	});
@@ -964,7 +978,8 @@ it("does not switch the mapping target while a save is in progress", async () =>
 	render(<Overview races={racesTwo} />);
 	const [firstRace] = screen.getAllByRole("button", {name: /game\/race/});
 	fireEvent.click(firstRace!);
-	fireEvent.click(await screen.findByRole("button", {name: "編集"}));
+	await openMappingEditor();
+
 	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
 		target: {value: "src"},
 	});
@@ -995,7 +1010,8 @@ it("reports unsaved mapping edits through onStateChange", async () => {
 		target: {value: race.url},
 	});
 	fireEvent.click(screen.getByRole("button", {name: "取得"}));
-	fireEvent.click(await screen.findByRole("button", {name: "編集"}));
+	await openMappingEditor();
+
 	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
 		target: {value: "src"},
 	});
@@ -1014,7 +1030,8 @@ it("keeps the mapping draft when the monitored race refreshes", async () => {
 	const {rerender} = render(<Overview races={races} />);
 	const [firstRace] = screen.getAllByRole("button", {name: /game\/race/});
 	fireEvent.click(firstRace!);
-	fireEvent.click(await screen.findByRole("button", {name: "編集"}));
+	await openMappingEditor();
+
 	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
 		target: {value: "src"},
 	});
@@ -1119,4 +1136,242 @@ it("registers participants for a newly fetched race", async () => {
 		"_blank",
 		"noopener,noreferrer",
 	);
+});
+
+it("disables editing until the mapping lists have loaded", async () => {
+	const listPending = deferred<unknown>();
+	sendMessage.mockImplementation((name: string) => {
+		const operation = name.replace("racetime.v3.", "");
+		if (operation === "fetchRace")
+			return Promise.resolve({ok: true, data: resolved()});
+		if (
+			operation === "listGameMappings" ||
+			operation === "listCategoryMappings"
+		)
+			return listPending.promise;
+		throw new Error(`unexpected operation ${operation}`);
+	});
+	render(<Overview races={undefined} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: race.url},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	const edit = await screen.findByRole("button", {name: "編集"});
+	expect((edit as HTMLButtonElement).disabled).toBe(true);
+
+	await act(async () => {
+		listPending.resolve({
+			ok: true,
+			data: {records: [], settingsRevision: 0},
+		});
+	});
+	await waitFor(() =>
+		expect(
+			(screen.getByRole("button", {name: "編集"}) as HTMLButtonElement)
+				.disabled,
+		).toBe(false),
+	);
+});
+
+it("keeps editing disabled after a mapping load failure and recovers on reload", async () => {
+	let failLists = true;
+	sendMessage.mockImplementation(async (name: string) => {
+		const operation = name.replace("racetime.v3.", "");
+		if (operation === "fetchRace") return {ok: true, data: resolved()};
+		if (operation === "listGameMappings")
+			return failLists
+				? {
+						ok: false,
+						error: {code: "spreadsheet_unavailable", message: "down"},
+					}
+				: {ok: true, data: {records: [gameRecord], settingsRevision: 0}};
+		if (operation === "listCategoryMappings")
+			return failLists
+				? {
+						ok: false,
+						error: {code: "spreadsheet_unavailable", message: "down"},
+					}
+				: {ok: true, data: {records: [], settingsRevision: 0}};
+		throw new Error(`unexpected operation ${operation}`);
+	});
+	render(<Overview races={undefined} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: race.url},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	expect(
+		await screen.findByText(/マッピング情報を取得できませんでした/),
+	).toBeTruthy();
+	expect(
+		(screen.getByRole("button", {name: "編集"}) as HTMLButtonElement).disabled,
+	).toBe(true);
+
+	failLists = false;
+	fireEvent.click(screen.getByRole("button", {name: "保存先から再読込"}));
+	await waitFor(() =>
+		expect(
+			(screen.getByRole("button", {name: "編集"}) as HTMLButtonElement)
+				.disabled,
+		).toBe(false),
+	);
+	expect(await screen.findByText("登録済み: SRC Game")).toBeTruthy();
+});
+
+it("keeps unsaved mapping edits when fetching another race fails", async () => {
+	let fetches = 0;
+	const base = mappingHandler({games: [], categories: []});
+	sendMessage.mockImplementation((name: string, data?: unknown) => {
+		const operation = name.replace("racetime.v3.", "");
+		if (operation === "fetchRace") {
+			fetches += 1;
+			return fetches === 1
+				? Promise.resolve({ok: true, data: resolved()})
+				: Promise.resolve({
+						ok: false,
+						error: {code: "not_found", message: "missing"},
+					});
+		}
+		return base(name, data);
+	});
+	render(<Overview races={undefined} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: race.url},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	await openMappingEditor();
+
+	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
+		target: {value: "src"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "検索"}));
+	fireEvent.click(await screen.findByRole("button", {name: /SRC Game/}));
+	expect(await screen.findByText(/選択中: SRC Game/)).toBeTruthy();
+
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: "https://racetime.gg/other/race"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	expect(await screen.findByText(/not_found/)).toBeTruthy();
+	expect(screen.getByText("game/race")).toBeTruthy();
+	expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy();
+});
+
+it("does not switch races when a fetch result arrives during a mapping save", async () => {
+	const otherCategory: Race = {
+		...race,
+		raceId: "other/race",
+		url: "https://racetime.gg/other/race",
+		category: {slug: "other", name: "Other", goal: "100%"},
+	};
+	const pendingFetch = deferred<unknown>();
+	let finishSave: (() => void) | null = null;
+	const base = mappingHandler({
+		games: [],
+		categories: [],
+		saveGame: (mapping) =>
+			new Promise((resolve) => {
+				finishSave = () =>
+					resolve({
+						ok: true,
+						data: {
+							record: {mapping, revision: "g"},
+							action: "created",
+							settingsRevision: 0,
+						},
+					});
+			}),
+	});
+	let fetches = 0;
+	sendMessage.mockImplementation((name: string, data?: unknown) => {
+		const operation = name.replace("racetime.v3.", "");
+		if (operation === "fetchRace") {
+			fetches += 1;
+			return fetches === 1
+				? Promise.resolve({ok: true, data: resolved()})
+				: pendingFetch.promise;
+		}
+		return base(name, data);
+	});
+	render(<Overview races={undefined} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: race.url},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	await openMappingEditor();
+
+	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
+		target: {value: "src"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "検索"}));
+	fireEvent.click(await screen.findByRole("button", {name: /SRC Game/}));
+
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: "https://racetime.gg/other/race"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	await waitFor(() =>
+		expect(screen.getByRole("button", {name: "保存中…"})).toBeTruthy(),
+	);
+
+	await act(async () => {
+		pendingFetch.resolve({ok: true, data: resolved(otherCategory)});
+	});
+	expect(screen.getByText("game/race")).toBeTruthy();
+	expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy();
+
+	await act(async () => {
+		finishSave?.();
+	});
+	expect(await screen.findByText("Game Mappingを保存しました。")).toBeTruthy();
+});
+
+it("cannot confirm a pending race switch while a save is in progress", async () => {
+	let finishSave: (() => void) | null = null;
+	sendMessage.mockImplementation(
+		mappingHandler({
+			games: [],
+			categories: [],
+			saveGame: (mapping) =>
+				new Promise((resolve) => {
+					finishSave = () =>
+						resolve({
+							ok: true,
+							data: {
+								record: {mapping, revision: "g"},
+								action: "created",
+								settingsRevision: 0,
+							},
+						});
+				}),
+		}),
+	);
+	render(<Overview races={racesTwo} />);
+	const [firstRace] = screen.getAllByRole("button", {name: /game\/race/});
+	fireEvent.click(firstRace!);
+	await openMappingEditor();
+
+	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
+		target: {value: "src"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "検索"}));
+	fireEvent.click(await screen.findByRole("button", {name: /SRC Game/}));
+
+	fireEvent.click(screen.getByRole("button", {name: /other\/race2/}));
+	expect(
+		await screen.findByText(/未保存のマッピング変更があります/),
+	).toBeTruthy();
+
+	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	await waitFor(() =>
+		expect(screen.getByRole("button", {name: "保存中…"})).toBeTruthy(),
+	);
+
+	fireEvent.click(screen.getByRole("button", {name: "破棄して移動"}));
+	expect(screen.getByText("Game / Any%")).toBeTruthy();
+	expect(screen.getByText(/未保存のマッピング変更があります/)).toBeTruthy();
+
+	await act(async () => {
+		finishSave?.();
+	});
 });
