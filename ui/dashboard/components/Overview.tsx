@@ -256,7 +256,12 @@ export function Overview({
 	const [urlInput, setUrlInput] = useState("");
 	const [fetched, setFetched] = useState<ResolvedRace | null>(null);
 	const [registrationUrl, setRegistrationUrl] = useState<string | null>(null);
+	const [registrationError, setRegistrationError] = useState<string | null>(
+		null,
+	);
+	const [fetchNotice, setFetchNotice] = useState<string | null>(null);
 	const [fetching, setFetching] = useState(false);
+	const [mappingBusy, setMappingBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [pendingRace, setPendingRace] = useState<(() => void) | null>(null);
 	const fetchGen = useRef(0);
@@ -292,6 +297,7 @@ export function Overview({
 	const reportMapping = useCallback(
 		(state: EditorState) => {
 			mappingRef.current = state;
+			setMappingBusy(state.busy);
 			onStateChange?.(state);
 		},
 		[onStateChange],
@@ -300,8 +306,14 @@ export function Overview({
 	useEffect(() => {
 		if (targetKey !== null) return;
 		mappingRef.current = {dirty: false, busy: false};
+		setMappingBusy(false);
 		onStateChange?.({dirty: false, busy: false});
 	}, [targetKey, onStateChange]);
+
+	const clearRegistration = () => {
+		setRegistrationUrl(null);
+		setRegistrationError(null);
+	};
 
 	const applySelection = (url: string) => {
 		fetchGen.current++;
@@ -310,7 +322,8 @@ export function Overview({
 		displaySourceRef.current = "monitored";
 		setSelectedUrl(url);
 		setFetched(null);
-		setRegistrationUrl(null);
+		clearRegistration();
+		setFetchNotice(null);
 		setError(null);
 		setFetching(false);
 	};
@@ -340,8 +353,11 @@ export function Overview({
 		if (displayRef.current !== resolved.race.url) {
 			viewRef.current++;
 			displayRef.current = resolved.race.url;
+			// Registration results belong to the race that was displayed.
+			clearRegistration();
 		}
 		displaySourceRef.current = "fetched";
+		setFetchNotice(null);
 		setFetched(resolved);
 		setSelectedUrl(null);
 	};
@@ -351,13 +367,18 @@ export function Overview({
 		const gen = ++fetchGen.current;
 		setFetching(true);
 		setError(null);
-		setRegistrationUrl(null);
+		setFetchNotice(null);
 		try {
 			const resolved = await request("fetchRace", {url});
 			if (gen !== fetchGen.current) return;
 			// A save that started while this request was in flight must not have
 			// its workspace unmounted from under it.
-			if (mappingRef.current.busy) return;
+			if (mappingRef.current.busy) {
+				setFetchNotice(
+					"マッピングの保存処理中だったため、取得したレースは表示に反映されませんでした。保存完了後に再度取得してください。",
+				);
+				return;
+			}
 			const nextKey = targetKeyOf({
 				categorySlug: resolved.race.category.slug,
 				categoryName: resolved.race.category.name,
@@ -371,12 +392,14 @@ export function Overview({
 		} catch (cause) {
 			if (gen !== fetchGen.current) return;
 			setError(errorMessage(cause));
-			// Unsaved mapping edits must survive a failed fetch of another race.
-			if (mappingRef.current.dirty) return;
+			// A workspace that is saving or holds unsaved edits must survive a
+			// failed fetch of another race.
+			if (mappingRef.current.busy || mappingRef.current.dirty) return;
 			if (displaySourceRef.current === "fetched") {
 				displayRef.current = null;
 				displaySourceRef.current = null;
 				viewRef.current++;
+				clearRegistration();
 			}
 			setFetched(null);
 		} finally {
@@ -397,15 +420,16 @@ export function Overview({
 			view,
 			participant: participant.racetimeUserId,
 		};
-		setError(null);
+		setRegistrationError(null);
 		try {
 			const session = await beginRegistration(participant.racetimeUserId);
 			if (gen !== registerGen.current || view !== viewRef.current) return;
 			setRegistrationUrl(session.url);
+			setRegistrationError(null);
 			window.open(session.url, "_blank", "noopener,noreferrer");
 		} catch (cause) {
 			if (gen !== registerGen.current || view !== viewRef.current) return;
-			setError(errorMessage(cause));
+			setRegistrationError(errorMessage(cause));
 		} finally {
 			if (gen === registerGen.current) activeRegistration.current = null;
 		}
@@ -445,7 +469,7 @@ export function Overview({
 						/>
 						<button
 							type='button'
-							disabled={fetching || urlInput.trim() === ""}
+							disabled={fetching || mappingBusy || urlInput.trim() === ""}
 							onClick={() => void loadFetch(urlInput.trim())}
 						>
 							{fetching ? "取得中…" : "取得"}
@@ -457,6 +481,10 @@ export function Overview({
 			<section className='panel'>
 				<h2>レース詳細</h2>
 				{error && <Callout tone='error'>{error}</Callout>}
+				{registrationError && (
+					<Callout tone='error'>{registrationError}</Callout>
+				)}
+				{fetchNotice && <Callout tone='info'>{fetchNotice}</Callout>}
 				{registrationUrl && (
 					<Callout tone='success'>
 						登録画面を開きました:{" "}
@@ -510,7 +538,7 @@ export function Overview({
 						<div className='formrow'>
 							<button
 								type='button'
-								disabled={fetching}
+								disabled={fetching || mappingBusy}
 								onClick={() => void loadFetch(fetched.race.url)}
 							>
 								{fetching ? "取得中…" : "再取得"}

@@ -1319,11 +1319,26 @@ it("does not switch races when a fetch result arrives during a mapping save", as
 	});
 	expect(screen.getByText("game/race")).toBeTruthy();
 	expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy();
+	expect(
+		screen.getByText(
+			/保存処理中だったため、取得したレースは表示に反映されません/,
+		),
+	).toBeTruthy();
 
 	await act(async () => {
 		finishSave?.();
 	});
 	expect(await screen.findByText("Game Mappingを保存しました。")).toBeTruthy();
+
+	// After the save completes, the discarded race can be fetched again.
+	await waitFor(() =>
+		expect(
+			(screen.getByRole("button", {name: "取得"}) as HTMLButtonElement)
+				.disabled,
+		).toBe(false),
+	);
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	expect(await screen.findByText("other/race")).toBeTruthy();
 });
 
 it("cannot confirm a pending race switch while a save is in progress", async () => {
@@ -1374,4 +1389,217 @@ it("cannot confirm a pending race switch while a save is in progress", async () 
 	await act(async () => {
 		finishSave?.();
 	});
+});
+
+it("keeps the mapping workspace when a fetch fails during the save reload", async () => {
+	const games: GameMappingRecord[] = [];
+	const gameListGate = deferred<unknown>();
+	const categoryListGate = deferred<unknown>();
+	let holdLists = false;
+	const pendingFetch = deferred<unknown>();
+	let fetches = 0;
+	const base = mappingHandler({
+		games: [],
+		categories: [],
+		saveGame: (mapping) => {
+			games.splice(0, games.length, {mapping, revision: "g"});
+			holdLists = true;
+			return {
+				ok: true,
+				data: {
+					record: {mapping, revision: "g"},
+					action: "created",
+					settingsRevision: 0,
+				},
+			};
+		},
+	});
+	sendMessage.mockImplementation((name: string, data?: unknown) => {
+		const operation = name.replace("racetime.v3.", "");
+		if (operation === "fetchRace") {
+			fetches += 1;
+			return fetches === 1
+				? Promise.resolve({ok: true, data: resolved()})
+				: pendingFetch.promise;
+		}
+		if (operation === "listGameMappings") {
+			if (holdLists) return gameListGate.promise;
+			return Promise.resolve({
+				ok: true,
+				data: {records: games, settingsRevision: 0},
+			});
+		}
+		if (operation === "listCategoryMappings") {
+			if (holdLists) return categoryListGate.promise;
+			return Promise.resolve({
+				ok: true,
+				data: {records: [], settingsRevision: 0},
+			});
+		}
+		return base(name, data);
+	});
+	render(<Overview races={undefined} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: race.url},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	await openMappingEditor();
+	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
+		target: {value: "src"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "検索"}));
+	fireEvent.click(await screen.findByRole("button", {name: /SRC Game/}));
+
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: "https://racetime.gg/other/race"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	await waitFor(() =>
+		expect(screen.getByRole("button", {name: "保存中…"})).toBeTruthy(),
+	);
+
+	// The save succeeded but the list reload is still pending: dirty=false,
+	// busy=true. A failed fetch must not tear down the saving workspace.
+	await act(async () => {
+		pendingFetch.reject(new Error("boom"));
+	});
+	expect(screen.getByText("game/race")).toBeTruthy();
+	expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy();
+	expect(screen.getByText(/boom/)).toBeTruthy();
+
+	await act(async () => {
+		gameListGate.resolve({
+			ok: true,
+			data: {records: games, settingsRevision: 0},
+		});
+		categoryListGate.resolve({
+			ok: true,
+			data: {records: [], settingsRevision: 0},
+		});
+	});
+	expect(await screen.findByText("登録済み: SRC Game")).toBeTruthy();
+});
+
+it("clears the previous race's registration URL when another race is fetched", async () => {
+	const open = vi.spyOn(window, "open").mockReturnValue(null);
+	let settleRegistration: (value: unknown) => void = () => {};
+	sendMessageToBundle.mockImplementation(
+		() =>
+			new Promise((resolve) => {
+				settleRegistration = resolve;
+			}),
+	);
+	const pendingFetch = deferred<unknown>();
+	let fetches = 0;
+	const base = mappingHandler({games: [], categories: []});
+	sendMessage.mockImplementation((name: string, data?: unknown) => {
+		const operation = name.replace("racetime.v3.", "");
+		if (operation === "fetchRace") {
+			fetches += 1;
+			return fetches === 1
+				? Promise.resolve({ok: true, data: resolved()})
+				: pendingFetch.promise;
+		}
+		return base(name, data);
+	});
+	render(<Overview races={undefined} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: race.url},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	fireEvent.click(await screen.findByRole("button", {name: "登録・紐付け"}));
+
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: "https://racetime.gg/other/race"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	await act(async () => {
+		settleRegistration({
+			ok: true,
+			data: {registrationId: "r1", url: "/Registration.html"},
+		});
+	});
+	expect(await screen.findByText(/登録画面を開きました/)).toBeTruthy();
+
+	await act(async () => {
+		pendingFetch.resolve({ok: true, data: resolved(fetchedRace)});
+	});
+	expect(await screen.findByText("other/race")).toBeTruthy();
+	expect(screen.queryByText(/登録画面を開きました/)).toBeNull();
+	expect(open).toHaveBeenCalled();
+});
+
+it("clears the previous race's registration error when another race is fetched", async () => {
+	let rejectRegistration: (reason: unknown) => void = () => {};
+	sendMessageToBundle.mockImplementation(
+		() =>
+			new Promise((_resolve, reject) => {
+				rejectRegistration = reject;
+			}),
+	);
+	const pendingFetch = deferred<unknown>();
+	let fetches = 0;
+	const base = mappingHandler({games: [], categories: []});
+	sendMessage.mockImplementation((name: string, data?: unknown) => {
+		const operation = name.replace("racetime.v3.", "");
+		if (operation === "fetchRace") {
+			fetches += 1;
+			return fetches === 1
+				? Promise.resolve({ok: true, data: resolved()})
+				: pendingFetch.promise;
+		}
+		return base(name, data);
+	});
+	render(<Overview races={undefined} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: race.url},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	fireEvent.click(await screen.findByRole("button", {name: "登録・紐付け"}));
+
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: "https://racetime.gg/other/race"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	await act(async () => {
+		rejectRegistration(new Error("directory_unavailable: down"));
+	});
+	expect(await screen.findByText(/directory_unavailable/)).toBeTruthy();
+
+	await act(async () => {
+		pendingFetch.resolve({ok: true, data: resolved(fetchedRace)});
+	});
+	expect(await screen.findByText("other/race")).toBeTruthy();
+	expect(screen.queryByText(/directory_unavailable/)).toBeNull();
+});
+
+it("keeps the current race's registration URL when fetching another race fails", async () => {
+	vi.spyOn(window, "open").mockReturnValue(null);
+	sendMessageToBundle.mockResolvedValue({
+		ok: true,
+		data: {registrationId: "r1", url: "/Registration.html"},
+	});
+	const base = mappingHandler({games: [], categories: []});
+	sendMessage.mockImplementation((name: string, data?: unknown) => {
+		const operation = name.replace("racetime.v3.", "");
+		if (operation === "fetchRace")
+			return Promise.resolve({
+				ok: false,
+				error: {code: "not_found", message: "missing"},
+			});
+		return base(name, data);
+	});
+	render(<Overview races={races} />);
+	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
+	fireEvent.click(await screen.findByRole("button", {name: "登録・紐付け"}));
+	expect(await screen.findByText(/登録画面を開きました/)).toBeTruthy();
+
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: "https://racetime.gg/other/race"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	expect(await screen.findByText(/not_found/)).toBeTruthy();
+	expect(screen.getByText("Game / Any%")).toBeTruthy();
+	expect(screen.getByText(/登録画面を開きました/)).toBeTruthy();
 });
