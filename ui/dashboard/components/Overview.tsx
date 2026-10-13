@@ -445,16 +445,22 @@ export function Overview({
 			selectedUrl === null
 				? null
 				: (list.find((race) => race.url === selectedUrl) ?? null);
-		if (live?.race) {
+		if (live === null) {
+			// The monitored race was removed: dismissing invalidates any
+			// in-flight registration.
+			endDisplay();
+			setMonitoredTarget(null);
+			setSelectedUrl(null);
+		} else if (live.race === null) {
+			// The entry still exists but its snapshot is temporarily missing.
+			// Keep the displayed race, workspace, draft and registration, and
+			// keep waiting so the latest state can be applied once available.
+			return;
+		} else {
 			setMonitoredTarget({
 				key: targetKeyOf(raceTarget(live.race)),
 				state: live,
 			});
-		} else {
-			// Dismissing the display invalidates any in-flight registration.
-			endDisplay();
-			setMonitoredTarget(null);
-			setSelectedUrl(null);
 		}
 		setExternalPrompt(null);
 		setExternalNotice(null);

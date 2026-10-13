@@ -1968,3 +1968,40 @@ it("does not treat a temporarily missing race snapshot as removal", async () => 
 		await screen.findByRole("button", {name: "登録・紐付け"}),
 	).toBeTruthy();
 });
+
+it("keeps the display when the latest race snapshot is temporarily missing", async () => {
+	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));
+	const {rerender} = render(<Overview races={races} />);
+	await selectFirstMonitored();
+	await openMappingEditor();
+	await editMappingDraft();
+	expect(await screen.findByText(/選択中: SRC Game/)).toBeTruthy();
+
+	// The goal changed externally, so the confirm dialog is shown.
+	rerender(<Overview races={{schemaVersion: 1, races: [updatedRaceState]}} />);
+	expect(
+		await screen.findByText(
+			/未保存の変更を破棄して最新のレース情報を表示しますか/,
+		),
+	).toBeTruthy();
+
+	// The entry still exists but its snapshot is temporarily missing.
+	rerender(
+		<Overview
+			races={{schemaVersion: 1, races: [{...raceState, race: null}]}}
+		/>,
+	);
+
+	// Choosing 最新状態を表示 must not dismiss the display or the draft.
+	fireEvent.click(screen.getByRole("button", {name: "最新状態を表示"}));
+	expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy();
+	expect(screen.getByText("Game / Any%")).toBeTruthy();
+	expect(
+		screen.queryByText(/レースを選択するかURLで取得してください/),
+	).toBeNull();
+
+	// Once the latest snapshot is available it can be applied.
+	rerender(<Overview races={{schemaVersion: 1, races: [updatedRaceState]}} />);
+	fireEvent.click(await screen.findByRole("button", {name: "最新状態を表示"}));
+	expect(await screen.findByText("100%")).toBeTruthy();
+});
