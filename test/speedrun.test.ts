@@ -74,6 +74,7 @@ const routes: Record<string, unknown> = {
 				name: "Difficulty",
 				mandatory: true,
 				"user-defined": false,
+				obsoletes: true,
 				values: {values: {normal: {label: "Normal"}, hard: {label: "Hard"}}},
 			},
 		],
@@ -125,6 +126,7 @@ const routes: Record<string, unknown> = {
 				name: "Runner",
 				mandatory: true,
 				"user-defined": true,
+				obsoletes: true,
 				values: {values: {}},
 			},
 		],
@@ -161,6 +163,7 @@ it("returns category variables with their selectable values and resolves the own
 			name: "Difficulty",
 			mandatory: true,
 			userDefined: false,
+			obsoletes: true,
 			values: [
 				{id: "normal", label: "Normal"},
 				{id: "hard", label: "Hard"},
@@ -211,6 +214,7 @@ it("maps user-defined variables without offered values", async () => {
 			name: "Runner",
 			mandatory: true,
 			userDefined: true,
+			obsoletes: true,
 			values: [],
 		},
 	]);

@@ -1,6 +1,6 @@
 # @nanahuse/racetime-protocol
 
-RaceTime Integration v3の公開型・定数・メッセージ名。ESM/CommonJSの両方に型宣言を含み、NodeCG・Google SDK・Player Managerへの実行時依存はありません。
+RaceTime Integration v4の公開型・定数・メッセージ名。ESM/CommonJSの両方に型宣言を含み、NodeCG・Google SDK・Player Managerへの実行時依存はありません。
 
 利用バンドルのmanifestに `"bundleDependencies": {"racetime-integration": "^0.2.0"}` を指定してください。
 
@@ -17,7 +17,7 @@ if (watched.ok) {
 }
 ```
 
-ブラウザからは `operationMessageName(operation)` をメッセージ名、`BUNDLE_NAME` を送信先として使用します。全応答は `Response<T>` です。APIバージョンは3で、旧バージョンとの互換実装は提供しません。
+ブラウザからは `operationMessageName(operation)` をメッセージ名、`BUNDLE_NAME` を送信先として使用します。全応答は `Response<T>` です。APIバージョンは4で、旧バージョンとの互換実装は提供しません（v3との互換レイヤーはありません）。
 
 | Operation | Request | Response data |
 | --- | --- | --- |
@@ -35,7 +35,7 @@ if (watched.ok) {
 | findCategoryMapping | `{categorySlug, goal}` | `{record, settingsRevision}` |
 | saveCategoryMapping | `{mapping, expectedRevision, settingsRevision}` | `{record, action, settingsRevision}` |
 | deleteCategoryMapping | `{categorySlug, goal, expectedRevision, settingsRevision}` | `{deleted: true, settingsRevision}` |
-| resolveCategoryMapping | `{categorySlug, goal}` | `{status: "resolved" \| "unregistered" \| "inconsistent", ...}` |
+| resolveCategoryMapping | `{categorySlug, goal}` | `{status: "resolved", mappings: ResolvedCategoryMapping[]} \| {status: "unregistered"} \| {status: "inconsistent", message}` |
 | searchSpeedrunGames | `{query}` | `{games}` |
 | getSpeedrunGameOptions | `{gameId}` | `{game, categories, levels, platforms, regions, timingMethods}` |
 | getSpeedrunCategoryVariables | `{categoryId}` | `{variables}` |
@@ -89,7 +89,13 @@ if (watched.ok) {
 
 各書込みにはfind/listと同時に得たsettingsRevisionも必要です。接続先変更後の古いリクエストはsettings_changedになります。保存成功時のactionはcreated / updatedです。
 
-`resolveCategoryMapping` はGame MappingとCategory Mappingを結合したSRCゲーム・カテゴリ情報を返します。未登録は `unregistered`、Category Mappingはあるが親Game Mappingが無い場合は `inconsistent` を返します。利用側が2シートを直接結合する必要はありません。
+`resolveCategoryMapping` はGame MappingとCategory Mappingを結合し、SRCの問い合わせ条件となる `ResolvedCategoryMapping[]` を返します。未登録は `unregistered`、Category Mappingはあるが親Game Mappingが無い場合や保存済みの `Any` が現在のSRC定義と整合しない場合は `inconsistent` を返します。利用側が2シートを直接結合する必要はありません。
+
+### Category VariableのAny
+
+`CategoryMapping.speedrunCom.variables` の各値は具体的なValue ID（文字列）または `{mode: "any"}` です。`"any"` という文字列は特別扱いしません。`obsoletes === true`・`userDefined === false`・定義済みValueが1件以上あるVariableにのみ `Any` を指定でき、それ以外への指定は `invalid_input` です。`Any` は自由記述型Variableには提供しません。
+
+`resolveCategoryMapping` は `Any` を定義済みの全Valueへ展開し、複数の `Any` がある場合は直積を返します。各結果は安定した `key`（Game ID・Category ID・Level ID・正規化したVariableの組とその他条件から生成）と表示用 `label`（展開されたVariable名とValue名）を持ち、結果に `Any` は残りません。`Any` を含まない場合は具体的なマッピング1件の配列を返し、追加のSRC通信は行いません。展開アルゴリズムはSpreadsheetやHTTP通信に依存しません。
 
 `initializeSpreadsheet` は指定されたSpreadsheetへ `GameMappings` と `CategoryMappings` のワークシートを準備します。不足シートは作成（`created`）、空シートにはヘッダーを設定（`initialized`）し、正常な既存シートは変更しません（`unchanged`）。不正な既存データがある場合は変更せずエラーを返します。初期化はSettingsを永続化せず、`settingsRevision` も変更しません。保存前に利用者が明示的に接続先を確定してください。
 

@@ -65,7 +65,7 @@ beforeEach(() => {
 		data: {gameMappings: "created", categoryMappings: "created"},
 	});
 	sendMessage.mockImplementation(async (name: string) => {
-		const operation = name.replace("racetime.v3.", "");
+		const operation = name.replace("racetime.v4.", "");
 		if (operation === "getSettings") return getSettingsResult();
 		if (operation === "updateSettings") return updateResult();
 		if (operation === "initializeSpreadsheet") return initializeResult();
@@ -165,7 +165,7 @@ it("initializes from unsaved input and can still save afterwards", async () => {
 	fireEvent.click(screen.getByRole("button", {name: "Spreadsheetを初期化"}));
 	expect(await screen.findByText(/GameMappings: 新規作成/)).toBeTruthy();
 	expect(sendMessage).toHaveBeenCalledWith(
-		"racetime.v3.initializeSpreadsheet",
+		"racetime.v4.initializeSpreadsheet",
 		{
 			settings: {
 				spreadsheetId: "abc",

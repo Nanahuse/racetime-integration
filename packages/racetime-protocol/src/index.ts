@@ -19,8 +19,10 @@ export type {
 	MappingRecord,
 	ResolveCategoryMappingResult,
 	ResolvedCategoryMapping,
+	ResolvedSpeedrunCategorySelection,
 	SpeedrunCategorySelection,
 	TimingMethod,
+	VariableSelection,
 } from "./category.js";
 export type {
 	SpeedrunCategoryOption,
@@ -34,10 +36,11 @@ export type {
 	SpeedrunVariableOption,
 	SpeedrunVariableValueOption,
 } from "./speedrun.js";
+export {supportsAnySelection} from "./speedrun.js";
 
 export const BUNDLE_NAME = "racetime-integration";
-export const API_VERSION = 3;
-export const MESSAGE_PREFIX = "racetime.v3";
+export const API_VERSION = 4;
+export const MESSAGE_PREFIX = "racetime.v4";
 export const RACES_REPLICANT = "racetime-races";
 export const SETTINGS_REPLICANT = "racetime-settings";
 export type PlayerSnapshot = {
@@ -271,9 +274,9 @@ export const OPERATIONS = [
 ] as const satisfies readonly (keyof Operations)[];
 export const operationMessageName = <K extends keyof Operations>(
 	operation: K,
-): `racetime.v3.${K}` => `${MESSAGE_PREFIX}.${operation}`;
+): `racetime.v4.${K}` => `${MESSAGE_PREFIX}.${operation}`;
 export type RaceTimeAPI = {
-	apiVersion: 3;
+	apiVersion: 4;
 	request<K extends keyof Operations>(
 		operation: K,
 		request: Operations[K]["request"],

@@ -57,6 +57,20 @@ function requireString(
 	return value;
 }
 
+function requireBoolean(
+	record: Record<string, unknown>,
+	key: string,
+	path: string,
+): boolean {
+	const value = record[key];
+	if (typeof value !== "boolean")
+		throw new SpeedrunError(
+			"invalid_payload",
+			`${path}.${key} must be a boolean.`,
+		);
+	return value;
+}
+
 function optionalStringArray(
 	record: Record<string, unknown>,
 	key: string,
@@ -161,6 +175,7 @@ function mapVariable(value: unknown): SpeedrunVariableOption {
 		name: requireString(record, "name", "variable"),
 		mandatory: record.mandatory === true,
 		userDefined: record["user-defined"] === true,
+		obsoletes: requireBoolean(record, "obsoletes", "variable"),
 		values,
 	};
 }

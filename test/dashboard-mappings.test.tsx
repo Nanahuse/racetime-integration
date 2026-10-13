@@ -76,7 +76,7 @@ beforeEach(() => {
 		data: {record: childRecord, action: "created", settingsRevision: 0},
 	});
 	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
-		const operation = name.replace("racetime.v3.", "");
+		const operation = name.replace("racetime.v4.", "");
 		switch (operation) {
 			case "listGameMappings":
 				return {
@@ -382,7 +382,7 @@ it("resets the edit session after the spreadsheet destination changed", async ()
 
 it("refuses to mix Game and Category data from different settings revisions", async () => {
 	sendMessage.mockImplementation(async (name: string) => {
-		const operation = name.replace("racetime.v3.", "");
+		const operation = name.replace("racetime.v4.", "");
 		if (operation === "listGameMappings")
 			return {ok: true, data: {records: [gameRecord], settingsRevision: 0}};
 		if (operation === "listCategoryMappings")
@@ -419,6 +419,111 @@ it("clears variables from the previous SRC category", async () => {
 		fireEvent.change(select, {target: {value: "c2"}});
 	});
 	await waitFor(() => expect(screen.queryByText("Difficulty")).toBeNull());
+});
+
+it("offers Any only for eligible variables and submits it", async () => {
+	games = [gameRecord];
+	variablesByCategory = {
+		c1: [
+			{
+				id: "ruleset",
+				name: "Ruleset",
+				mandatory: false,
+				userDefined: false,
+				obsoletes: true,
+				values: [
+					{id: "classic", label: "Classic"},
+					{id: "modern", label: "Modern"},
+				],
+			},
+			{
+				id: "legacy",
+				name: "Legacy",
+				mandatory: false,
+				userDefined: false,
+				obsoletes: false,
+				values: [{id: "x", label: "X"}],
+			},
+		],
+	};
+	render(<Mappings />);
+	await selectFirstGame();
+	await openNewCategory();
+	const select = screen.getByLabelText("SRC Category（必須）");
+	await act(async () => {
+		fireEvent.change(select, {target: {value: "c1"}});
+	});
+	const ruleset = (await screen.findByLabelText(
+		"Ruleset",
+	)) as HTMLSelectElement;
+	const anyOption = Array.from(ruleset.options).find((option) =>
+		option.textContent?.startsWith("Any"),
+	);
+	expect(anyOption).toBeTruthy();
+	await act(async () => {
+		fireEvent.change(ruleset, {target: {value: anyOption!.value}});
+	});
+	expect(ruleset.value).toBe(anyOption!.value);
+	const legacy = screen.getByLabelText("Legacy") as HTMLSelectElement;
+	expect(
+		Array.from(legacy.options).some((option) =>
+			option.textContent?.startsWith("Any"),
+		),
+	).toBe(false);
+	fireEvent.click(screen.getByRole("button", {name: /Category Mappingを保存/}));
+	const call = await waitFor(() => {
+		const found = sendMessage.mock.calls.find(
+			([name]) => name === "racetime.v4.saveCategoryMapping",
+		);
+		expect(found).toBeTruthy();
+		return found;
+	});
+	expect(call?.[1]).toMatchObject({
+		mapping: {speedrunCom: {variables: {ruleset: {mode: "any"}}}},
+	});
+});
+
+it("shows an error when a saved Any is no longer supported", async () => {
+	games = [gameRecord];
+	categories = [
+		{
+			mapping: {
+				...childRecord.mapping,
+				speedrunCom: {
+					...childRecord.mapping.speedrunCom,
+					variables: {ruleset: {mode: "any"}},
+				},
+			},
+			revision: "any-r",
+		},
+	];
+	variablesByCategory = {
+		c1: [
+			{
+				id: "ruleset",
+				name: "Ruleset",
+				mandatory: false,
+				userDefined: false,
+				obsoletes: false,
+				values: [{id: "x", label: "X"}],
+			},
+		],
+	};
+	render(<Mappings />);
+	await selectFirstGame();
+	fireEvent.click(await screen.findByRole("button", {name: /Any%/}));
+	expect(
+		await screen.findByText(
+			/保存済みのAnyが現在のSpeedrun.com定義では利用できません/,
+		),
+	).toBeTruthy();
+	expect(
+		(
+			screen.getByRole("button", {
+				name: /Category Mappingを保存/,
+			}) as HTMLButtonElement
+		).disabled,
+	).toBe(true);
 });
 
 it("resets the level when the SRC category changes", async () => {

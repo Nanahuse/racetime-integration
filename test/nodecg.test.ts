@@ -243,7 +243,7 @@ it("exports the protocol from ESM and CommonJS without server dependencies", () 
     import {createRequire} from 'node:module'; import * as esm from '@nanahuse/racetime-protocol';
     const cjs = createRequire(import.meta.url)('@nanahuse/racetime-protocol');
     assert.deepEqual(Object.keys(esm).sort(), Object.keys(cjs).sort()); assert.equal(esm.API_VERSION, cjs.API_VERSION);
-    assert.equal(cjs.operationMessageName('watchRace'), 'racetime.v3.watchRace');`,
+    assert.equal(cjs.operationMessageName('watchRace'), 'racetime.v4.watchRace');`,
 		],
 		{cwd: process.cwd()},
 	);

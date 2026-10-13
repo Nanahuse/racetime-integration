@@ -56,7 +56,7 @@ racetime_category_slug,racetime_category_name,racetime_goal,src_game_id,src_game
 
 [@nanahuse/racetime-protocol](packages/racetime-protocol/README.md)に全操作と契約を記載しています。
 
-- racetime.v3.*メッセージ、送信先racetime-integration
+- racetime.v4.*メッセージ、送信先racetime-integration
 - nodecg.extensions['racetime-integration'] のRaceTimeAPI
 - 非永続racetime-races Replicantと永続racetime-settings Replicant
 

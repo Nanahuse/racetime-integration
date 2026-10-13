@@ -1,13 +1,15 @@
-import type {
-	CategoryMapping,
-	CategoryMappingRecord,
-	GameMapping,
-	GameMappingRecord,
-	SpeedrunCategoryOption,
-	SpeedrunGameOptions,
-	SpeedrunGameSummary,
-	SpeedrunVariableOption,
-	TimingMethod,
+import {
+	type CategoryMapping,
+	type CategoryMappingRecord,
+	type GameMapping,
+	type GameMappingRecord,
+	type SpeedrunCategoryOption,
+	type SpeedrunGameOptions,
+	type SpeedrunGameSummary,
+	type SpeedrunVariableOption,
+	supportsAnySelection,
+	type TimingMethod,
+	type VariableSelection,
 } from "@nanahuse/racetime-protocol";
 import {useCallback, useEffect, useRef, useState} from "react";
 import {
@@ -26,6 +28,14 @@ const TIMING_LABELS: Record<TimingMethod, string> = {
 	realtime_noloads: "Real Time (no load removal)",
 	ingame: "In-Game Time",
 };
+
+// UI-only sentinel for the Any choice. Uses a NUL prefix that cannot be a
+// Speedrun.com Value ID, so it is never confused with a stored string value.
+const ANY_SELECTION = "\u0000any";
+
+function isAnySelection(value: VariableSelection | undefined): boolean {
+	return value !== undefined && typeof value !== "string";
+}
 
 type Kind = "game" | "category";
 type SessionStatus = "normal" | "conflict" | "invalid";
@@ -1615,8 +1625,20 @@ function CategoryEditor({
 		(option) => option.id === draft.speedrunCom.categoryId,
 	);
 	const goalReadOnly = goalLocked || expected !== null;
+	const unsupportedAny = variablesReady
+		? variables.filter(
+				(variable) =>
+					isAnySelection(draft.speedrunCom.variables[variable.id]) &&
+					!supportsAnySelection(variable),
+			)
+		: [];
 	const saveDisabled =
-		busy || disabled || missingMandatory || !variablesReady || blocked;
+		busy ||
+		disabled ||
+		missingMandatory ||
+		!variablesReady ||
+		blocked ||
+		unsupportedAny.length > 0;
 	return (
 		<form
 			className='subpanel category-editor'
@@ -1782,7 +1804,12 @@ function CategoryEditor({
 							>
 								{variable.userDefined ? (
 									<input
-										value={draft.speedrunCom.variables[variable.id] ?? ""}
+										value={
+											typeof draft.speedrunCom.variables[variable.id] ===
+											"string"
+												? (draft.speedrunCom.variables[variable.id] as string)
+												: ""
+										}
 										disabled={disabled}
 										onChange={(event) =>
 											onField("variables", {
@@ -1793,16 +1820,29 @@ function CategoryEditor({
 									/>
 								) : (
 									<select
-										value={draft.speedrunCom.variables[variable.id] ?? ""}
+										value={
+											isAnySelection(draft.speedrunCom.variables[variable.id])
+												? ANY_SELECTION
+												: typeof draft.speedrunCom.variables[variable.id] ===
+														"string"
+													? (draft.speedrunCom.variables[variable.id] as string)
+													: ""
+										}
 										disabled={disabled}
 										onChange={(event) =>
 											onField("variables", {
 												...draft.speedrunCom.variables,
-												[variable.id]: event.target.value,
+												[variable.id]:
+													event.target.value === ANY_SELECTION
+														? {mode: "any"}
+														: event.target.value,
 											})
 										}
 									>
 										<option value=''>選択してください</option>
+										{supportsAnySelection(variable) && (
+											<option value={ANY_SELECTION}>Any（すべて）</option>
+										)}
 										{variable.values.map((value) => (
 											<option
 												key={value.id}
@@ -1821,6 +1861,13 @@ function CategoryEditor({
 			{missingMandatory && (
 				<Callout tone='warning'>
 					必須Variableが未選択のため保存できません。
+				</Callout>
+			)}
+			{unsupportedAny.length > 0 && (
+				<Callout tone='error'>
+					{`保存済みのAnyが現在のSpeedrun.com定義では利用できません: ${unsupportedAny
+						.map((variable) => variable.name)
+						.join(", ")}。値を選び直してください。`}
 				</Callout>
 			)}
 			<div className='button-row'>

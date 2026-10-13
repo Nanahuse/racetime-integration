@@ -1,6 +1,6 @@
-# v3実装と検証
+# v4実装と検証
 
-調査基点はracetime-integration mainの4db1cdf。PR #1のレビューを反映し、Player Manager 3.0.0 / Protocol v3（タグ `v3.0.0`）に接続する。racetime-integration自身の公開Protocolは `v3` とし、Player Manager Protocol v3とは独立して扱う。v2ではマッピングモデルを分割し、Dashboardを追加した。v3では単発取得でもPlayer解決を行う。
+調査基点はracetime-integration mainの4db1cdf。PR #1のレビューを反映し、Player Manager 3.0.0 / Protocol v3（タグ `v3.0.0`）に接続する。racetime-integration自身の公開Protocolは `v4` とし、Player Manager Protocol v3とは独立して扱う。v2ではマッピングモデルを分割し、Dashboardを追加した。v3では単発取得でもPlayer解決を行う。v4ではCategory Variableに `Any` を指定でき、解決時に定義済みの全Valueへ直積展開する。
 
 ## 責務と公開契約
 
@@ -10,9 +10,10 @@
 - Game Mappings: RaceTimeゲーム（categorySlugが一意キー）とSRCゲームをGameMappingsシートで対応付ける。
 - Category Mappings: RaceTime Goal（categorySlug + goalが一意キー）をSRCカテゴリへCategoryMappingsシートで対応付ける。親Game Mappingを必須とし、SRC Game ID/Nameを重複保存しない。
 - 親子整合性: 親の無いCategory登録、子の有る親のSRCゲーム変更・削除、親のSRCゲームに属さないSRCカテゴリをサーバー側で拒否する。
-- 統合参照: resolveCategoryMappingでGame MappingとCategory Mappingを結合し、未登録（unregistered）と不整合（inconsistent）を区別して返す。
-- Speedrun.com: 手動選択用にゲーム・カテゴリ・Level・Variables・Platform・Region・Timing Methodを検索・取得する。PB/WR/Leaderboardは含めない。カテゴリの所属ゲームはカテゴリ詳細の `links`（`rel: "game"` の `uri`）から構造的に解決し、埋め込み `game` フィールドには依存しない。所属ゲームが解決できない場合は保存時の整合性検証を省略せず拒否する。
-- Protocol: 上記契約の型・定数・メッセージ名。ESM/CommonJSを提供。API_VERSIONは3、MESSAGE_PREFIXはracetime.v3。旧バージョン互換は提供しない。
+- 統合参照: resolveCategoryMappingでGame MappingとCategory Mappingを結合し、具体的な問い合わせ条件の配列（`ResolvedCategoryMapping[]`）を返す。未登録（unregistered）と不整合（inconsistent）を区別する。`Any` は定義済みの全Valueへ展開し、複数 `Any` は直積とする。各結果は安定した `key` と表示用 `label` を持ち、結果に `Any` は残らない。
+- Category VariableのAny: `obsoletes === true`・`userDefined === false`・定義済みValueが1件以上あるVariableにのみ `{mode: "any"}` を許可する。保存時はAPIとUIの両方で検証し、未知Variable・不正Value・対象外VariableへのAnyを拒否する。自由記述型は対象外。
+- Speedrun.com: 手動選択用にゲーム・カテゴリ・Level・Variables・Platform・Region・Timing Methodを検索・取得する。PB/WR/Leaderboardは含めない。Variableの `obsoletes` を取得し、欠落・非booleanは不正なAPIレスポンスとして拒否する。カテゴリの所属ゲームはカテゴリ詳細の `links`（`rel: "game"` の `uri`）から構造的に解決し、埋め込み `game` フィールドには依存しない。所属ゲームが解決できない場合は保存時の整合性検証を省略せず拒否する。
+- Protocol: 上記契約の型・定数・メッセージ名。ESM/CommonJSを提供。API_VERSIONは4、MESSAGE_PREFIXはracetime.v4。旧バージョン互換は提供しない。
 - Spreadsheet初期化: `initializeSpreadsheet` で指定Spreadsheetへ `GameMappings`/`CategoryMappings` ワークシートを準備する。
 - Dashboard: `RaceTime Integration` パネル（fullbleed）。Overview / Mappings / Settingsを公開Protocol経由で操作し、Replicantは参照専用とする。
 
@@ -38,6 +39,7 @@ watchRaceの成功条件は初回HTTP取得成功。WebSocket接続完了やPlay
 
 - GameMappings: `racetime_category_slug, racetime_category_name, src_game_id, src_game_name, updated_at`。
 - CategoryMappings: `racetime_category_slug, racetime_goal, src_category_id, src_category_name, src_level_id, src_variables, src_platform_id, src_region_id, src_emulator, src_timing_method, updated_at`。
+- `src_variables` はValue IDを表す文字列、または `Any` を表す `{"mode":"any"}` を持つJSONオブジェクト。文字列形式の既存データを読み込め、`Any` の保存・再読込で選択状態を失わない。未知の変則オブジェクトは検証エラーとする。列追加・データ移行は行わない。
 - カラム順の並び替え、未知の追加カラム・数式の保持、必須項目と重複キーの検証、settingsRevisionによる接続先変更検出に対応する。
 - ヘッダー/行/重複キーの検証は `parseSheetValues` をRepositoryと初期化処理で共有し、正常なシート形式の判定を一致させる。
 - 初期化（`initializeSpreadsheet`）は両シートを先に検査し、不正な非空データがあれば変更を開始しない。不足シートは作成、完全に空のシートにはヘッダーを書き込む。正常な既存シート（並び替え・追加列・データを含む）は変更しない。再実行は冪等で、途中失敗後は未完了分のみ完了できる。初期化は保存済みSettingsと `settingsRevision` を変更しない。
@@ -61,9 +63,9 @@ Player Manager v3のPlayerは複数Accountを持ち、各Accountは `service` �
 
 ## 検証
 
-境界テストはHTTP・WebSocket、初回購読失敗、複数利用者、単発取得でのPlayer解決（完走済み・進行中・Primary/Secondary・未登録・障害時フォールバック・RaceTime失敗・監視を開始しない・HTTP取得の重複なし・監視との解決結果一致）、単発取得失敗時の未保存マッピング編集保持、保存リロード中の取得失敗でのWorkspace維持、保存中に到着した取得結果の破棄と通知、表示対象変更時の登録URL・登録エラーのクリア、表示対象が変わらない取得失敗での登録結果維持、監視レースの外部更新による未保存編集の保護（対象変更・削除・通常更新の反映・保存中の外部更新保護）と監視対象削除時の登録要求・登録結果の無効化（成功・失敗・編集継続・表示解除）と一時的な `race === null` 時の表示・Draft維持、タブ切り替え確認時の保存中遷移禁止、Player Manager v3のPrimary/Secondary解決・Account移動・削除・不正Directory・v3以外、Revision非依存のdirectoryChanged、結果正規化、SRCカテゴリ所属ゲームの `links` 解決（`rel: "game"` の抽出・不正URI・リンク欠落の拒否）と保存時の所属ゲーム整合性、Game/Category MappingのCRUD、親子整合性、Revision競合、2シートの読込・保存・列順変更・追加カラム保持、設定切替の整合性、SRC検索・選択情報、Spreadsheet初期化（数式・範囲外・空白の保護、再実行、途中失敗）、起動時Settings復旧、Overviewからのマッピング状態表示・初回読込完了前の編集禁止・Game/Category登録・既存編集・競合表示・読込失敗時の詳細保持と再読込・レース切り替え確認・同一対象の編集維持・監視更新でのDraft維持・保存中の切り替え禁止、Dashboardと公開APIの通信・編集ロック・競合復旧・単発取得表示・登録操作の競合、ビルド済みCommonJS拡張、ProtocolのESM/CommonJSを対象にする。
+境界テストはHTTP・WebSocket、初回購読失敗、複数利用者、単発取得でのPlayer解決（完走済み・進行中・Primary/Secondary・未登録・障害時フォールバック・RaceTime失敗・監視を開始しない・HTTP取得の重複なし・監視との解決結果一致）、単発取得失敗時の未保存マッピング編集保持、保存リロード中の取得失敗でのWorkspace維持、保存中に到着した取得結果の破棄と通知、表示対象変更時の登録URL・登録エラーのクリア、表示対象が変わらない取得失敗での登録結果維持、監視レースの外部更新による未保存編集の保護（対象変更・削除・通常更新の反映・保存中の外部更新保護）と監視対象削除時の登録要求・登録結果の無効化（成功・失敗・編集継続・表示解除）と一時的な `race === null` 時の表示・Draft維持、タブ切り替え確認時の保存中遷移禁止、Player Manager v3のPrimary/Secondary解決・Account移動・削除・不正Directory・v3以外、Revision非依存のdirectoryChanged、結果正規化、SRCカテゴリ所属ゲームの `links` 解決（`rel: "game"` の抽出・不正URI・リンク欠落の拒否）と保存時の所属ゲーム整合性、Game/Category MappingのCRUD、親子整合性、Revision競合、2シートの読込・保存・列順変更・追加カラム保持、設定切替の整合性、Category VariableのAny（具体値のみ＝1件・追加SRC通信なし、Any1つ＝全候補、複数Any＝直積、固定値との混在、未指定との混在、各結果のValue ID、安定keyとlabel、結果にAnyが残らない、SRC選択肢変更の反映、SRC通信失敗時に部分成功しない、対象外Variable・未知Variable・不正Value・不正オブジェクトの拒否、保存済みAnyとSRC定義の不整合、保存・再読込・UI選択）、SRC検索・選択情報、Spreadsheet初期化（数式・範囲外・空白の保護、再実行、途中失敗）、起動時Settings復旧、Overviewからのマッピング状態表示・初回読込完了前の編集禁止・Game/Category登録・既存編集・競合表示・読込失敗時の詳細保持と再読込・レース切り替え確認・同一対象の編集維持・監視更新でのDraft維持・保存中の切り替え禁止、Dashboardと公開APIの通信・編集ロック・競合復旧・単発取得表示・登録操作の競合、ビルド済みCommonJS拡張、ProtocolのESM/CommonJSを対象にする。
 
-`pnpm test` は12ファイル179件が成功する。typecheck / lint / buildも成功する。
+`pnpm test` は12ファイル192件が成功する。typecheck / lint / buildも成功する。
 
 未実施: 実NodeCG 2.8環境でのDashboard起動と公開APIとの実通信、実ADCによる対象Spreadsheetの読書き・初期化、実Speedrun.com API・実Player Manager v3を含む運用NodeCGでの通し確認、npmレジストリへのpublish。
 

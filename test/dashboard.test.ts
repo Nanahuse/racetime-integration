@@ -31,11 +31,11 @@ afterEach(() => {
 	sendMessageToBundle.mockReset();
 });
 
-it("sends protocol operations with the v3 message name and unwraps responses", async () => {
+it("sends protocol operations with the v4 message name and unwraps responses", async () => {
 	sendMessage.mockResolvedValue({ok: true, data: {revision: 3}});
 	expect(await request("getSettings", undefined)).toEqual({revision: 3});
 	expect(sendMessage).toHaveBeenCalledWith(
-		"racetime.v3.getSettings",
+		"racetime.v4.getSettings",
 		undefined,
 	);
 	sendMessage.mockResolvedValue({
