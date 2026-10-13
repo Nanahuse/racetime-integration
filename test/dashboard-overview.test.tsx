@@ -1603,3 +1603,31 @@ it("keeps the current race's registration URL when fetching another race fails",
 	expect(screen.getByText("Game / Any%")).toBeTruthy();
 	expect(screen.getByText(/登録画面を開きました/)).toBeTruthy();
 });
+
+it("keeps the registration URL when the same race is fetched again", async () => {
+	const open = vi.spyOn(window, "open").mockReturnValue(null);
+	sendMessageToBundle.mockResolvedValue({
+		ok: true,
+		data: {registrationId: "r1", url: "/Registration.html"},
+	});
+	const base = mappingHandler({games: [], categories: []});
+	sendMessage.mockImplementation((name: string, data?: unknown) => {
+		const operation = name.replace("racetime.v3.", "");
+		if (operation === "fetchRace")
+			return Promise.resolve({ok: true, data: resolved()});
+		return base(name, data);
+	});
+	render(<Overview races={undefined} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: race.url},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	fireEvent.click(await screen.findByRole("button", {name: "登録・紐付け"}));
+	expect(await screen.findByText(/登録画面を開きました/)).toBeTruthy();
+
+	// Refetching the same race does not discard its registration result.
+	fireEvent.click(screen.getByRole("button", {name: "再取得"}));
+	expect(await screen.findByText(race.raceId)).toBeTruthy();
+	expect(screen.getByText(/登録画面を開きました/)).toBeTruthy();
+	expect(open).toHaveBeenCalled();
+});
