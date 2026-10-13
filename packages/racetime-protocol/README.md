@@ -1,8 +1,8 @@
 # @nanahuse/racetime-protocol
 
-RaceTime Integration v2の公開型・定数・メッセージ名。ESM/CommonJSの両方に型宣言を含み、NodeCG・Google SDK・Player Managerへの実行時依存はありません。
+RaceTime Integration v3の公開型・定数・メッセージ名。ESM/CommonJSの両方に型宣言を含み、NodeCG・Google SDK・Player Managerへの実行時依存はありません。
 
-利用バンドルのmanifestに `"bundleDependencies": {"racetime-integration": "^0.1.0"}` を指定してください。
+利用バンドルのmanifestに `"bundleDependencies": {"racetime-integration": "^0.2.0"}` を指定してください。
 
 ```ts
 import {BUNDLE_NAME, type RaceTimeAPI} from "@nanahuse/racetime-protocol";
@@ -17,17 +17,16 @@ if (watched.ok) {
 }
 ```
 
-ブラウザからは `operationMessageName(operation)` をメッセージ名、`BUNDLE_NAME` を送信先として使用します。全応答は `Response<T>` です。APIバージョンは2で、旧v1との互換実装は提供しません。
+ブラウザからは `operationMessageName(operation)` をメッセージ名、`BUNDLE_NAME` を送信先として使用します。全応答は `Response<T>` です。APIバージョンは3で、旧バージョンとの互換実装は提供しません。
 
 | Operation | Request | Response data |
 | --- | --- | --- |
-| fetchRace | `{url}` | `Race`（単発HTTP取得） |
+| fetchRace | `{url}` | `ResolvedRace`（単発HTTP取得＋Player解決。監視は開始しない） |
 | watchRace | `{url}` | `{watchId, state}`（初回HTTP成功後、race非null） |
 | unwatchRace | `{watchId}` | `{released}`（再実行時false） |
 | getWatch | `{watchId}` | `RaceState \| null` |
 | getRace | `{url}` | `RaceState \| null`（監視中） |
 | listRaces | `undefined` | `RacesState` |
-| resolveParticipants | `{url}` | `Participant[]`（監視中なら状態も更新） |
 | listGameMappings | `undefined` | `{records, settingsRevision}` |
 | findGameMapping | `{categorySlug}` | `{record, settingsRevision}` |
 | saveGameMapping | `{mapping, expectedRevision, settingsRevision}` | `{record, action, settingsRevision}` |
@@ -58,9 +57,20 @@ if (watched.ok) {
 - `resolution.state`: idle / pending / ready / error。空の参加者一覧でも解決状態を判別可能。
 - `resolution.raceRevision` / `directoryRevision`: 採用結果に対応するレース版とPlayer Directory版。pending中の参加者情報は前回値の場合があります。
 
-`Participant.player` はPlayer ID、Player revision、表示名、関連アカウントを含むSnapshotです。Player Manager v2のfindをRaceTime IDで呼び、directoryChanged通知で自動再解決します。独自のPlayer作成・Twitch名による推測は行いません。障害時はunavailable、紐付けなしはunresolvedです。
+`Participant.player` はPlayer ID、Player revision、表示名、関連アカウントを含むSnapshotです。Player Manager v3の公開 `list` でDirectoryを取得し、RaceTime Account（Primary/Secondaryを問わない）をRaceTime IDで照合します。directoryChanged通知で監視中のレースを自動再解決します。独自のPlayer作成・Twitch名による推測は行いません。障害時はunavailable、紐付けなしはunresolved、同一RaceTime IDが複数Playerに属する場合はunavailableです。
 
 `Race.raceId` はcategorySlug/raceSlugです。`Race.results` はdone→finished、dnf→dnf、dq→dq、その他→otherに正規化済みです。順位とISO 8601形式の完走時間も提供します。
+
+## 単発取得
+
+`fetchRace` はRaceTimeからHTTPで1回だけ取得し、その `race.entrants` を同じPlayer解決処理で解決して `ResolvedRace` を返します。`ResolvedRace` は `{race, participants, resolution}` です。
+
+- `resolution.state` は解決処理全体の成功・失敗を表す。解決できた場合は `ready`、Player Managerの取得失敗またはタイムアウト時は `error`。
+- 紐付けのない参加者が存在するだけでは `error` にしない（`Participant.status` は `unresolved`）。
+- `resolution.directoryRevision` は採用結果に対応するPlayer Directory版。失敗時は `null`。
+- RaceTime取得に失敗した場合は通常のAPIエラー応答となり、レース情報は返さない。
+- 単発取得はwatchId・WebSocket接続・監視セッションを生成せず、既存の監視状態やReplicantを変更しない。解決のための追加のHTTP取得は行わない。
+- 登録・紐付けを行った後に最新の解決結果を得るには、同じURLで再度 `fetchRace` を呼ぶ。
 
 ## マッピングと設定
 

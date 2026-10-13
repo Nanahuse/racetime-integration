@@ -198,6 +198,16 @@ it("loads the built extension, subscribes to the v3 event, and refreshes its pub
 		ok: true,
 		data: {participants: [{player: {displayName: "First"}}]},
 	});
+	const fetched = await api.request("fetchRace", {url});
+	expect(fetched).toMatchObject({
+		ok: true,
+		data: {
+			race: {raceId: "game/race"},
+			resolution: {state: "ready", directoryRevision: 1},
+			participants: [{status: "matched", player: {displayName: "First"}}],
+		},
+	});
+	expect(sockets).toHaveLength(1);
 	revision = 2;
 	name = "Changed";
 	handlers.get("player-manager:player-manager.v3.directoryChanged")!({
@@ -233,7 +243,7 @@ it("exports the protocol from ESM and CommonJS without server dependencies", () 
     import {createRequire} from 'node:module'; import * as esm from '@nanahuse/racetime-protocol';
     const cjs = createRequire(import.meta.url)('@nanahuse/racetime-protocol');
     assert.deepEqual(Object.keys(esm).sort(), Object.keys(cjs).sort()); assert.equal(esm.API_VERSION, cjs.API_VERSION);
-    assert.equal(cjs.operationMessageName('watchRace'), 'racetime.v2.watchRace');`,
+    assert.equal(cjs.operationMessageName('watchRace'), 'racetime.v3.watchRace');`,
 		],
 		{cwd: process.cwd()},
 	);

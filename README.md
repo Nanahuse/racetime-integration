@@ -1,6 +1,6 @@
 # racetime-integration
 
-NodeCG 2.8向けのRaceTime連携バンドル。複数の利用者でレース監視を共有し、Player Manager v2で参加者を解決、Google Sheetsでカテゴリ対応を管理します。
+NodeCG 2.8向けのRaceTime連携バンドル。複数の利用者でレース監視を共有し、Player Manager v3で参加者を解決、Google Sheetsでカテゴリ対応を管理します。
 
 ## 開発
 
@@ -23,7 +23,7 @@ Player Managerと同じ構成で、PRとmainへのpush時に`Check`を実行し�
 
 ## NodeCGへの配置
 
-NodeCGの `bundles/racetime-integration` に配置して `pnpm install --frozen-lockfile`、`pnpm build` を実行します。同じNodeCGに `player-manager` >=2.2.1 <3 を配置してください。bundleDependenciesで読込み順を指定しています。
+NodeCGの `bundles/racetime-integration` に配置して `pnpm install --frozen-lockfile`、`pnpm build` を実行します。同じNodeCGに `player-manager` >=3.0.0 を配置してください。bundleDependenciesで読込み順を指定しています。
 
 このバンドルの画面はありません。利用バンドルは公開APIとReplicantを利用します。
 
@@ -56,12 +56,14 @@ racetime_category_slug,racetime_category_name,racetime_goal,src_game_id,src_game
 
 [@nanahuse/racetime-protocol](packages/racetime-protocol/README.md)に全操作と契約を記載しています。
 
-- racetime.v1.*メッセージ、送信先racetime-integration
+- racetime.v3.*メッセージ、送信先racetime-integration
 - nodecg.extensions['racetime-integration'] のRaceTimeAPI
 - 非永続racetime-races Replicantと永続racetime-settings Replicant
 
 watchRaceは初回HTTP成功後に非nullのRaceとwatchIdを返します。初回失敗時は参照・再接続処理を残しません。各利用者がwatchIdを管理し、終了時にunwatchRaceで解除してください。
 
-Player Manager v2のfindをRaceTime IDで呼び、表示名などを含むSnapshotを提供します。directoryChanged通知で自動再解決します。レース状態とPlayer解決のRevisionおよびpending/ready/errorも公開します。Race.resultsは放送で使用する結果ステータスに正規化済みです。
+fetchRaceはURLからRaceTimeを1回だけHTTP取得し、その参加者をwatchRaceと同じPlayer解決処理で解決して `{race, participants, resolution}` を返します。watchId・WebSocket・監視セッションは生成せず、既存の監視状態を変更しません。Player Managerの取得に失敗してもレース情報は返し、参加者はunavailableになります。
+
+Player Manager v3の公開listでDirectoryを取得し、Primary/Secondaryを問わずRaceTime AccountをRaceTime IDで照合して表示名などを含むSnapshotを提供します。directoryChanged通知で監視中のレースを自動再解決します。レース状態とPlayer解決のRevisionおよびpending/ready/errorも公開します。Race.resultsは放送で使用する結果ステータスに正規化済みです。
 
 実装範囲・検証状況は[implementation.md](docs/implementation.md)に記載しています。

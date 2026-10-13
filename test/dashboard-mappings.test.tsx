@@ -76,7 +76,7 @@ beforeEach(() => {
 		data: {record: childRecord, action: "created", settingsRevision: 0},
 	});
 	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
-		const operation = name.replace("racetime.v2.", "");
+		const operation = name.replace("racetime.v3.", "");
 		switch (operation) {
 			case "listGameMappings":
 				return {
@@ -382,7 +382,7 @@ it("resets the edit session after the spreadsheet destination changed", async ()
 
 it("refuses to mix Game and Category data from different settings revisions", async () => {
 	sendMessage.mockImplementation(async (name: string) => {
-		const operation = name.replace("racetime.v2.", "");
+		const operation = name.replace("racetime.v3.", "");
 		if (operation === "listGameMappings")
 			return {ok: true, data: {records: [gameRecord], settingsRevision: 0}};
 		if (operation === "listCategoryMappings")

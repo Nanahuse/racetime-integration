@@ -36,8 +36,8 @@ export type {
 } from "./speedrun.js";
 
 export const BUNDLE_NAME = "racetime-integration";
-export const API_VERSION = 2;
-export const MESSAGE_PREFIX = "racetime.v2";
+export const API_VERSION = 3;
+export const MESSAGE_PREFIX = "racetime.v3";
 export const RACES_REPLICANT = "racetime-races";
 export const SETTINGS_REPLICANT = "racetime-settings";
 export type PlayerSnapshot = {
@@ -80,6 +80,19 @@ export type Participant = {
 	playerId: string | null;
 	player: PlayerSnapshot | null;
 	message: string;
+};
+/**
+ * A single RaceTime HTTP fetch paired with the Player Manager resolution of its
+ * entrants. `resolution.state` describes whether resolution itself succeeded;
+ * unmatched entrants are still `ready`.
+ */
+export type ResolvedRace = {
+	race: Race;
+	participants: Participant[];
+	resolution: {
+		state: "ready" | "error";
+		directoryRevision: number | null;
+	};
 };
 export type RaceState = {
 	revision: number;
@@ -155,7 +168,7 @@ export type SpreadsheetInitializationSettings = {
 	categoryMappingsSheet: string;
 };
 export type Operations = {
-	fetchRace: {request: {url: string}; response: Race};
+	fetchRace: {request: {url: string}; response: ResolvedRace};
 	watchRace: {
 		request: {url: string};
 		response: {watchId: string; state: RaceState & {race: Race}};
@@ -164,7 +177,6 @@ export type Operations = {
 	getRace: {request: {url: string}; response: RaceState | null};
 	getWatch: {request: {watchId: string}; response: RaceState | null};
 	listRaces: {request: undefined; response: RacesState};
-	resolveParticipants: {request: {url: string}; response: Participant[]};
 	listGameMappings: {request: undefined; response: GameMappingList};
 	findGameMapping: {
 		request: {categorySlug: string};
@@ -241,7 +253,6 @@ export const OPERATIONS = [
 	"getRace",
 	"getWatch",
 	"listRaces",
-	"resolveParticipants",
 	"listGameMappings",
 	"findGameMapping",
 	"saveGameMapping",
@@ -260,9 +271,9 @@ export const OPERATIONS = [
 ] as const satisfies readonly (keyof Operations)[];
 export const operationMessageName = <K extends keyof Operations>(
 	operation: K,
-): `racetime.v2.${K}` => `${MESSAGE_PREFIX}.${operation}`;
+): `racetime.v3.${K}` => `${MESSAGE_PREFIX}.${operation}`;
 export type RaceTimeAPI = {
-	apiVersion: 2;
+	apiVersion: 3;
 	request<K extends keyof Operations>(
 		operation: K,
 		request: Operations[K]["request"],
