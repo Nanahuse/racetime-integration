@@ -1,6 +1,7 @@
 import {
 	API_VERSION,
 	type CategoryMapping,
+	DEFAULT_MAX_RESOLVED_MAPPINGS,
 	type GameMapping,
 	type Operations,
 	type RaceTimeAPI,
@@ -9,7 +10,9 @@ import {
 	type SettingsState,
 	type SpeedrunVariableOption,
 	type SpreadsheetInitializationSettings,
+	supportsAnySelection,
 	type TimingMethod,
+	type VariableSelection,
 } from "@nanahuse/racetime-protocol";
 import {IntegrationError} from "./errors";
 import {RaceTimeError} from "./integrations/racetime/errors";
@@ -22,6 +25,7 @@ import {
 } from "./integrations/spreadsheet/errors";
 import {initializeSpreadsheet} from "./integrations/spreadsheet/initialize";
 import type {MappingService} from "./mappings";
+import {anyVariableIds, expandCategoryMapping} from "./resolve";
 import type {RaceService} from "./service";
 
 class RequestError extends IntegrationError {}
@@ -54,6 +58,11 @@ function revision(value: unknown, field?: string): number {
 function nullableText(value: unknown, field: string): string | null {
 	return value === null ? null : text(value, field);
 }
+function positiveInteger(value: unknown, field: string): number {
+	if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1)
+		throw new RequestError("invalid_input", `Invalid ${field}`);
+	return value;
+}
 export function parseSettings(raw: unknown): Settings {
 	const input = object(raw, "settings");
 	const spreadsheetId =
@@ -69,6 +78,12 @@ export function parseSettings(raw: unknown): Settings {
 			input.categoryMappingsSheet,
 			"categoryMappingsSheet",
 		),
+		// Settings persisted before this field existed default to the initial cap
+		// rather than being rejected; other values are preserved.
+		maxResolvedMappings:
+			input.maxResolvedMappings === undefined
+				? DEFAULT_MAX_RESOLVED_MAPPINGS
+				: positiveInteger(input.maxResolvedMappings, "maxResolvedMappings"),
 	};
 }
 export function parseSettingsState(raw: unknown): SettingsState {
@@ -89,10 +104,20 @@ function variableValue(value: unknown, field: string): string {
 	return value;
 }
 
+function variableSelection(value: unknown, field: string): VariableSelection {
+	if (typeof value === "string") return variableValue(value, field);
+	if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+		const keys = Object.keys(value);
+		if (keys.length === 1 && (value as {mode?: unknown}).mode === "any")
+			return {mode: "any"};
+	}
+	throw new RequestError("invalid_input", `Invalid ${field}`);
+}
+
 function pruneVariables(
-	values: Record<string, string>,
-): Record<string, string> {
-	const result: Record<string, string> = {};
+	values: Record<string, VariableSelection>,
+): Record<string, VariableSelection> {
+	const result: Record<string, VariableSelection> = {};
 	for (const [key, value] of Object.entries(values))
 		if (value !== "") result[key] = value;
 	return result;
@@ -105,13 +130,21 @@ function pruneVariables(
  */
 function validateVariables(
 	definitions: readonly SpeedrunVariableOption[],
-	values: Record<string, string>,
+	values: Record<string, VariableSelection>,
 ): void {
 	const byId = new Map(definitions.map((variable) => [variable.id, variable]));
 	for (const [id, value] of Object.entries(values)) {
 		const variable = byId.get(id);
 		if (!variable)
 			throw new RequestError("invalid_input", `Unknown variable "${id}"`);
+		if (typeof value !== "string") {
+			if (!supportsAnySelection(variable))
+				throw new RequestError(
+					"invalid_input",
+					`Variable "${id}" does not support Any`,
+				);
+			continue;
+		}
 		if (variable.userDefined) {
 			if (value.length > MAX_USER_DEFINED_LENGTH)
 				throw new RequestError("invalid_input", `Variable "${id}" is too long`);
@@ -157,11 +190,11 @@ function categoryMapping(raw: unknown): CategoryMapping {
 	const race = object(input.racetime, "categoryMapping.racetime");
 	const src = object(input.speedrunCom, "categoryMapping.speedrunCom");
 	const variables = object(src.variables, "variables");
-	const normalizedVariables: Record<string, string> = {};
+	const normalizedVariables: Record<string, VariableSelection> = {};
 	for (const [key, value] of Object.entries(variables)) {
 		if (key.trim() === "")
 			throw new RequestError("invalid_input", "Invalid variable id");
-		normalizedVariables[key] = variableValue(value, `variables.${key}`);
+		normalizedVariables[key] = variableSelection(value, `variables.${key}`);
 	}
 	if (src.emulator !== null && typeof src.emulator !== "boolean")
 		throw new RequestError("invalid_input", "emulator must be boolean or null");
@@ -308,12 +341,46 @@ export function createAPI(
 						revision(data.settingsRevision),
 					);
 					break;
-				case "resolveCategoryMapping":
-					value = await mappings.resolve(
+				case "resolveCategoryMapping": {
+					const source = await mappings.resolveSource(
 						text(data.categorySlug),
 						text(data.goal),
 					);
+					if (source.status !== "found") {
+						value = source;
+						break;
+					}
+					if (anyVariableIds(source.category.variables).length === 0) {
+						const expanded = expandCategoryMapping(
+							source.game,
+							source.category,
+							[],
+							source.maxResolvedMappings,
+						);
+						value = expanded.ok
+							? {status: "resolved", mappings: expanded.mappings}
+							: {status: "inconsistent", message: expanded.message};
+						break;
+					}
+					const definitions = await speedrun.getCategoryVariables(
+						source.category.categoryId,
+					);
+					const expanded = expandCategoryMapping(
+						source.game,
+						source.category,
+						definitions,
+						source.maxResolvedMappings,
+					);
+					if (!expanded.ok && expanded.status === "limit_exceeded")
+						throw new IntegrationError(
+							"expansion_limit_exceeded",
+							expanded.message,
+						);
+					value = expanded.ok
+						? {status: "resolved", mappings: expanded.mappings}
+						: {status: "inconsistent", message: expanded.message};
 					break;
+				}
 				case "searchSpeedrunGames":
 					value = {games: await speedrun.searchGames(text(data.query))};
 					break;

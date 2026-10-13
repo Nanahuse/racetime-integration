@@ -1,5 +1,9 @@
 // Adapted and modified from Nanahuse/nodecg-race-layouts (Apache-2.0).
-import type {CategoryMapping, TimingMethod} from "@nanahuse/racetime-protocol";
+import type {
+	CategoryMapping,
+	TimingMethod,
+	VariableSelection,
+} from "@nanahuse/racetime-protocol";
 
 export const CATEGORY_MAPPING_SHEET_COLUMNS = [
 	"racetime_category_slug",
@@ -58,10 +62,17 @@ function nullableCell(value: string | undefined): string | null {
 	return normalized === "" ? null : normalized;
 }
 
+function isAnySelection(item: unknown): item is {mode: "any"} {
+	if (typeof item !== "object" || item === null || Array.isArray(item))
+		return false;
+	const keys = Object.keys(item as Record<string, unknown>);
+	return keys.length === 1 && (item as {mode?: unknown}).mode === "any";
+}
+
 function parseVariables(
 	value: string | undefined,
 	issues: CategoryMappingIssue[],
-): Record<string, string> {
+): Record<string, VariableSelection> {
 	const raw = normalizeCell(value);
 	if (raw === "") {
 		return {};
@@ -83,16 +94,20 @@ function parseVariables(
 		});
 		return {};
 	}
-	const variables: Record<string, string> = {};
+	const variables: Record<string, VariableSelection> = {};
 	for (const [key, item] of Object.entries(parsed as Record<string, unknown>)) {
-		if (typeof item !== "string") {
-			issues.push({
-				code: CATEGORY_MAPPING_ROW_ISSUE_CODES.variablesValueInvalid,
-				message: `src_variables["${key}"] must be a string.`,
-			});
+		if (typeof item === "string") {
+			variables[key] = item;
 			continue;
 		}
-		variables[key] = item;
+		if (isAnySelection(item)) {
+			variables[key] = {mode: "any"};
+			continue;
+		}
+		issues.push({
+			code: CATEGORY_MAPPING_ROW_ISSUE_CODES.variablesValueInvalid,
+			message: `src_variables["${key}"] must be a string or {"mode":"any"}.`,
+		});
 	}
 	return variables;
 }

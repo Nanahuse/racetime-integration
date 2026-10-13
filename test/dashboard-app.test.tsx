@@ -39,7 +39,7 @@ beforeEach(() => {
 		data: {ready: true, error: null},
 	});
 	sendMessage.mockImplementation(async (name: string) => {
-		const operation = name.replace("racetime.v3.", "");
+		const operation = name.replace("racetime.v4.", "");
 		switch (operation) {
 			case "listGameMappings":
 				return {ok: true, data: {records: [gameRecord], settingsRevision: 0}};
@@ -79,6 +79,7 @@ beforeEach(() => {
 							spreadsheetId: null,
 							gameMappingsSheet: "GameMappings",
 							categoryMappingsSheet: "CategoryMappings",
+							maxResolvedMappings: 20,
 						},
 					},
 				};
@@ -153,7 +154,7 @@ it("switches tabs without prompting when there are no unsaved edits", async () =
 it("cannot discard edits to switch tabs while a mapping save is in progress", async () => {
 	let finishSave: (() => void) | null = null;
 	sendMessage.mockImplementation(async (name: string) => {
-		const operation = name.replace("racetime.v3.", "");
+		const operation = name.replace("racetime.v4.", "");
 		switch (operation) {
 			case "listGameMappings":
 				return {ok: true, data: {records: [gameRecord], settingsRevision: 0}};
@@ -203,6 +204,7 @@ it("cannot discard edits to switch tabs while a mapping save is in progress", as
 							spreadsheetId: null,
 							gameMappingsSheet: "GameMappings",
 							categoryMappingsSheet: "CategoryMappings",
+							maxResolvedMappings: 20,
 						},
 					},
 				};

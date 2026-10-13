@@ -1,7 +1,9 @@
-import type {
-	SettingsState,
-	SpreadsheetInitialization,
-	SpreadsheetSheetOutcome,
+import {
+	DEFAULT_MAX_RESOLVED_MAPPINGS,
+	type SettingsState,
+	type Settings as SettingsValue,
+	type SpreadsheetInitialization,
+	type SpreadsheetSheetOutcome,
 } from "@nanahuse/racetime-protocol";
 import {useCallback, useEffect, useState} from "react";
 import {
@@ -31,7 +33,17 @@ type SettingsInput = {
 	spreadsheetId: string | null;
 	gameMappingsSheet: string;
 	categoryMappingsSheet: string;
+	// null means the field is invalid or empty; saving is blocked.
+	maxResolvedMappings: number | null;
 };
+
+/** Parses the Any-expansion cap input, or null when it is not a safe integer >= 1. */
+function parseMaxMappings(value: string): number | null {
+	const trimmed = value.trim();
+	if (!/^\d+$/.test(trimmed)) return null;
+	const parsed = Number(trimmed);
+	return Number.isSafeInteger(parsed) && parsed >= 1 ? parsed : null;
+}
 
 type ConflictState =
 	| {status: "none"}
@@ -47,6 +59,9 @@ export function Settings({
 	const [urlInput, setUrlInput] = useState("");
 	const [gameSheet, setGameSheet] = useState("GameMappings");
 	const [categorySheet, setCategorySheet] = useState("CategoryMappings");
+	const [maxMappingsInput, setMaxMappingsInput] = useState(
+		String(DEFAULT_MAX_RESOLVED_MAPPINGS),
+	);
 	const [busy, setBusy] = useState(false);
 	const [message, setMessage] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
@@ -61,7 +76,10 @@ export function Settings({
 		spreadsheetId: spreadsheetIdFromInput(urlInput),
 		gameMappingsSheet: gameSheet.trim(),
 		categoryMappingsSheet: categorySheet.trim(),
+		maxResolvedMappings: parseMaxMappings(maxMappingsInput),
 	});
+
+	const maxMappingsInvalid = currentInput().maxResolvedMappings === null;
 
 	// The initialization result only describes the inputs it ran against, so
 	// editing any target field clears it.
@@ -75,6 +93,7 @@ export function Settings({
 		setUrlInput(state.settings.spreadsheetId ?? "");
 		setGameSheet(state.settings.gameMappingsSheet);
 		setCategorySheet(state.settings.categoryMappingsSheet);
+		setMaxMappingsInput(String(state.settings.maxResolvedMappings));
 	}, []);
 
 	const load = useCallback(async () => {
@@ -128,12 +147,25 @@ export function Settings({
 	const save = async () => {
 		if (busy || initializing) return;
 		if (!baseline || conflict.status !== "none") return;
+		const input = currentInput();
+		if (input.maxResolvedMappings === null) {
+			setValidation("error");
+			setError("Any展開の最大件数は1以上の整数で入力してください。");
+			setMessage(null);
+			return;
+		}
+		const settings: SettingsValue = {
+			spreadsheetId: input.spreadsheetId,
+			gameMappingsSheet: input.gameMappingsSheet,
+			categoryMappingsSheet: input.categoryMappingsSheet,
+			maxResolvedMappings: input.maxResolvedMappings,
+		};
 		setBusy(true);
 		setError(null);
 		setMessage(null);
 		try {
 			const next = await request("updateSettings", {
-				settings: currentInput(),
+				settings,
 				expectedRevision: baseline.revision,
 			});
 			applySettings(next);
@@ -349,11 +381,30 @@ export function Settings({
 						}}
 					/>
 				</Field>
+				<Field label='Any展開の最大件数'>
+					<input
+						type='number'
+						min={1}
+						step={1}
+						value={maxMappingsInput}
+						disabled={busy || initializing}
+						onChange={(event) => setMaxMappingsInput(event.target.value)}
+					/>
+				</Field>
+				{maxMappingsInvalid && (
+					<Callout tone='error'>
+						Any展開の最大件数は1以上の整数で入力してください。
+					</Callout>
+				)}
 				<div className='button-row'>
 					<button
 						type='submit'
 						disabled={
-							busy || initializing || !baseline || conflict.status !== "none"
+							busy ||
+							initializing ||
+							!baseline ||
+							conflict.status !== "none" ||
+							maxMappingsInvalid
 						}
 					>
 						{busy ? "検証中…" : "保存"}

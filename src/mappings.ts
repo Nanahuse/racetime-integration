@@ -3,9 +3,9 @@ import type {
 	CategoryMappingRecord,
 	GameMapping,
 	GameMappingRecord,
-	ResolveCategoryMappingResult,
 	Settings,
 	SettingsState,
+	SpeedrunCategorySelection,
 } from "@nanahuse/racetime-protocol";
 import {IntegrationError} from "./errors";
 import type {CategoryMappingsRepository} from "./integrations/spreadsheet/category-mappings-repository";
@@ -26,6 +26,21 @@ export type CategoryIntegrityCheck = (
 	game: GameMapping["speedrunCom"],
 	category: CategoryMapping["speedrunCom"],
 ) => Promise<void>;
+
+/**
+ * Consistent saved mapping read outside of any Speedrun.com call. Consumers
+ * resolve `found` into concrete lookups themselves.
+ */
+export type CategoryResolutionSource =
+	| {status: "unregistered"}
+	| {status: "inconsistent"; message: string}
+	| {
+			status: "found";
+			game: GameMapping["speedrunCom"];
+			category: SpeedrunCategorySelection;
+			/** Settings snapshot taken while the mapping was read. */
+			maxResolvedMappings: number;
+	  };
 
 function slotKey(value: string): string {
 	return value.trim();
@@ -236,10 +251,10 @@ export class MappingService {
 			return {deleted: true as const, settingsRevision: this.state.revision};
 		});
 	}
-	resolve(
+	resolveSource(
 		categorySlug: string,
 		goal: string,
-	): Promise<ResolveCategoryMappingResult> {
+	): Promise<CategoryResolutionSource> {
 		return this.serialize(async () => {
 			const repository = this.requireRepository();
 			const [game, category] = await Promise.all([
@@ -253,11 +268,10 @@ export class MappingService {
 					message: `Category mapping "${categorySlug}" + "${goal}" has no Game Mapping.`,
 				};
 			return {
-				status: "resolved",
-				mapping: {
-					game: game.mapping.speedrunCom,
-					category: category.mapping.speedrunCom,
-				},
+				status: "found",
+				game: structuredClone(game.mapping.speedrunCom),
+				category: structuredClone(category.mapping.speedrunCom),
+				maxResolvedMappings: this.state.settings.maxResolvedMappings,
 			};
 		});
 	}

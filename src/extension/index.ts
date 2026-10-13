@@ -4,6 +4,7 @@ import {
 	type PlayerManagerAPI,
 } from "@nanahuse/player-manager-protocol";
 import {
+	DEFAULT_MAX_RESOLVED_MAPPINGS,
 	OPERATIONS,
 	operationMessageName,
 	RACES_REPLICANT,
@@ -51,6 +52,7 @@ export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 			spreadsheetId: config.spreadsheetId ?? null,
 			gameMappingsSheet: config.gameMappingsSheet ?? "GameMappings",
 			categoryMappingsSheet: config.categoryMappingsSheet ?? "CategoryMappings",
+			maxResolvedMappings: DEFAULT_MAX_RESOLVED_MAPPINGS,
 		},
 	};
 	const settings = nodecg.Replicant<SettingsState>(SETTINGS_REPLICANT, {

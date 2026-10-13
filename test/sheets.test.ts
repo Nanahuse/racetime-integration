@@ -143,6 +143,26 @@ it("distinguishes create and update and rejects stale edits, duplicate creates a
 	).rejects.toMatchObject({code: "mapping_conflict"});
 });
 
+it("round-trips Any and concrete variable selections through src_variables", async () => {
+	const store: Store = new Map();
+	const {repository} = categoryRepository(store);
+	const withAny = structuredClone(mapping);
+	withAny.speedrunCom.variables = {
+		ruleset: {mode: "any"},
+		difficulty: "normal",
+	};
+	const created = await repository.save(withAny, null);
+	expect(store.get("Category'Mappings")![1]![5]).toBe(
+		'{"ruleset":{"mode":"any"},"difficulty":"normal"}',
+	);
+	expect((await repository.find("game", "Any%"))!.mapping).toEqual(withAny);
+	const updated = structuredClone(withAny);
+	updated.speedrunCom.variables = {ruleset: "classic"};
+	const saved = await repository.save(updated, created.record.revision);
+	expect((await repository.find("game", "Any%"))!.mapping).toEqual(updated);
+	expect(saved.record.revision).not.toBe(created.record.revision);
+});
+
 it("updates and deletes only owned cells while retaining unknown columns and formulas", async () => {
 	const store: Store = new Map();
 	const header = ["notes", ...[...CATEGORY_MAPPING_SHEET_COLUMNS].reverse()];
@@ -196,6 +216,7 @@ it("rejects duplicate keys/headers, missing headers and malformed category cells
 		"json",
 		"boolean",
 		"timing",
+		"anyObject",
 	]) {
 		const store: Store = new Map();
 		const {repository, client} = categoryRepository(store);
@@ -206,6 +227,7 @@ it("rejects duplicate keys/headers, missing headers and malformed category cells
 			store.get("Category'Mappings")![0]!.push("src_category_id");
 		if (kind === "missing") store.get("Category'Mappings")![0]![0] = "wrong";
 		if (kind === "json") row[5] = '{"difficulty":1}';
+		if (kind === "anyObject") row[5] = '{"difficulty":{"mode":"other"}}';
 		if (kind === "boolean") row[8] = "maybe";
 		if (kind === "timing") row[9] = "unknown";
 		await expect(repository.save(mapping, null)).rejects.toMatchObject({
@@ -332,6 +354,7 @@ it("requires a parent Game Mapping before saving a category and defends children
 				spreadsheetId: "sheet",
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "Category'Mappings",
+				maxResolvedMappings: 20,
 			},
 		},
 		persist,
@@ -359,11 +382,12 @@ it("requires a parent Game Mapping before saving a category and defends children
 			0,
 		),
 	).rejects.toMatchObject({code: "game_mapping_conflict"});
-	await expect(service.resolve("game", "Any%")).resolves.toMatchObject({
-		status: "resolved",
-		mapping: {game: {gameId: "g1"}, category: {categoryId: "c1"}},
+	await expect(service.resolveSource("game", "Any%")).resolves.toMatchObject({
+		status: "found",
+		game: {gameId: "g1"},
+		category: {categoryId: "c1"},
 	});
-	await expect(service.resolve("game", "No%")).resolves.toEqual({
+	await expect(service.resolveSource("game", "No%")).resolves.toEqual({
 		status: "unregistered",
 	});
 });
@@ -387,6 +411,7 @@ it("validates both sheets before committing settings and rejects stale writes", 
 				spreadsheetId: "a",
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "Category'Mappings",
+				maxResolvedMappings: 20,
 			},
 		},
 		persist,
@@ -400,6 +425,7 @@ it("validates both sheets before committing settings and rejects stale writes", 
 				spreadsheetId: "b",
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "Category'Mappings",
+				maxResolvedMappings: 20,
 			},
 			0,
 		),
@@ -411,6 +437,7 @@ it("validates both sheets before committing settings and rejects stale writes", 
 			spreadsheetId: "b",
 			gameMappingsSheet: "GameMappings",
 			categoryMappingsSheet: "Category'Mappings",
+			maxResolvedMappings: 20,
 		},
 		0,
 	);
@@ -420,6 +447,7 @@ it("validates both sheets before committing settings and rejects stale writes", 
 			spreadsheetId: "b",
 			gameMappingsSheet: "GameMappings",
 			categoryMappingsSheet: "Category'Mappings",
+			maxResolvedMappings: 20,
 		},
 	});
 	await expect(

@@ -172,8 +172,8 @@ it("displays a single-fetched race with resolved participants without starting a
 	expect(screen.getByText("PT1H2M3S")).toBeTruthy();
 	expect(screen.getByText("finished")).toBeTruthy();
 	const operations = sendMessage.mock.calls.map((call) => call[0]);
-	expect(operations).toContain("racetime.v3.fetchRace");
-	expect(operations).not.toContain("racetime.v3.watchRace");
+	expect(operations).toContain("racetime.v4.fetchRace");
+	expect(operations).not.toContain("racetime.v4.watchRace");
 });
 
 it("shows an error and clears a stale result when fetching fails", async () => {
@@ -224,7 +224,7 @@ it("opens registration without re-fetching and refreshes on demand", async () =>
 	const before = resolved(race, [participants[1]!], 1);
 	let fetches = 0;
 	sendMessage.mockImplementation(async (name: string) => {
-		if (name !== "racetime.v3.fetchRace")
+		if (name !== "racetime.v4.fetchRace")
 			throw new Error(`unexpected operation ${name}`);
 		fetches += 1;
 		return {ok: true, data: fetches === 1 ? before : resolved()};
@@ -278,7 +278,7 @@ it("ignores a registration result that settles after fetching another race", asy
 	);
 	let fetches = 0;
 	sendMessage.mockImplementation(async (name: string) => {
-		if (name !== "racetime.v3.fetchRace")
+		if (name !== "racetime.v4.fetchRace")
 			throw new Error(`unexpected operation ${name}`);
 		fetches += 1;
 		return {ok: true, data: fetches === 1 ? resolved() : resolved(otherRace)};
@@ -340,7 +340,7 @@ it("does not surface a registration error after fetching another race", async ()
 	);
 	let fetches = 0;
 	sendMessage.mockImplementation(async (name: string) => {
-		if (name !== "racetime.v3.fetchRace")
+		if (name !== "racetime.v4.fetchRace")
 			throw new Error(`unexpected operation ${name}`);
 		fetches += 1;
 		return {ok: true, data: fetches === 1 ? resolved() : resolved(otherRace)};
@@ -376,7 +376,7 @@ it("keeps a fetch busy when an older registration completes", async () => {
 	const pending = deferred<unknown>();
 	let fetches = 0;
 	sendMessage.mockImplementation((name: string) => {
-		if (name !== "racetime.v3.fetchRace")
+		if (name !== "racetime.v4.fetchRace")
 			throw new Error(`unexpected operation ${name}`);
 		fetches += 1;
 		return fetches === 1
@@ -411,7 +411,7 @@ it("disables registration while another race is being fetched", async () => {
 	const pending = deferred<unknown>();
 	let fetches = 0;
 	sendMessage.mockImplementation((name: string) => {
-		if (name !== "racetime.v3.fetchRace")
+		if (name !== "racetime.v4.fetchRace")
 			throw new Error(`unexpected operation ${name}`);
 		fetches += 1;
 		return fetches === 1
@@ -466,7 +466,7 @@ it("registers the same account after switching races without stale effects", asy
 	);
 	let fetches = 0;
 	sendMessage.mockImplementation(async (name: string) => {
-		if (name !== "racetime.v3.fetchRace")
+		if (name !== "racetime.v4.fetchRace")
 			throw new Error(`unexpected operation ${name}`);
 		fetches += 1;
 		return {ok: true, data: resolved(fetches === 1 ? raceA : raceB)};
@@ -540,7 +540,7 @@ const fetchedRace: Race = {
 it("keeps a monitored selection when a pending fetch resolves later", async () => {
 	let resolveFetch: (value: unknown) => void = () => {};
 	sendMessage.mockImplementation((name: string) => {
-		if (name === "racetime.v3.fetchRace")
+		if (name === "racetime.v4.fetchRace")
 			return new Promise((resolve) => {
 				resolveFetch = resolve;
 			});
@@ -565,7 +565,7 @@ it("keeps a monitored selection when a pending fetch resolves later", async () =
 it("ignores a failed fetch that settles after selecting a monitored race", async () => {
 	let rejectFetch: (reason: unknown) => void = () => {};
 	sendMessage.mockImplementation((name: string) => {
-		if (name === "racetime.v3.fetchRace")
+		if (name === "racetime.v4.fetchRace")
 			return new Promise((_resolve, reject) => {
 				rejectFetch = reject;
 			});
@@ -622,7 +622,7 @@ function mappingHandler(options: {
 	const categories = options.categories ?? [];
 	const settingsRevision = options.settingsRevision ?? 0;
 	return async (name: string, data?: unknown): Promise<unknown> => {
-		const operation = name.replace("racetime.v3.", "");
+		const operation = name.replace("racetime.v4.", "");
 		const payload = data as {
 			mapping?: GameMapping & CategoryMapping;
 			expectedRevision?: string | null;
@@ -726,7 +726,7 @@ it("registers Game then Category mappings from Overview", async () => {
 	const savedGames: GameMappingRecord[] = [];
 	const savedCategories: CategoryMappingRecord[] = [];
 	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
-		const operation = name.replace("racetime.v3.", "");
+		const operation = name.replace("racetime.v4.", "");
 		if (operation === "saveGameMapping") {
 			const mapping = (data as {mapping: GameMapping}).mapping;
 			const record: GameMappingRecord = {mapping, revision: "g-new"};
@@ -847,6 +847,99 @@ it("shows existing mappings and updates with the saved revision", async () => {
 	expect(savedExpected).toBe("c1r");
 });
 
+it("selects Any from the Overview category editor like Mappings", async () => {
+	let saved: CategoryMapping | null = null;
+	const variables = [
+		{
+			id: "ruleset",
+			name: "Ruleset",
+			mandatory: false,
+			userDefined: false,
+			obsoletes: true,
+			values: [
+				{id: "classic", label: "Classic"},
+				{id: "modern", label: "Modern"},
+			],
+		},
+	];
+	const handler = mappingHandler({
+		games: [gameRecord],
+		categories: [categoryRecord],
+	});
+	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
+		const operation = name.replace("racetime.v4.", "");
+		if (operation === "getSpeedrunCategoryVariables")
+			return {ok: true, data: {variables}};
+		if (operation === "saveCategoryMapping") {
+			saved = (data as {mapping: CategoryMapping}).mapping;
+			return {
+				ok: true,
+				data: {
+					record: {mapping: saved, revision: "c2r"},
+					action: "updated",
+					settingsRevision: 0,
+				},
+			};
+		}
+		return handler(name, data);
+	});
+	render(<Overview races={undefined} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: race.url},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	await openMappingEditor();
+	const ruleset = (await screen.findByLabelText(
+		"Ruleset",
+	)) as HTMLSelectElement;
+	const anyOption = Array.from(ruleset.options).find((option) =>
+		option.textContent?.startsWith("Any"),
+	);
+	expect(anyOption).toBeTruthy();
+	await act(async () => {
+		fireEvent.change(ruleset, {target: {value: anyOption!.value}});
+	});
+	fireEvent.click(screen.getByRole("button", {name: /Category Mappingを保存/}));
+	expect(
+		await screen.findByText("Category Mappingを保存しました。"),
+	).toBeTruthy();
+	expect(saved).toMatchObject({
+		speedrunCom: {variables: {ruleset: {mode: "any"}}},
+	});
+});
+
+it("removes a deleted Variable from the Overview category editor", async () => {
+	const ghostCategory: CategoryMappingRecord = {
+		...categoryRecord,
+		mapping: {
+			...categoryRecord.mapping,
+			speedrunCom: {
+				...categoryRecord.mapping.speedrunCom,
+				variables: {ghost: {mode: "any"}},
+			},
+		},
+	};
+	const handler = mappingHandler({
+		games: [gameRecord],
+		categories: [ghostCategory],
+	});
+	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
+		const operation = name.replace("racetime.v4.", "");
+		if (operation === "getSpeedrunCategoryVariables")
+			return {ok: true, data: {variables: []}};
+		return handler(name, data);
+	});
+	render(<Overview races={undefined} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: race.url},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	await openMappingEditor();
+	expect(await screen.findByText("ghost")).toBeTruthy();
+	fireEvent.click(screen.getByRole("button", {name: "変数 ghost を削除"}));
+	await waitFor(() => expect(screen.queryByText("ghost")).toBeNull());
+});
+
 it("surfaces a mapping save conflict in Overview", async () => {
 	const games: GameMappingRecord[] = [];
 	sendMessage.mockImplementation(
@@ -882,7 +975,7 @@ it("surfaces a mapping save conflict in Overview", async () => {
 
 it("keeps race details and participants when mapping load fails", async () => {
 	sendMessage.mockImplementation(async (name: string) => {
-		const operation = name.replace("racetime.v3.", "");
+		const operation = name.replace("racetime.v4.", "");
 		if (operation === "fetchRace") return {ok: true, data: resolved()};
 		if (
 			operation === "listGameMappings" ||
@@ -1057,7 +1150,7 @@ it("does not apply a stale registration after fetching another race", async () =
 			}),
 	);
 	sendMessage.mockImplementation(async (name: string) => {
-		if (name === "racetime.v3.fetchRace")
+		if (name === "racetime.v4.fetchRace")
 			return {ok: true, data: resolved(fetchedRace)};
 		throw new Error(`unexpected operation ${name}`);
 	});
@@ -1090,7 +1183,7 @@ it("does not surface a stale registration error after fetching another race", as
 			}),
 	);
 	sendMessage.mockImplementation(async (name: string) => {
-		if (name === "racetime.v3.fetchRace")
+		if (name === "racetime.v4.fetchRace")
 			return {ok: true, data: resolved(fetchedRace)};
 		throw new Error(`unexpected operation ${name}`);
 	});
@@ -1118,7 +1211,7 @@ it("registers participants for a newly fetched race", async () => {
 		data: {registrationId: "r1", url: "/Registration.html"},
 	});
 	sendMessage.mockImplementation(async (name: string) => {
-		if (name === "racetime.v3.fetchRace")
+		if (name === "racetime.v4.fetchRace")
 			return {ok: true, data: resolved(fetchedRace)};
 		throw new Error(`unexpected operation ${name}`);
 	});
@@ -1141,7 +1234,7 @@ it("registers participants for a newly fetched race", async () => {
 it("disables editing until the mapping lists have loaded", async () => {
 	const listPending = deferred<unknown>();
 	sendMessage.mockImplementation((name: string) => {
-		const operation = name.replace("racetime.v3.", "");
+		const operation = name.replace("racetime.v4.", "");
 		if (operation === "fetchRace")
 			return Promise.resolve({ok: true, data: resolved()});
 		if (
@@ -1176,7 +1269,7 @@ it("disables editing until the mapping lists have loaded", async () => {
 it("keeps editing disabled after a mapping load failure and recovers on reload", async () => {
 	let failLists = true;
 	sendMessage.mockImplementation(async (name: string) => {
-		const operation = name.replace("racetime.v3.", "");
+		const operation = name.replace("racetime.v4.", "");
 		if (operation === "fetchRace") return {ok: true, data: resolved()};
 		if (operation === "listGameMappings")
 			return failLists
@@ -1221,7 +1314,7 @@ it("keeps unsaved mapping edits when fetching another race fails", async () => {
 	let fetches = 0;
 	const base = mappingHandler({games: [], categories: []});
 	sendMessage.mockImplementation((name: string, data?: unknown) => {
-		const operation = name.replace("racetime.v3.", "");
+		const operation = name.replace("racetime.v4.", "");
 		if (operation === "fetchRace") {
 			fetches += 1;
 			return fetches === 1
@@ -1283,7 +1376,7 @@ it("does not switch races when a fetch result arrives during a mapping save", as
 	});
 	let fetches = 0;
 	sendMessage.mockImplementation((name: string, data?: unknown) => {
-		const operation = name.replace("racetime.v3.", "");
+		const operation = name.replace("racetime.v4.", "");
 		if (operation === "fetchRace") {
 			fetches += 1;
 			return fetches === 1
@@ -1415,7 +1508,7 @@ it("keeps the mapping workspace when a fetch fails during the save reload", asyn
 		},
 	});
 	sendMessage.mockImplementation((name: string, data?: unknown) => {
-		const operation = name.replace("racetime.v3.", "");
+		const operation = name.replace("racetime.v4.", "");
 		if (operation === "fetchRace") {
 			fetches += 1;
 			return fetches === 1
@@ -1494,7 +1587,7 @@ it("clears the previous race's registration URL when another race is fetched", a
 	let fetches = 0;
 	const base = mappingHandler({games: [], categories: []});
 	sendMessage.mockImplementation((name: string, data?: unknown) => {
-		const operation = name.replace("racetime.v3.", "");
+		const operation = name.replace("racetime.v4.", "");
 		if (operation === "fetchRace") {
 			fetches += 1;
 			return fetches === 1
@@ -1542,7 +1635,7 @@ it("clears the previous race's registration error when another race is fetched",
 	let fetches = 0;
 	const base = mappingHandler({games: [], categories: []});
 	sendMessage.mockImplementation((name: string, data?: unknown) => {
-		const operation = name.replace("racetime.v3.", "");
+		const operation = name.replace("racetime.v4.", "");
 		if (operation === "fetchRace") {
 			fetches += 1;
 			return fetches === 1
@@ -1582,7 +1675,7 @@ it("keeps the current race's registration URL when fetching another race fails",
 	});
 	const base = mappingHandler({games: [], categories: []});
 	sendMessage.mockImplementation((name: string, data?: unknown) => {
-		const operation = name.replace("racetime.v3.", "");
+		const operation = name.replace("racetime.v4.", "");
 		if (operation === "fetchRace")
 			return Promise.resolve({
 				ok: false,
@@ -1612,7 +1705,7 @@ it("keeps the registration URL when the same race is fetched again", async () =>
 	});
 	const base = mappingHandler({games: [], categories: []});
 	sendMessage.mockImplementation((name: string, data?: unknown) => {
-		const operation = name.replace("racetime.v3.", "");
+		const operation = name.replace("racetime.v4.", "");
 		if (operation === "fetchRace")
 			return Promise.resolve({ok: true, data: resolved()});
 		return base(name, data);

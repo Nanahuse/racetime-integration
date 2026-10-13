@@ -1,13 +1,15 @@
-import type {
-	CategoryMapping,
-	CategoryMappingRecord,
-	GameMapping,
-	GameMappingRecord,
-	SpeedrunCategoryOption,
-	SpeedrunGameOptions,
-	SpeedrunGameSummary,
-	SpeedrunVariableOption,
-	TimingMethod,
+import {
+	type CategoryMapping,
+	type CategoryMappingRecord,
+	type GameMapping,
+	type GameMappingRecord,
+	type SpeedrunCategoryOption,
+	type SpeedrunGameOptions,
+	type SpeedrunGameSummary,
+	type SpeedrunVariableOption,
+	supportsAnySelection,
+	type TimingMethod,
+	type VariableSelection,
 } from "@nanahuse/racetime-protocol";
 import {useCallback, useEffect, useRef, useState} from "react";
 import {
@@ -26,6 +28,14 @@ const TIMING_LABELS: Record<TimingMethod, string> = {
 	realtime_noloads: "Real Time (no load removal)",
 	ingame: "In-Game Time",
 };
+
+// UI-only sentinel for the Any choice. Uses a NUL prefix that cannot be a
+// Speedrun.com Value ID, so it is never confused with a stored string value.
+const ANY_SELECTION = "\u0000any";
+
+function isAnySelection(value: VariableSelection | undefined): boolean {
+	return value !== undefined && typeof value !== "string";
+}
 
 type Kind = "game" | "category";
 type SessionStatus = "normal" | "conflict" | "invalid";
@@ -906,6 +916,21 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		);
 	};
 
+	const removeVariable = (id: string) => {
+		setCategorySession((session) => {
+			if (!session) return session;
+			const variables = {...session.draft.speedrunCom.variables};
+			delete variables[id];
+			return {
+				...session,
+				draft: {
+					...session.draft,
+					speedrunCom: {...session.draft.speedrunCom, variables},
+				},
+			};
+		});
+	};
+
 	const filteredGames = games.filter((record) =>
 		stringify(record.mapping).toLowerCase().includes(gameQuery.toLowerCase()),
 	);
@@ -1325,6 +1350,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 											goalLocked={mode === "race"}
 											onField={setCategoryField}
 											onChooseCategory={chooseCategory}
+											onRemoveVariable={removeVariable}
 											onGoal={(goal) =>
 												setCategorySession((session) =>
 													session
@@ -1580,6 +1606,7 @@ function CategoryEditor({
 	onField,
 	onChooseCategory,
 	onGoal,
+	onRemoveVariable,
 	onSave,
 	onRevert,
 	onDeleteRequest,
@@ -1605,6 +1632,7 @@ function CategoryEditor({
 	) => void;
 	onChooseCategory: (option: SpeedrunCategoryOption) => void;
 	onGoal: (goal: string) => void;
+	onRemoveVariable: (id: string) => void;
 	onSave: () => void;
 	onRevert: () => void;
 	onDeleteRequest: () => void;
@@ -1615,8 +1643,30 @@ function CategoryEditor({
 		(option) => option.id === draft.speedrunCom.categoryId,
 	);
 	const goalReadOnly = goalLocked || expected !== null;
+	const unsupportedAny = variablesReady
+		? variables.filter(
+				(variable) =>
+					isAnySelection(draft.speedrunCom.variables[variable.id]) &&
+					!supportsAnySelection(variable),
+			)
+		: [];
+	// Variables saved in the mapping that no longer exist in the SRC definitions.
+	const removedVariables = variablesReady
+		? Object.entries(draft.speedrunCom.variables)
+				.filter(
+					([id, value]) =>
+						value !== "" && !variables.some((variable) => variable.id === id),
+				)
+				.map(([id]) => id)
+		: [];
 	const saveDisabled =
-		busy || disabled || missingMandatory || !variablesReady || blocked;
+		busy ||
+		disabled ||
+		missingMandatory ||
+		!variablesReady ||
+		blocked ||
+		unsupportedAny.length > 0 ||
+		removedVariables.length > 0;
 	return (
 		<form
 			className='subpanel category-editor'
@@ -1782,7 +1832,12 @@ function CategoryEditor({
 							>
 								{variable.userDefined ? (
 									<input
-										value={draft.speedrunCom.variables[variable.id] ?? ""}
+										value={
+											typeof draft.speedrunCom.variables[variable.id] ===
+											"string"
+												? (draft.speedrunCom.variables[variable.id] as string)
+												: ""
+										}
 										disabled={disabled}
 										onChange={(event) =>
 											onField("variables", {
@@ -1793,16 +1848,29 @@ function CategoryEditor({
 									/>
 								) : (
 									<select
-										value={draft.speedrunCom.variables[variable.id] ?? ""}
+										value={
+											isAnySelection(draft.speedrunCom.variables[variable.id])
+												? ANY_SELECTION
+												: typeof draft.speedrunCom.variables[variable.id] ===
+														"string"
+													? (draft.speedrunCom.variables[variable.id] as string)
+													: ""
+										}
 										disabled={disabled}
 										onChange={(event) =>
 											onField("variables", {
 												...draft.speedrunCom.variables,
-												[variable.id]: event.target.value,
+												[variable.id]:
+													event.target.value === ANY_SELECTION
+														? {mode: "any"}
+														: event.target.value,
 											})
 										}
 									>
 										<option value=''>選択してください</option>
+										{supportsAnySelection(variable) && (
+											<option value={ANY_SELECTION}>Any（すべて）</option>
+										)}
 										{variable.values.map((value) => (
 											<option
 												key={value.id}
@@ -1818,9 +1886,40 @@ function CategoryEditor({
 					</div>
 				)}
 			</fieldset>
+			{removedVariables.length > 0 && (
+				<fieldset className='variables'>
+					<legend>削除されたVariable</legend>
+					<Callout tone='error'>
+						保存されているVariableが現在のSpeedrun.com定義に存在しません。設定を削除するか、カテゴリを見直してください。
+					</Callout>
+					{removedVariables.map((id) => (
+						<div
+							className='formrow'
+							key={id}
+						>
+							<span>{id}</span>
+							<button
+								type='button'
+								aria-label={`変数 ${id} を削除`}
+								disabled={disabled}
+								onClick={() => onRemoveVariable(id)}
+							>
+								削除
+							</button>
+						</div>
+					))}
+				</fieldset>
+			)}
 			{missingMandatory && (
 				<Callout tone='warning'>
 					必須Variableが未選択のため保存できません。
+				</Callout>
+			)}
+			{unsupportedAny.length > 0 && (
+				<Callout tone='error'>
+					{`保存済みのAnyが現在のSpeedrun.com定義では利用できません: ${unsupportedAny
+						.map((variable) => variable.name)
+						.join(", ")}。値を選び直してください。`}
 				</Callout>
 			)}
 			<div className='button-row'>

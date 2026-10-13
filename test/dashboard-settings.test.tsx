@@ -28,6 +28,7 @@ const initial: SettingsState = {
 		spreadsheetId: null,
 		gameMappingsSheet: "GameMappings",
 		categoryMappingsSheet: "CategoryMappings",
+		maxResolvedMappings: 20,
 	},
 };
 let updateResult: () => Envelope | Promise<Envelope> = () => ({
@@ -38,6 +39,7 @@ let updateResult: () => Envelope | Promise<Envelope> = () => ({
 			spreadsheetId: "abc",
 			gameMappingsSheet: "GameMappings",
 			categoryMappingsSheet: "CategoryMappings",
+			maxResolvedMappings: 20,
 		},
 	},
 });
@@ -57,6 +59,7 @@ beforeEach(() => {
 				spreadsheetId: "abc",
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
+				maxResolvedMappings: 20,
 			},
 		},
 	});
@@ -65,7 +68,7 @@ beforeEach(() => {
 		data: {gameMappings: "created", categoryMappings: "created"},
 	});
 	sendMessage.mockImplementation(async (name: string) => {
-		const operation = name.replace("racetime.v3.", "");
+		const operation = name.replace("racetime.v4.", "");
 		if (operation === "getSettings") return getSettingsResult();
 		if (operation === "updateSettings") return updateResult();
 		if (operation === "initializeSpreadsheet") return initializeResult();
@@ -106,6 +109,7 @@ it("does not claim validation when the spreadsheet is disabled", async () => {
 				spreadsheetId: null,
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
+				maxResolvedMappings: 20,
 			},
 		},
 	});
@@ -165,7 +169,7 @@ it("initializes from unsaved input and can still save afterwards", async () => {
 	fireEvent.click(screen.getByRole("button", {name: "Spreadsheetを初期化"}));
 	expect(await screen.findByText(/GameMappings: 新規作成/)).toBeTruthy();
 	expect(sendMessage).toHaveBeenCalledWith(
-		"racetime.v3.initializeSpreadsheet",
+		"racetime.v4.initializeSpreadsheet",
 		{
 			settings: {
 				spreadsheetId: "abc",
@@ -321,4 +325,47 @@ it("clears the initialization result when the target input changes", async () =>
 	await waitFor(() =>
 		expect(screen.queryByText(/GameMappings: 新規作成/)).toBeNull(),
 	);
+});
+
+it("shows, edits and saves the Any expansion limit", async () => {
+	render(<Settings />);
+	await screen.findByText("未設定");
+	const input = screen.getByLabelText("Any展開の最大件数") as HTMLInputElement;
+	expect(input.value).toBe("20");
+	sendMessage.mockClear();
+	fireEvent.change(input, {target: {value: "30"}});
+	fireEvent.click(screen.getByRole("button", {name: "保存"}));
+	expect(await screen.findByText("利用可能")).toBeTruthy();
+	expect(sendMessage).toHaveBeenCalledWith(
+		"racetime.v4.updateSettings",
+		expect.objectContaining({
+			settings: expect.objectContaining({maxResolvedMappings: 30}),
+		}),
+	);
+});
+
+it("rejects an invalid Any expansion limit before saving", async () => {
+	for (const value of ["0", "-1", "1.5"]) {
+		render(<Settings />);
+		await screen.findByText("未設定");
+		sendMessage.mockClear();
+		fireEvent.change(screen.getByLabelText("Any展開の最大件数"), {
+			target: {value},
+		});
+		expect(
+			await screen.findByText(
+				/Any展開の最大件数は1以上の整数で入力してください/,
+			),
+		).toBeTruthy();
+		expect(
+			(screen.getByRole("button", {name: "保存"}) as HTMLButtonElement)
+				.disabled,
+		).toBe(true);
+		fireEvent.click(screen.getByRole("button", {name: "保存"}));
+		expect(sendMessage).not.toHaveBeenCalledWith(
+			"racetime.v4.updateSettings",
+			expect.anything(),
+		);
+		cleanup();
+	}
 });
