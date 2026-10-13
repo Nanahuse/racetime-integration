@@ -107,7 +107,12 @@ export function App() {
 				))}
 			</nav>
 			<main>
-				{tab === "overview" && <Overview races={races.value} />}
+				{tab === "overview" && (
+					<Overview
+						races={races.value}
+						onStateChange={setEditorState}
+					/>
+				)}
 				{tab === "mappings" && <Mappings onStateChange={setEditorState} />}
 				{tab === "settings" && <Settings onStateChange={setEditorState} />}
 			</main>

@@ -7,10 +7,16 @@ import type {
 	RacesState,
 	ResolvedRace,
 } from "@nanahuse/racetime-protocol";
-import {useRef, useState} from "react";
+import {useCallback, useEffect, useRef, useState} from "react";
 import {errorMessage, request} from "../api/client";
 import {beginRegistration, playerEditUrl} from "../api/player-manager";
+import type {EditorState} from "../model/editor";
 import {Callout} from "./common";
+import {
+	MappingWorkspace,
+	type RaceMappingTarget,
+	targetKeyOf,
+} from "./Mappings";
 
 function counts(participants: readonly Participant[]) {
 	const matched = participants.filter((p) => p.status === "matched").length;
@@ -239,13 +245,20 @@ function Participants({
 	);
 }
 
-export function Overview({races}: {races: RacesState | undefined}) {
+export function Overview({
+	races,
+	onStateChange,
+}: {
+	races: RacesState | undefined;
+	onStateChange?: (state: EditorState) => void;
+}) {
 	const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
 	const [urlInput, setUrlInput] = useState("");
 	const [fetched, setFetched] = useState<ResolvedRace | null>(null);
 	const [registrationUrl, setRegistrationUrl] = useState<string | null>(null);
 	const [fetching, setFetching] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [pendingRace, setPendingRace] = useState<(() => void) | null>(null);
 	const fetchGen = useRef(0);
 	// Identifies the currently displayed race so a registration that finishes
 	// after the user moved on cannot change the view.
@@ -255,14 +268,40 @@ export function Overview({races}: {races: RacesState | undefined}) {
 		view: number;
 		participant: string;
 	} | null>(null);
+	const mappingRef = useRef<EditorState>({dirty: false, busy: false});
 
 	const list = races?.races ?? [];
 	const monitored =
 		selectedUrl === null
 			? null
 			: (list.find((race) => race.url === selectedUrl) ?? null);
+	const displayedRace = monitored?.race ?? fetched?.race ?? null;
+	const target: RaceMappingTarget | null = displayedRace
+		? {
+				categorySlug: displayedRace.category.slug,
+				categoryName: displayedRace.category.name,
+				goal: displayedRace.category.goal,
+			}
+		: null;
+	const targetKey = target ? targetKeyOf(target) : null;
+	const targetKeyRef = useRef<string | null>(null);
+	targetKeyRef.current = targetKey;
 
-	const selectMonitored = (url: string) => {
+	const reportMapping = useCallback(
+		(state: EditorState) => {
+			mappingRef.current = state;
+			onStateChange?.(state);
+		},
+		[onStateChange],
+	);
+
+	useEffect(() => {
+		if (targetKey !== null) return;
+		mappingRef.current = {dirty: false, busy: false};
+		onStateChange?.({dirty: false, busy: false});
+	}, [targetKey, onStateChange]);
+
+	const applySelection = (url: string) => {
 		fetchGen.current++;
 		viewRef.current++;
 		setSelectedUrl(url);
@@ -272,7 +311,34 @@ export function Overview({races}: {races: RacesState | undefined}) {
 		setFetching(false);
 	};
 
+	const guardRaceChange = (nextKey: string | null, action: () => void) => {
+		if (mappingRef.current.busy) return;
+		if (mappingRef.current.dirty && nextKey !== targetKeyRef.current) {
+			setPendingRace(() => action);
+			return;
+		}
+		action();
+	};
+
+	const selectMonitored = (url: string) => {
+		const next = list.find((race) => race.url === url)?.race ?? null;
+		const nextKey = next
+			? targetKeyOf({
+					categorySlug: next.category.slug,
+					categoryName: next.category.name,
+					goal: next.category.goal,
+				})
+			: null;
+		guardRaceChange(nextKey, () => applySelection(url));
+	};
+
+	const applyFetched = (resolved: ResolvedRace) => {
+		setFetched(resolved);
+		setSelectedUrl(null);
+	};
+
 	const loadFetch = async (url: string) => {
+		if (mappingRef.current.busy) return;
 		const gen = ++fetchGen.current;
 		viewRef.current++;
 		setFetching(true);
@@ -281,8 +347,16 @@ export function Overview({races}: {races: RacesState | undefined}) {
 		try {
 			const resolved = await request("fetchRace", {url});
 			if (gen !== fetchGen.current) return;
-			setFetched(resolved);
-			setSelectedUrl(null);
+			const nextKey = targetKeyOf({
+				categorySlug: resolved.race.category.slug,
+				categoryName: resolved.race.category.name,
+				goal: resolved.race.category.goal,
+			});
+			if (mappingRef.current.dirty && nextKey !== targetKeyRef.current) {
+				setPendingRace(() => () => applyFetched(resolved));
+				return;
+			}
+			applyFetched(resolved);
 		} catch (cause) {
 			if (gen !== fetchGen.current) return;
 			setFetched(null);
@@ -381,6 +455,14 @@ export function Overview({races}: {races: RacesState | undefined}) {
 				{monitored ? (
 					<>
 						<MonitoredDetails state={monitored} />
+						{target && (
+							<MappingWorkspace
+								key={targetKey}
+								mode='race'
+								target={target}
+								onStateChange={reportMapping}
+							/>
+						)}
 						<h3>参加者</h3>
 						<Participants
 							participants={orderParticipants(monitored.participants)}
@@ -392,6 +474,14 @@ export function Overview({races}: {races: RacesState | undefined}) {
 				) : fetched ? (
 					<>
 						<FetchedDetails resolved={fetched} />
+						{target && (
+							<MappingWorkspace
+								key={targetKey}
+								mode='race'
+								target={target}
+								onStateChange={reportMapping}
+							/>
+						)}
 						<h3>参加者</h3>
 						<Participants
 							participants={orderParticipants(fetched.participants)}
@@ -413,6 +503,31 @@ export function Overview({races}: {races: RacesState | undefined}) {
 					<p className='muted'>レースを選択するかURLで取得してください。</p>
 				)}
 			</section>
+			{pendingRace && (
+				<div className='dialog-backdrop'>
+					<div className='dialog'>
+						<p>未保存のマッピング変更があります。破棄して移動しますか？</p>
+						<div className='button-row'>
+							<button
+								type='button'
+								onClick={() => {
+									const action = pendingRace;
+									setPendingRace(null);
+									action();
+								}}
+							>
+								破棄して移動
+							</button>
+							<button
+								type='button'
+								onClick={() => setPendingRace(null)}
+							>
+								キャンセル
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }
