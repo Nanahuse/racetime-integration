@@ -278,6 +278,9 @@ export function Overview({races}: {races: RacesState | undefined}) {
 		if (displayRef.current !== resolved.race.url) {
 			viewRef.current++;
 			displayRef.current = resolved.race.url;
+			// Registration results belong to the race that was displayed.
+			setRegistrationUrl(null);
+			setError(null);
 		}
 		setFetched(resolved);
 		setSelectedUrl(null);
@@ -287,13 +290,19 @@ export function Overview({races}: {races: RacesState | undefined}) {
 		const gen = ++fetchGen.current;
 		setFetching(true);
 		setError(null);
-		setRegistrationUrl(null);
 		try {
 			const resolved = await request("fetchRace", {url});
 			if (gen !== fetchGen.current) return;
 			applyFetched(resolved);
 		} catch (cause) {
 			if (gen !== fetchGen.current) return;
+			if (fetched && displayRef.current === fetched.race.url) {
+				// The displayed fetched race is discarded: drop its registration
+				// result and invalidate any in-flight registration for it.
+				viewRef.current++;
+				displayRef.current = null;
+				setRegistrationUrl(null);
+			}
 			setFetched(null);
 			setError(errorMessage(cause));
 		} finally {
