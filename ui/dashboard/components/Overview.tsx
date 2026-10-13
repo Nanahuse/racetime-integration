@@ -250,6 +250,7 @@ export function Overview({races}: {races: RacesState | undefined}) {
 	// Identifies the currently displayed race so a registration that finishes
 	// after the user moved on cannot change the view.
 	const viewRef = useRef(0);
+	const displayRef = useRef<string | null>(null);
 	const registerGen = useRef(0);
 	const activeRegistration = useRef<{
 		view: number;
@@ -265,6 +266,7 @@ export function Overview({races}: {races: RacesState | undefined}) {
 	const selectMonitored = (url: string) => {
 		fetchGen.current++;
 		viewRef.current++;
+		displayRef.current = url;
 		setSelectedUrl(url);
 		setFetched(null);
 		setRegistrationUrl(null);
@@ -272,17 +274,24 @@ export function Overview({races}: {races: RacesState | undefined}) {
 		setFetching(false);
 	};
 
+	const applyFetched = (resolved: ResolvedRace) => {
+		if (displayRef.current !== resolved.race.url) {
+			viewRef.current++;
+			displayRef.current = resolved.race.url;
+		}
+		setFetched(resolved);
+		setSelectedUrl(null);
+	};
+
 	const loadFetch = async (url: string) => {
 		const gen = ++fetchGen.current;
-		viewRef.current++;
 		setFetching(true);
 		setError(null);
 		setRegistrationUrl(null);
 		try {
 			const resolved = await request("fetchRace", {url});
 			if (gen !== fetchGen.current) return;
-			setFetched(resolved);
-			setSelectedUrl(null);
+			applyFetched(resolved);
 		} catch (cause) {
 			if (gen !== fetchGen.current) return;
 			setFetched(null);

@@ -260,7 +260,11 @@ it("opens registration without re-fetching and refreshes on demand", async () =>
 
 it("ignores a registration result that settles after fetching another race", async () => {
 	const open = vi.spyOn(window, "open").mockReturnValue(null);
-	const otherRace: Race = {...race, raceId: "other/race"};
+	const otherRace: Race = {
+		...race,
+		raceId: "other/race",
+		url: "https://racetime.gg/other/race",
+	};
 	let settleRegistration: (value: unknown) => void = () => {};
 	sendMessageToBundle.mockImplementation(
 		() =>
@@ -318,6 +322,11 @@ it("shows a registration error for the current race", async () => {
 
 it("does not surface a registration error after fetching another race", async () => {
 	vi.spyOn(window, "open").mockReturnValue(null);
+	const otherRace: Race = {
+		...race,
+		raceId: "other/race",
+		url: "https://racetime.gg/other/race",
+	};
 	let rejectRegistration: (reason: unknown) => void = () => {};
 	sendMessageToBundle.mockImplementation(
 		() =>
@@ -325,7 +334,13 @@ it("does not surface a registration error after fetching another race", async ()
 				rejectRegistration = reject;
 			}),
 	);
-	sendMessage.mockResolvedValue({ok: true, data: resolved()});
+	let fetches = 0;
+	sendMessage.mockImplementation(async (name: string) => {
+		if (name !== "racetime.v3.fetchRace")
+			throw new Error(`unexpected operation ${name}`);
+		fetches += 1;
+		return {ok: true, data: fetches === 1 ? resolved() : resolved(otherRace)};
+	});
 	render(<Overview races={undefined} />);
 	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
 		target: {value: race.url},
@@ -336,6 +351,7 @@ it("does not surface a registration error after fetching another race", async ()
 		target: {value: "https://racetime.gg/other/race"},
 	});
 	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	expect(await screen.findByText("other/race")).toBeTruthy();
 	await act(async () => {
 		rejectRegistration(new Error("directory_unavailable: down"));
 	});
@@ -383,7 +399,11 @@ it("keeps a fetch busy when an older registration completes", async () => {
 });
 
 it("disables registration while another race is being fetched", async () => {
-	const otherRace: Race = {...race, raceId: "other/race"};
+	const otherRace: Race = {
+		...race,
+		raceId: "other/race",
+		url: "https://racetime.gg/other/race",
+	};
 	const pending = deferred<unknown>();
 	let fetches = 0;
 	sendMessage.mockImplementation((name: string) => {
@@ -423,8 +443,16 @@ it("disables registration while another race is being fetched", async () => {
 
 it("registers the same account after switching races without stale effects", async () => {
 	const open = vi.spyOn(window, "open").mockReturnValue(null);
-	const raceA: Race = {...race, raceId: "a/race"};
-	const raceB: Race = {...race, raceId: "b/race"};
+	const raceA: Race = {
+		...race,
+		raceId: "a/race",
+		url: "https://racetime.gg/a/race",
+	};
+	const raceB: Race = {
+		...race,
+		raceId: "b/race",
+		url: "https://racetime.gg/b/race",
+	};
 	const registrations: Array<(value: unknown) => void> = [];
 	sendMessageToBundle.mockImplementation(
 		() =>
@@ -499,7 +527,11 @@ it("shows participant actions by resolution status and RaceTime names from entra
 	expect(screen.getByText("Player Manager timed out")).toBeTruthy();
 });
 
-const fetchedRace: Race = {...race, raceId: "other/race"};
+const fetchedRace: Race = {
+	...race,
+	raceId: "other/race",
+	url: "https://racetime.gg/other/race",
+};
 
 it("keeps a monitored selection when a pending fetch resolves later", async () => {
 	let resolveFetch: (value: unknown) => void = () => {};
@@ -546,4 +578,95 @@ it("ignores a failed fetch that settles after selecting a monitored race", async
 	});
 	await waitFor(() => expect(screen.queryByText(/boom/)).toBeNull());
 	expect(screen.getByText("Player One")).toBeTruthy();
+});
+
+it("does not apply a stale registration after fetching another race", async () => {
+	const open = vi.spyOn(window, "open").mockReturnValue(null);
+	let settleRegistration: (value: unknown) => void = () => {};
+	sendMessageToBundle.mockImplementation(
+		() =>
+			new Promise((resolve) => {
+				settleRegistration = resolve;
+			}),
+	);
+	sendMessage.mockImplementation(async (name: string) => {
+		if (name === "racetime.v3.fetchRace")
+			return {ok: true, data: resolved(fetchedRace)};
+		throw new Error(`unexpected operation ${name}`);
+	});
+	render(<Overview races={races} />);
+	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
+	fireEvent.click(screen.getByRole("button", {name: "登録・紐付け"}));
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: "https://racetime.gg/other/race"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	expect(await screen.findByText("other/race")).toBeTruthy();
+
+	await act(async () => {
+		settleRegistration({
+			ok: true,
+			data: {registrationId: "r1", url: "/Registration.html"},
+		});
+	});
+	expect(open).not.toHaveBeenCalled();
+	expect(screen.queryByText(/登録画面を開きました/)).toBeNull();
+	expect(screen.getByText("other/race")).toBeTruthy();
+});
+
+it("does not surface a stale registration error after fetching another race", async () => {
+	let rejectRegistration: (reason: unknown) => void = () => {};
+	sendMessageToBundle.mockImplementation(
+		() =>
+			new Promise((_resolve, reject) => {
+				rejectRegistration = reject;
+			}),
+	);
+	sendMessage.mockImplementation(async (name: string) => {
+		if (name === "racetime.v3.fetchRace")
+			return {ok: true, data: resolved(fetchedRace)};
+		throw new Error(`unexpected operation ${name}`);
+	});
+	render(<Overview races={races} />);
+	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
+	fireEvent.click(screen.getByRole("button", {name: "登録・紐付け"}));
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: "https://racetime.gg/other/race"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	expect(await screen.findByText("other/race")).toBeTruthy();
+
+	await act(async () => {
+		rejectRegistration(new Error("directory_unavailable: down"));
+	});
+	await waitFor(() =>
+		expect(screen.queryByText(/directory_unavailable/)).toBeNull(),
+	);
+});
+
+it("registers participants for a newly fetched race", async () => {
+	const open = vi.spyOn(window, "open").mockReturnValue(null);
+	sendMessageToBundle.mockResolvedValue({
+		ok: true,
+		data: {registrationId: "r1", url: "/Registration.html"},
+	});
+	sendMessage.mockImplementation(async (name: string) => {
+		if (name === "racetime.v3.fetchRace")
+			return {ok: true, data: resolved(fetchedRace)};
+		throw new Error(`unexpected operation ${name}`);
+	});
+	render(<Overview races={undefined} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: "https://racetime.gg/other/race"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	expect(await screen.findByText("other/race")).toBeTruthy();
+
+	fireEvent.click(screen.getByRole("button", {name: "登録・紐付け"}));
+	expect(await screen.findByText(/登録画面を開きました/)).toBeTruthy();
+	expect(open).toHaveBeenCalledWith(
+		"/Registration.html",
+		"_blank",
+		"noopener,noreferrer",
+	);
 });
