@@ -48,9 +48,36 @@ describe("serializeRaceDuration", () => {
 	it("returns null unchanged", () => {
 		expect(serializeRaceDuration(null)).toBeNull();
 	});
+	it("serializes a valid duration to ISO 8601", () => {
+		expect(
+			serializeRaceDuration(
+				Temporal.Duration.from({hours: 1, minutes: 2, seconds: 3}),
+			),
+		).toBe("PT1H2M3S");
+	});
 	it("serializes to ISO 8601 without losing precision", () => {
 		const value = "PT1H2M3.000000001S";
 		expect(serializeRaceDuration(parseRaceDuration(value))).toBe(value);
+	});
+	it("rejects negative durations", () => {
+		expect(() =>
+			serializeRaceDuration(Temporal.Duration.from({hours: -1})),
+		).toThrow();
+	});
+	it.each([{years: 1}, {months: 1}, {weeks: 1}, {years: 1, days: 2}])(
+		"rejects calendar units %o",
+		(fields) => {
+			expect(() =>
+				serializeRaceDuration(Temporal.Duration.from(fields)),
+			).toThrow();
+		},
+	);
+	it("applies the same validation as parseRaceDuration", () => {
+		for (const fields of [{months: 1}, {weeks: 1}, {hours: -2}]) {
+			const duration = Temporal.Duration.from(fields);
+			expect(() => serializeRaceDuration(duration)).toThrow();
+			expect(() => parseRaceDuration(duration.toString())).toThrow();
+		}
 	});
 	it("round-trips a parsed duration to an equal duration", () => {
 		const first = parseRaceDuration("P3DT4H5M6.78S");

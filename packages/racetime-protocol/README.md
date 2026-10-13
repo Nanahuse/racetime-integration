@@ -66,7 +66,7 @@ if (watched.ok) {
 完走時間はISO 8601期間文字列（例 `PT1H2M3.45S`）で公開します。`Entrant.finishTime` と `RaceResult.time` は同じ参加者の同じ期間を表し、記録の無い参加者は `null` です。内部では標準の `Temporal.Duration` として扱い、公開Protocolの共通関数で相互変換します。
 
 - `parseRaceDuration(value)` は文字列を `Temporal.Duration` へ復元します。`null` はそのまま返し、負の期間と年・月・週（基準日が無いと経過時間として曖昧なため）を拒否し、不正な文字列は例外にします。不正値を `0` や `null` に読み替えません。
-- `serializeRaceDuration(value)` は `Temporal.Duration` を精度を保ったISO 8601文字列へ戻します。`null` はそのまま返します。
+- `serializeRaceDuration(value)` は `Temporal.Duration` を精度を保ったISO 8601文字列へ戻します。`null` はそのまま返します。`parseRaceDuration` と同じ検証を適用するため、負の期間と年・月・週を含む `Temporal.Duration` はシリアライズできません。
 
 期間の比較・計算には `Temporal.Duration` の標準APIをそのまま使います。パッケージは `Temporal` も再エクスポートするため、利用側で別途polyfillを導入する必要はありません。
 
