@@ -263,6 +263,7 @@ export function Overview({
 	// Identifies the currently displayed race so a registration that finishes
 	// after the user moved on cannot change the view.
 	const viewRef = useRef(0);
+	const displayRef = useRef<string | null>(null);
 	const registerGen = useRef(0);
 	const activeRegistration = useRef<{
 		view: number;
@@ -304,6 +305,7 @@ export function Overview({
 	const applySelection = (url: string) => {
 		fetchGen.current++;
 		viewRef.current++;
+		displayRef.current = url;
 		setSelectedUrl(url);
 		setFetched(null);
 		setRegistrationUrl(null);
@@ -333,6 +335,10 @@ export function Overview({
 	};
 
 	const applyFetched = (resolved: ResolvedRace) => {
+		if (displayRef.current !== resolved.race.url) {
+			viewRef.current++;
+			displayRef.current = resolved.race.url;
+		}
 		setFetched(resolved);
 		setSelectedUrl(null);
 	};
@@ -340,7 +346,6 @@ export function Overview({
 	const loadFetch = async (url: string) => {
 		if (mappingRef.current.busy) return;
 		const gen = ++fetchGen.current;
-		viewRef.current++;
 		setFetching(true);
 		setError(null);
 		setRegistrationUrl(null);
