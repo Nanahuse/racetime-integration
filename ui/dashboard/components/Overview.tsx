@@ -326,6 +326,20 @@ export function Overview({
 		[onStateChange],
 	);
 
+	const clearRegistration = useCallback(() => {
+		setRegistrationUrl(null);
+		setRegistrationError(null);
+	}, []);
+
+	// Invalidate the registration in-flight for the race that is being dismissed
+	// so a late response cannot open the registration screen.
+	const endDisplay = useCallback(() => {
+		viewRef.current++;
+		displayRef.current = null;
+		displaySourceRef.current = null;
+		clearRegistration();
+	}, [clearRegistration]);
+
 	useEffect(() => {
 		if (targetKey !== null) return;
 		mappingRef.current = {dirty: false, busy: false};
@@ -346,10 +360,12 @@ export function Overview({
 			return;
 		}
 		const live = list.find((race) => race.url === selectedUrl) ?? null;
-		const liveRace = live?.race ?? null;
-		const liveKey = liveRace ? targetKeyOf(raceTarget(liveRace)) : null;
-		if (liveKey === null) {
-			if (monitoredTarget === null) return;
+		if (live === null) {
+			// The monitored race was removed from the Replicant.
+			if (monitoredTarget === null) {
+				setSelectedUrl(null);
+				return;
+			}
 			if (mappingBusy) return;
 			if (mappingDirty) {
 				if (acknowledgedExternalRef.current === "removed")
@@ -357,19 +373,27 @@ export function Overview({
 				else setExternalPrompt((current) => current ?? "removed");
 				return;
 			}
+			endDisplay();
 			setMonitoredTarget(null);
+			setSelectedUrl(null);
 			setExternalPrompt(null);
 			setExternalNotice(null);
 			acknowledgedExternalRef.current = null;
 			return;
 		}
+		if (live.race === null) {
+			// The entry still exists but its snapshot is temporarily missing.
+			// Keep the displayed race, its target and any in-flight registration.
+			return;
+		}
+		const liveKey = targetKeyOf(raceTarget(live.race));
 		if (monitoredTarget === null) {
-			setMonitoredTarget({key: liveKey, state: live as RaceState});
+			setMonitoredTarget({key: liveKey, state: live});
 			return;
 		}
 		if (liveKey === monitoredTarget.key) {
 			if (live !== monitoredTarget.state)
-				setMonitoredTarget({key: liveKey, state: live as RaceState});
+				setMonitoredTarget({key: liveKey, state: live});
 			if (externalPrompt !== null) setExternalPrompt(null);
 			if (externalNotice !== null) setExternalNotice(null);
 			acknowledgedExternalRef.current = null;
@@ -382,7 +406,9 @@ export function Overview({
 			else setExternalPrompt((current) => current ?? "changed");
 			return;
 		}
-		setMonitoredTarget({key: liveKey, state: live as RaceState});
+		// Same race, only its goal/category changed: switching the mapping target
+		// must not invalidate an in-flight participant registration.
+		setMonitoredTarget({key: liveKey, state: live});
 		setExternalPrompt(null);
 		setExternalNotice(null);
 		acknowledgedExternalRef.current = null;
@@ -394,6 +420,7 @@ export function Overview({
 		mappingDirty,
 		externalPrompt,
 		externalNotice,
+		endDisplay,
 	]);
 
 	const markExternalAcknowledged = () => {
@@ -424,17 +451,14 @@ export function Overview({
 				state: live,
 			});
 		} else {
+			// Dismissing the display invalidates any in-flight registration.
+			endDisplay();
 			setMonitoredTarget(null);
 			setSelectedUrl(null);
 		}
 		setExternalPrompt(null);
 		setExternalNotice(null);
 		acknowledgedExternalRef.current = null;
-	};
-
-	const clearRegistration = () => {
-		setRegistrationUrl(null);
-		setRegistrationError(null);
 	};
 
 	const applySelection = (url: string) => {

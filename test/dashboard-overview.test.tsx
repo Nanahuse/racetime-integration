@@ -1789,3 +1789,182 @@ it("does not switch the mapping target during a save triggered by an external up
 	expect(await screen.findByText("100%")).toBeTruthy();
 	expect(screen.getByText("登録済み: SRC Game")).toBeTruthy();
 });
+
+it("invalidates an in-flight registration when the monitored race is removed", async () => {
+	const open = vi.spyOn(window, "open").mockReturnValue(null);
+	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));
+	let settleRegistration: (value: unknown) => void = () => {};
+	sendMessageToBundle.mockImplementation(
+		() =>
+			new Promise((resolve) => {
+				settleRegistration = resolve;
+			}),
+	);
+	const {rerender} = render(<Overview races={races} />);
+	await selectFirstMonitored();
+	fireEvent.click(await screen.findByRole("button", {name: "登録・紐付け"}));
+
+	rerender(<Overview races={{schemaVersion: 1, races: []}} />);
+	expect(
+		await screen.findByText(/レースを選択するかURLで取得してください/),
+	).toBeTruthy();
+
+	await act(async () => {
+		settleRegistration({
+			ok: true,
+			data: {registrationId: "r1", url: "/Registration.html"},
+		});
+	});
+	expect(screen.queryByText(/登録画面を開きました/)).toBeNull();
+	expect(open).not.toHaveBeenCalled();
+});
+
+it("ignores a removed race's failed registration", async () => {
+	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));
+	let rejectRegistration: (reason: unknown) => void = () => {};
+	sendMessageToBundle.mockImplementation(
+		() =>
+			new Promise((_resolve, reject) => {
+				rejectRegistration = reject;
+			}),
+	);
+	const {rerender} = render(<Overview races={races} />);
+	await selectFirstMonitored();
+	fireEvent.click(await screen.findByRole("button", {name: "登録・紐付け"}));
+
+	rerender(<Overview races={{schemaVersion: 1, races: []}} />);
+	expect(
+		await screen.findByText(/レースを選択するかURLで取得してください/),
+	).toBeTruthy();
+
+	await act(async () => {
+		rejectRegistration(new Error("directory_unavailable: down"));
+	});
+	await waitFor(() =>
+		expect(screen.queryByText(/directory_unavailable/)).toBeNull(),
+	);
+});
+
+it("keeps the race and draft when editing continues after removal", async () => {
+	const open = vi.spyOn(window, "open").mockReturnValue(null);
+	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));
+	let settleRegistration: (value: unknown) => void = () => {};
+	sendMessageToBundle.mockImplementation(
+		() =>
+			new Promise((resolve) => {
+				settleRegistration = resolve;
+			}),
+	);
+	const {rerender} = render(<Overview races={races} />);
+	await selectFirstMonitored();
+	await openMappingEditor();
+	await editMappingDraft();
+	fireEvent.click(await screen.findByRole("button", {name: "登録・紐付け"}));
+
+	rerender(<Overview races={{schemaVersion: 1, races: []}} />);
+	expect(
+		await screen.findByText(/未保存の変更を破棄して表示を解除しますか/),
+	).toBeTruthy();
+	expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy();
+
+	fireEvent.click(screen.getByRole("button", {name: "編集を続ける"}));
+	expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy();
+	expect(screen.getByText("Game / Any%")).toBeTruthy();
+
+	await act(async () => {
+		settleRegistration({
+			ok: true,
+			data: {registrationId: "r1", url: "/Registration.html"},
+		});
+	});
+	expect(await screen.findByText(/登録画面を開きました/)).toBeTruthy();
+	expect(open).toHaveBeenCalled();
+});
+
+it("invalidates the registration after dismissing a removed race", async () => {
+	const open = vi.spyOn(window, "open").mockReturnValue(null);
+	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));
+	let settleRegistration: (value: unknown) => void = () => {};
+	sendMessageToBundle.mockImplementation(
+		() =>
+			new Promise((resolve) => {
+				settleRegistration = resolve;
+			}),
+	);
+	const {rerender} = render(<Overview races={races} />);
+	await selectFirstMonitored();
+	await openMappingEditor();
+	await editMappingDraft();
+	fireEvent.click(await screen.findByRole("button", {name: "登録・紐付け"}));
+
+	rerender(<Overview races={{schemaVersion: 1, races: []}} />);
+	expect(
+		await screen.findByText(/未保存の変更を破棄して表示を解除しますか/),
+	).toBeTruthy();
+
+	fireEvent.click(screen.getByRole("button", {name: "表示を解除"}));
+	expect(
+		await screen.findByText(/レースを選択するかURLで取得してください/),
+	).toBeTruthy();
+
+	await act(async () => {
+		settleRegistration({
+			ok: true,
+			data: {registrationId: "r1", url: "/Registration.html"},
+		});
+	});
+	expect(screen.queryByText(/登録画面を開きました/)).toBeNull();
+	expect(open).not.toHaveBeenCalled();
+});
+
+it("does not invalidate an in-flight registration on ordinary monitored updates", async () => {
+	const open = vi.spyOn(window, "open").mockReturnValue(null);
+	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));
+	let settleRegistration: (value: unknown) => void = () => {};
+	sendMessageToBundle.mockImplementation(
+		() =>
+			new Promise((resolve) => {
+				settleRegistration = resolve;
+			}),
+	);
+	const {rerender} = render(<Overview races={races} />);
+	await selectFirstMonitored();
+	fireEvent.click(await screen.findByRole("button", {name: "登録・紐付け"}));
+
+	// A participantsRevision update and a same-race goal change.
+	rerender(
+		<Overview
+			races={{
+				schemaVersion: 1,
+				races: [{...raceState, participantsRevision: 9, race: updatedRace}],
+			}}
+		/>,
+	);
+	expect(screen.queryByText(/未保存の変更を破棄して/)).toBeNull();
+
+	await act(async () => {
+		settleRegistration({
+			ok: true,
+			data: {registrationId: "r1", url: "/Registration.html"},
+		});
+	});
+	expect(await screen.findByText(/登録画面を開きました/)).toBeTruthy();
+	expect(open).toHaveBeenCalled();
+});
+
+it("does not treat a temporarily missing race snapshot as removal", async () => {
+	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));
+	const {rerender} = render(<Overview races={races} />);
+	await selectFirstMonitored();
+
+	rerender(
+		<Overview
+			races={{schemaVersion: 1, races: [{...raceState, race: null}]}}
+		/>,
+	);
+	expect(screen.queryByText(/監視対象から削除されました/)).toBeNull();
+	expect(screen.getByText("Game / Any%")).toBeTruthy();
+	expect(
+		await screen.findByRole("button", {name: "登録・紐付け"}),
+	).toBeTruthy();
+});
