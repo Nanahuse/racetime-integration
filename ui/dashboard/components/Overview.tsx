@@ -11,6 +11,7 @@ import {useCallback, useEffect, useRef, useState} from "react";
 import {errorMessage, request} from "../api/client";
 import {beginRegistration, playerEditUrl} from "../api/player-manager";
 import type {EditorState} from "../model/editor";
+import {formatRaceTime} from "../model/race-time";
 import {Callout} from "./common";
 import {
 	MappingWorkspace,
@@ -225,7 +226,7 @@ function Participants({
 										<div>
 											{result.place === null ? "—" : `${result.place}位`}
 										</div>
-										<div>{result.time ?? "—"}</div>
+										<div>{formatRaceTime(result.time)}</div>
 										<small>{result.status}</small>
 									</>
 								) : (

@@ -11,6 +11,7 @@ import type {
 	SpeedrunVariableOption,
 } from "./speedrun.js";
 
+export {Temporal} from "@js-temporal/polyfill";
 export type {
 	CategoryMapping,
 	CategoryMappingRecord,
@@ -24,6 +25,11 @@ export type {
 	TimingMethod,
 	VariableSelection,
 } from "./category.js";
+export {
+	parseRaceDuration,
+	type RaceDuration,
+	serializeRaceDuration,
+} from "./duration.js";
 export type {
 	SpeedrunCategoryOption,
 	SpeedrunGame,
@@ -58,6 +64,11 @@ export type RaceResult = {
 	userId: string;
 	name: string;
 	place: number | null;
+	/**
+	 * Elapsed finish time as a validated ISO 8601 duration string, or `null`
+	 * when the entrant has no recorded time. Use `parseRaceDuration` to restore
+	 * a `Temporal.Duration`.
+	 */
 	time: string | null;
 	status: "finished" | "dnf" | "dq" | "other";
 };
@@ -66,6 +77,11 @@ export type Entrant = {
 	name: string;
 	twitchLogin: string | null;
 	status: string;
+	/**
+	 * Elapsed finish time as a validated ISO 8601 duration string, or `null`
+	 * when the entrant has no recorded time. Always the same duration as the
+	 * matching `RaceResult.time`; use `parseRaceDuration` to restore it.
+	 */
 	finishTime: string | null;
 	place: number | null;
 };

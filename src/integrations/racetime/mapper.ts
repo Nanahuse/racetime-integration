@@ -1,4 +1,8 @@
-import type {Race, RaceResult} from "@nanahuse/racetime-protocol";
+import {
+	type Race,
+	type RaceResult,
+	serializeRaceDuration,
+} from "@nanahuse/racetime-protocol";
 import type {RaceTimeRaceDto} from "./types";
 
 export function normalizeResultStatus(status: string): RaceResult["status"] {
@@ -15,12 +19,15 @@ export function mapRace(dto: RaceTimeRaceDto, url: string): Race {
 		name: dto.name,
 		status: dto.status,
 		category: {slug: dto.categorySlug, name: dto.categoryName, goal: dto.goal},
-		entrants: dto.entrants.map((entrant) => ({...entrant})),
+		entrants: dto.entrants.map((entrant) => ({
+			...entrant,
+			finishTime: serializeRaceDuration(entrant.finishTime),
+		})),
 		results: dto.entrants.map((entrant) => ({
 			userId: entrant.userId,
 			name: entrant.name,
 			place: entrant.place,
-			time: entrant.finishTime,
+			time: serializeRaceDuration(entrant.finishTime),
 			status: normalizeResultStatus(entrant.status),
 		})),
 	};

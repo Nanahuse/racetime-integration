@@ -1,5 +1,9 @@
 // Adapted and modified from Nanahuse/nodecg-race-layouts (Apache-2.0).
 import {
+	parseRaceDuration,
+	type RaceDuration,
+} from "@nanahuse/racetime-protocol";
+import {
 	RaceNotFoundError,
 	RaceTimeAbortedError,
 	RaceTimeError,
@@ -63,6 +67,28 @@ function optionalString(
 	return value;
 }
 
+function optionalDuration(
+	record: Record<string, unknown>,
+	key: string,
+	path: string,
+): RaceDuration | null {
+	const value = record[key];
+	if (value === null || value === undefined) {
+		return null;
+	}
+	if (typeof value !== "string") {
+		throw new RaceTimePayloadError(`${path} must be a string or null.`);
+	}
+	try {
+		return parseRaceDuration(value);
+	} catch (error) {
+		throw new RaceTimePayloadError(
+			`${path} must be a valid ISO 8601 duration.`,
+			{cause: error},
+		);
+	}
+}
+
 function requireNumber(
 	record: Record<string, unknown>,
 	key: string,
@@ -105,7 +131,7 @@ function parseEntrant(value: unknown, index: number): RaceTimeEntrantDto {
 			`${path}.user.twitch_name`,
 		),
 		status: requireString(status, "value", `${path}.status.value`),
-		finishTime: optionalString(entrant, "finish_time", `${path}.finish_time`),
+		finishTime: optionalDuration(entrant, "finish_time", `${path}.finish_time`),
 		place: optionalNumber(entrant, "place", `${path}.place`),
 	};
 }
