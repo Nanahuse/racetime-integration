@@ -1631,3 +1631,161 @@ it("keeps the registration URL when the same race is fetched again", async () =>
 	expect(screen.getByText(/登録画面を開きました/)).toBeTruthy();
 	expect(open).toHaveBeenCalled();
 });
+
+const updatedRace: Race = {
+	...race,
+	category: {...race.category, goal: "100%"},
+};
+const updatedRaceState: RaceState = {...raceState, race: updatedRace};
+
+async function editMappingDraft() {
+	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
+		target: {value: "src"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "検索"}));
+	fireEvent.click(await screen.findByRole("button", {name: /SRC Game/}));
+}
+
+async function selectFirstMonitored() {
+	const [firstRace] = screen.getAllByRole("button", {name: /game\/race/});
+	fireEvent.click(firstRace!);
+}
+
+it("protects unsaved mapping edits when the monitored race target changes", async () => {
+	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));
+	const {rerender} = render(<Overview races={races} />);
+	await selectFirstMonitored();
+	await openMappingEditor();
+	await editMappingDraft();
+	expect(await screen.findByText(/選択中: SRC Game/)).toBeTruthy();
+
+	rerender(<Overview races={{schemaVersion: 1, races: [updatedRaceState]}} />);
+	expect(
+		await screen.findByText(
+			/未保存の変更を破棄して最新のレース情報を表示しますか/,
+		),
+	).toBeTruthy();
+	expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy();
+
+	fireEvent.click(screen.getByRole("button", {name: "編集を続ける"}));
+	expect(
+		screen.queryByText(/未保存の変更を破棄して最新のレース情報を表示しますか/),
+	).toBeNull();
+	expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy();
+	expect(
+		screen.getByText(
+			/監視中のレース情報が更新され、Mappingの対象が変更されました。/,
+		),
+	).toBeTruthy();
+
+	fireEvent.click(screen.getByRole("button", {name: "最新状態を表示"}));
+	expect(await screen.findByText("100%")).toBeTruthy();
+});
+
+it("protects unsaved mapping edits when the monitored race is removed", async () => {
+	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));
+	const {rerender} = render(<Overview races={races} />);
+	await selectFirstMonitored();
+	await openMappingEditor();
+	await editMappingDraft();
+	expect(await screen.findByText(/選択中: SRC Game/)).toBeTruthy();
+
+	rerender(<Overview races={{schemaVersion: 1, races: []}} />);
+	expect(
+		await screen.findByText(/未保存の変更を破棄して表示を解除しますか/),
+	).toBeTruthy();
+	expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy();
+
+	fireEvent.click(screen.getByRole("button", {name: "編集を続ける"}));
+	expect(
+		screen.queryByText(/未保存の変更を破棄して表示を解除しますか/),
+	).toBeNull();
+	expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy();
+	expect(
+		screen.getByText(/監視中のレースが監視対象から削除されました。/),
+	).toBeTruthy();
+
+	fireEvent.click(screen.getByRole("button", {name: "表示を解除"}));
+	expect(
+		await screen.findByText(/レースを選択するかURLで取得してください/),
+	).toBeTruthy();
+});
+
+it("keeps the draft on ordinary monitored updates without prompting", async () => {
+	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));
+	const {rerender} = render(<Overview races={races} />);
+	await selectFirstMonitored();
+	await openMappingEditor();
+	await editMappingDraft();
+	expect(await screen.findByText(/選択中: SRC Game/)).toBeTruthy();
+
+	rerender(
+		<Overview
+			races={{
+				schemaVersion: 1,
+				races: [
+					{
+						...raceState,
+						participantsRevision: 7,
+						connection: "reconnecting",
+					},
+				],
+			}}
+		/>,
+	);
+	expect(screen.queryByText(/未保存の変更を破棄して/)).toBeNull();
+	expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy();
+});
+
+it("follows an external target change when there are no unsaved edits", async () => {
+	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));
+	const {rerender} = render(<Overview races={races} />);
+	await selectFirstMonitored();
+	await openMappingEditor();
+
+	rerender(<Overview races={{schemaVersion: 1, races: [updatedRaceState]}} />);
+	expect(await screen.findByText("100%")).toBeTruthy();
+	expect(screen.queryByText(/未保存の変更を破棄して/)).toBeNull();
+});
+
+it("does not switch the mapping target during a save triggered by an external update", async () => {
+	const games: GameMappingRecord[] = [];
+	let finishSave: (() => void) | null = null;
+	sendMessage.mockImplementation(
+		mappingHandler({
+			games,
+			categories: [],
+			saveGame: (mapping) =>
+				new Promise((resolve) => {
+					finishSave = () => {
+						const record = {mapping, revision: "g"};
+						games.splice(0, games.length, record);
+						resolve({
+							ok: true,
+							data: {record, action: "created", settingsRevision: 0},
+						});
+					};
+				}),
+		}),
+	);
+	const {rerender} = render(<Overview races={races} />);
+	await selectFirstMonitored();
+	await openMappingEditor();
+	await editMappingDraft();
+	expect(await screen.findByText(/選択中: SRC Game/)).toBeTruthy();
+
+	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	await waitFor(() =>
+		expect(screen.getByRole("button", {name: "保存中…"})).toBeTruthy(),
+	);
+
+	rerender(<Overview races={{schemaVersion: 1, races: [updatedRaceState]}} />);
+	expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy();
+	expect(screen.queryByText(/未保存の変更を破棄して/)).toBeNull();
+
+	await act(async () => {
+		finishSave?.();
+	});
+	expect(await screen.findByText("100%")).toBeTruthy();
+	expect(screen.getByText("登録済み: SRC Game")).toBeTruthy();
+});

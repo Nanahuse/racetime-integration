@@ -67,6 +67,14 @@ export function App() {
 		switchTab(next);
 	};
 
+	const confirmDiscardAndSwitch = () => {
+		if (editorState.busy) return;
+		const next = confirmTab;
+		if (next === null) return;
+		setConfirmTab(null);
+		switchTab(next);
+	};
+
 	return (
 		<div className='app'>
 			<header>
@@ -123,11 +131,8 @@ export function App() {
 						<div className='button-row'>
 							<button
 								type='button'
-								onClick={() => {
-									const next = confirmTab;
-									setConfirmTab(null);
-									switchTab(next);
-								}}
+								disabled={editorState.busy}
+								onClick={confirmDiscardAndSwitch}
 							>
 								破棄して移動
 							</button>

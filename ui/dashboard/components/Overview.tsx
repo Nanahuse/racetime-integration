@@ -44,6 +44,14 @@ function resultByUser(race: Race | null) {
 	return results;
 }
 
+function raceTarget(race: Race): RaceMappingTarget {
+	return {
+		categorySlug: race.category.slug,
+		categoryName: race.category.name,
+		goal: race.category.goal,
+	};
+}
+
 /** Fields common to a single Race, used by both monitored and fetched views. */
 function RaceFields({race}: {race: Race}) {
 	return (
@@ -262,7 +270,20 @@ export function Overview({
 	const [fetchNotice, setFetchNotice] = useState<string | null>(null);
 	const [fetching, setFetching] = useState(false);
 	const [mappingBusy, setMappingBusy] = useState(false);
+	const [mappingDirty, setMappingDirty] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	// The monitored race snapshot currently shown. It is pinned while there are
+	// unsaved mapping edits so an external Replicant update cannot discard them.
+	const [monitoredTarget, setMonitoredTarget] = useState<{
+		key: string;
+		state: RaceState;
+	} | null>(null);
+	const [externalPrompt, setExternalPrompt] = useState<
+		"changed" | "removed" | null
+	>(null);
+	const [externalNotice, setExternalNotice] = useState<
+		"changed" | "removed" | null
+	>(null);
 	const [pendingRace, setPendingRace] = useState<(() => void) | null>(null);
 	const fetchGen = useRef(0);
 	// Identifies the currently displayed race so a registration that finishes
@@ -276,19 +297,20 @@ export function Overview({
 		participant: string;
 	} | null>(null);
 	const mappingRef = useRef<EditorState>({dirty: false, busy: false});
+	const acknowledgedExternalRef = useRef<string | null>(null);
 
 	const list = races?.races ?? [];
-	const monitored =
+	const liveMonitored =
 		selectedUrl === null
 			? null
 			: (list.find((race) => race.url === selectedUrl) ?? null);
-	const displayedRace = monitored?.race ?? fetched?.race ?? null;
+	const monitoredDisplay = monitoredTarget?.state ?? liveMonitored;
+	const isMonitored = selectedUrl !== null && monitoredDisplay !== null;
+	const displayedRace = isMonitored
+		? (monitoredDisplay?.race ?? null)
+		: (fetched?.race ?? null);
 	const target: RaceMappingTarget | null = displayedRace
-		? {
-				categorySlug: displayedRace.category.slug,
-				categoryName: displayedRace.category.name,
-				goal: displayedRace.category.goal,
-			}
+		? raceTarget(displayedRace)
 		: null;
 	const targetKey = target ? targetKeyOf(target) : null;
 	const targetKeyRef = useRef<string | null>(null);
@@ -298,6 +320,7 @@ export function Overview({
 		(state: EditorState) => {
 			mappingRef.current = state;
 			setMappingBusy(state.busy);
+			setMappingDirty(state.dirty);
 			onStateChange?.(state);
 		},
 		[onStateChange],
@@ -307,8 +330,107 @@ export function Overview({
 		if (targetKey !== null) return;
 		mappingRef.current = {dirty: false, busy: false};
 		setMappingBusy(false);
+		setMappingDirty(false);
 		onStateChange?.({dirty: false, busy: false});
 	}, [targetKey, onStateChange]);
+
+	// External Replicant updates must not silently replace the mapping target
+	// while the user has unsaved edits. Follow normal updates, but hold the
+	// current target and ask before switching when only the target changed.
+	useEffect(() => {
+		if (selectedUrl === null) {
+			setMonitoredTarget(null);
+			setExternalPrompt(null);
+			setExternalNotice(null);
+			acknowledgedExternalRef.current = null;
+			return;
+		}
+		const live = list.find((race) => race.url === selectedUrl) ?? null;
+		const liveRace = live?.race ?? null;
+		const liveKey = liveRace ? targetKeyOf(raceTarget(liveRace)) : null;
+		if (liveKey === null) {
+			if (monitoredTarget === null) return;
+			if (mappingBusy) return;
+			if (mappingDirty) {
+				if (acknowledgedExternalRef.current === "removed")
+					setExternalNotice((current) => current ?? "removed");
+				else setExternalPrompt((current) => current ?? "removed");
+				return;
+			}
+			setMonitoredTarget(null);
+			setExternalPrompt(null);
+			setExternalNotice(null);
+			acknowledgedExternalRef.current = null;
+			return;
+		}
+		if (monitoredTarget === null) {
+			setMonitoredTarget({key: liveKey, state: live as RaceState});
+			return;
+		}
+		if (liveKey === monitoredTarget.key) {
+			if (live !== monitoredTarget.state)
+				setMonitoredTarget({key: liveKey, state: live as RaceState});
+			if (externalPrompt !== null) setExternalPrompt(null);
+			if (externalNotice !== null) setExternalNotice(null);
+			acknowledgedExternalRef.current = null;
+			return;
+		}
+		if (mappingBusy) return;
+		if (mappingDirty) {
+			if (acknowledgedExternalRef.current === liveKey)
+				setExternalNotice((current) => current ?? "changed");
+			else setExternalPrompt((current) => current ?? "changed");
+			return;
+		}
+		setMonitoredTarget({key: liveKey, state: live as RaceState});
+		setExternalPrompt(null);
+		setExternalNotice(null);
+		acknowledgedExternalRef.current = null;
+	}, [
+		selectedUrl,
+		list,
+		monitoredTarget,
+		mappingBusy,
+		mappingDirty,
+		externalPrompt,
+		externalNotice,
+	]);
+
+	const markExternalAcknowledged = () => {
+		const live =
+			selectedUrl === null
+				? null
+				: (list.find((race) => race.url === selectedUrl) ?? null);
+		acknowledgedExternalRef.current = live?.race
+			? targetKeyOf(raceTarget(live.race))
+			: "removed";
+	};
+
+	const keepEditing = () => {
+		markExternalAcknowledged();
+		setExternalNotice(externalPrompt);
+		setExternalPrompt(null);
+	};
+
+	const showLatest = () => {
+		if (mappingRef.current.busy) return;
+		const live =
+			selectedUrl === null
+				? null
+				: (list.find((race) => race.url === selectedUrl) ?? null);
+		if (live?.race) {
+			setMonitoredTarget({
+				key: targetKeyOf(raceTarget(live.race)),
+				state: live,
+			});
+		} else {
+			setMonitoredTarget(null);
+			setSelectedUrl(null);
+		}
+		setExternalPrompt(null);
+		setExternalNotice(null);
+		acknowledgedExternalRef.current = null;
+	};
 
 	const clearRegistration = () => {
 		setRegistrationUrl(null);
@@ -320,6 +442,15 @@ export function Overview({
 		viewRef.current++;
 		displayRef.current = url;
 		displaySourceRef.current = "monitored";
+		const live = list.find((race) => race.url === url) ?? null;
+		setMonitoredTarget(
+			live?.race
+				? {key: targetKeyOf(raceTarget(live.race)), state: live}
+				: null,
+		);
+		setExternalPrompt(null);
+		setExternalNotice(null);
+		acknowledgedExternalRef.current = null;
 		setSelectedUrl(url);
 		setFetched(null);
 		clearRegistration();
@@ -485,6 +616,20 @@ export function Overview({
 					<Callout tone='error'>{registrationError}</Callout>
 				)}
 				{fetchNotice && <Callout tone='info'>{fetchNotice}</Callout>}
+				{externalNotice && (
+					<Callout tone='warning'>
+						{externalNotice === "changed"
+							? "監視中のレース情報が更新され、Mappingの対象が変更されました。"
+							: "監視中のレースが監視対象から削除されました。"}
+						<button
+							type='button'
+							disabled={mappingBusy}
+							onClick={showLatest}
+						>
+							{externalNotice === "changed" ? "最新状態を表示" : "表示を解除"}
+						</button>
+					</Callout>
+				)}
 				{registrationUrl && (
 					<Callout tone='success'>
 						登録画面を開きました:{" "}
@@ -498,9 +643,9 @@ export function Overview({
 						</a>
 					</Callout>
 				)}
-				{monitored ? (
+				{isMonitored && monitoredDisplay ? (
 					<>
-						<MonitoredDetails state={monitored} />
+						<MonitoredDetails state={monitoredDisplay} />
 						{target && (
 							<MappingWorkspace
 								key={targetKey}
@@ -511,8 +656,8 @@ export function Overview({
 						)}
 						<h3>参加者</h3>
 						<Participants
-							participants={orderParticipants(monitored.participants)}
-							race={monitored.race}
+							participants={orderParticipants(monitoredDisplay.participants)}
+							race={monitoredDisplay.race}
 							onRegister={(participant) => void register(participant)}
 							registerDisabled={false}
 						/>
@@ -570,6 +715,32 @@ export function Overview({
 								onClick={() => setPendingRace(null)}
 							>
 								キャンセル
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+			{externalPrompt && (
+				<div className='dialog-backdrop'>
+					<div className='dialog'>
+						<p>
+							{externalPrompt === "changed"
+								? "監視中のレース情報が更新され、Mappingの対象が変更されました。未保存の変更を破棄して最新のレース情報を表示しますか？"
+								: "監視中のレースが監視対象から削除されました。未保存の変更を破棄して表示を解除しますか？"}
+						</p>
+						<div className='button-row'>
+							<button
+								type='button'
+								disabled={mappingBusy}
+								onClick={showLatest}
+							>
+								{externalPrompt === "changed" ? "最新状態を表示" : "表示を解除"}
+							</button>
+							<button
+								type='button'
+								onClick={keepEditing}
+							>
+								編集を続ける
 							</button>
 						</div>
 					</div>
