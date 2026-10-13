@@ -916,6 +916,21 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		);
 	};
 
+	const removeVariable = (id: string) => {
+		setCategorySession((session) => {
+			if (!session) return session;
+			const variables = {...session.draft.speedrunCom.variables};
+			delete variables[id];
+			return {
+				...session,
+				draft: {
+					...session.draft,
+					speedrunCom: {...session.draft.speedrunCom, variables},
+				},
+			};
+		});
+	};
+
 	const filteredGames = games.filter((record) =>
 		stringify(record.mapping).toLowerCase().includes(gameQuery.toLowerCase()),
 	);
@@ -1335,6 +1350,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 											goalLocked={mode === "race"}
 											onField={setCategoryField}
 											onChooseCategory={chooseCategory}
+											onRemoveVariable={removeVariable}
 											onGoal={(goal) =>
 												setCategorySession((session) =>
 													session
@@ -1590,6 +1606,7 @@ function CategoryEditor({
 	onField,
 	onChooseCategory,
 	onGoal,
+	onRemoveVariable,
 	onSave,
 	onRevert,
 	onDeleteRequest,
@@ -1615,6 +1632,7 @@ function CategoryEditor({
 	) => void;
 	onChooseCategory: (option: SpeedrunCategoryOption) => void;
 	onGoal: (goal: string) => void;
+	onRemoveVariable: (id: string) => void;
 	onSave: () => void;
 	onRevert: () => void;
 	onDeleteRequest: () => void;
@@ -1632,13 +1650,23 @@ function CategoryEditor({
 					!supportsAnySelection(variable),
 			)
 		: [];
+	// Variables saved in the mapping that no longer exist in the SRC definitions.
+	const removedVariables = variablesReady
+		? Object.entries(draft.speedrunCom.variables)
+				.filter(
+					([id, value]) =>
+						value !== "" && !variables.some((variable) => variable.id === id),
+				)
+				.map(([id]) => id)
+		: [];
 	const saveDisabled =
 		busy ||
 		disabled ||
 		missingMandatory ||
 		!variablesReady ||
 		blocked ||
-		unsupportedAny.length > 0;
+		unsupportedAny.length > 0 ||
+		removedVariables.length > 0;
 	return (
 		<form
 			className='subpanel category-editor'
@@ -1858,6 +1886,30 @@ function CategoryEditor({
 					</div>
 				)}
 			</fieldset>
+			{removedVariables.length > 0 && (
+				<fieldset className='variables'>
+					<legend>削除されたVariable</legend>
+					<Callout tone='error'>
+						保存されているVariableが現在のSpeedrun.com定義に存在しません。設定を削除するか、カテゴリを見直してください。
+					</Callout>
+					{removedVariables.map((id) => (
+						<div
+							className='formrow'
+							key={id}
+						>
+							<span>{id}</span>
+							<button
+								type='button'
+								aria-label={`変数 ${id} を削除`}
+								disabled={disabled}
+								onClick={() => onRemoveVariable(id)}
+							>
+								削除
+							</button>
+						</div>
+					))}
+				</fieldset>
+			)}
 			{missingMandatory && (
 				<Callout tone='warning'>
 					必須Variableが未選択のため保存できません。

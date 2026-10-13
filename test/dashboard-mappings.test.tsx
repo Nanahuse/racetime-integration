@@ -524,6 +524,55 @@ it("shows an error when a saved Any is no longer supported", async () => {
 			}) as HTMLButtonElement
 		).disabled,
 	).toBe(true);
+	// The user can still fix it by choosing a concrete value.
+	const select = (await screen.findByLabelText("Ruleset")) as HTMLSelectElement;
+	await act(async () => {
+		fireEvent.change(select, {target: {value: "x"}});
+	});
+	expect(
+		(
+			screen.getByRole("button", {
+				name: /Category Mappingを保存/,
+			}) as HTMLButtonElement
+		).disabled,
+	).toBe(false);
+});
+
+it("detects a deleted Variable and lets the user remove it from the draft", async () => {
+	games = [gameRecord];
+	categories = [
+		{
+			mapping: {
+				...childRecord.mapping,
+				speedrunCom: {
+					...childRecord.mapping.speedrunCom,
+					variables: {ghost: {mode: "any"}},
+				},
+			},
+			revision: "ghost-r",
+		},
+	];
+	variablesByCategory = {c1: []};
+	render(<Mappings />);
+	await selectFirstGame();
+	fireEvent.click(await screen.findByRole("button", {name: /Any%/}));
+	expect(await screen.findByText("ghost")).toBeTruthy();
+	expect(screen.getByText(/現在のSpeedrun.com定義に存在しません/)).toBeTruthy();
+	const saveButton = () =>
+		screen.getByRole("button", {
+			name: /Category Mappingを保存/,
+		}) as HTMLButtonElement;
+	expect(saveButton().disabled).toBe(true);
+	fireEvent.click(screen.getByRole("button", {name: "変数 ghost を削除"}));
+	await waitFor(() => expect(screen.queryByText("ghost")).toBeNull());
+	expect(saveButton().disabled).toBe(false);
+	// Revert restores the saved (inconsistent) state.
+	const revert = (
+		screen.getAllByRole("button", {name: "Revert"}) as HTMLButtonElement[]
+	).find((button) => !button.disabled)!;
+	fireEvent.click(revert);
+	expect(await screen.findByText("ghost")).toBeTruthy();
+	expect(saveButton().disabled).toBe(true);
 });
 
 it("resets the level when the SRC category changes", async () => {

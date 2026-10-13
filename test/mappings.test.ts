@@ -104,6 +104,7 @@ function setup(
 				spreadsheetId: "sheet",
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
+				maxResolvedMappings: 20,
 			},
 		},
 		persist,
@@ -448,6 +449,7 @@ it("validates settings through the API and forwards Speedrun.com discovery opera
 				spreadsheetId: "new",
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
+				maxResolvedMappings: 20,
 			},
 			expectedRevision: 0,
 		}),
@@ -477,6 +479,7 @@ it("validates settings through the API and forwards Speedrun.com discovery opera
 				spreadsheetId: "new",
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
+				maxResolvedMappings: 20,
 			},
 			expectedRevision: 0,
 		}),
@@ -751,4 +754,110 @@ it("does not return a partial success when Speedrun.com fails during expansion",
 			goal: "Any%",
 		}),
 	).toMatchObject({ok: false, error: {code: "speedrun_unavailable"}});
+});
+
+function manyValues(id: string, count: number): SpeedrunVariableOption {
+	return {
+		id,
+		name: id,
+		mandatory: false,
+		userDefined: false,
+		obsoletes: true,
+		values: Array.from({length: count}, (_, index) => ({
+			id: `${id}-${index}`,
+			label: `${id} ${index}`,
+		})),
+	};
+}
+
+it("caps one Any at the default limit of 20 and returns no partial result", async () => {
+	const {api, speedrun} = setup();
+	await saveParent(api);
+	speedrun.getCategoryVariables.mockResolvedValue([manyValues("ruleset", 20)]);
+	await saveCategoryVariables(api, {ruleset: {mode: "any"}});
+	expect(await resolveMappings(api)).toHaveLength(20);
+
+	speedrun.getCategoryVariables.mockResolvedValue([manyValues("ruleset", 21)]);
+	const over = await api.request("resolveCategoryMapping", {
+		categorySlug: "game",
+		goal: "Any%",
+	});
+	expect(over).toMatchObject({
+		ok: false,
+		error: {code: "expansion_limit_exceeded"},
+	});
+	expect(over).not.toHaveProperty("data");
+	expect((over as {error: {message: string}}).error.message).toContain("21");
+	expect((over as {error: {message: string}}).error.message).toContain("20");
+});
+
+it("honors a configured expansion limit from Settings", async () => {
+	const {api, speedrun} = setup();
+	await saveParent(api);
+	speedrun.getCategoryVariables.mockResolvedValue([manyValues("ruleset", 21)]);
+	await saveCategoryVariables(api, {ruleset: {mode: "any"}});
+	expect(
+		await api.request("resolveCategoryMapping", {
+			categorySlug: "game",
+			goal: "Any%",
+		}),
+	).toMatchObject({ok: false, error: {code: "expansion_limit_exceeded"}});
+	expect(
+		await api.request("updateSettings", {
+			settings: {
+				spreadsheetId: "sheet",
+				gameMappingsSheet: "GameMappings",
+				categoryMappingsSheet: "CategoryMappings",
+				maxResolvedMappings: 30,
+			},
+			expectedRevision: 0,
+		}),
+	).toMatchObject({ok: true, data: {revision: 1}});
+	expect(await resolveMappings(api)).toHaveLength(21);
+});
+
+it("rejects an extreme cartesian product before materializing it", async () => {
+	const {api, speedrun} = setup();
+	await saveParent(api);
+	speedrun.getCategoryVariables.mockResolvedValue([
+		manyValues("a", 1000),
+		manyValues("b", 1000),
+		manyValues("c", 1000),
+	]);
+	await saveCategoryVariables(api, {
+		a: {mode: "any"},
+		b: {mode: "any"},
+		c: {mode: "any"},
+	});
+	expect(
+		await api.request("resolveCategoryMapping", {
+			categorySlug: "game",
+			goal: "Any%",
+		}),
+	).toMatchObject({ok: false, error: {code: "expansion_limit_exceeded"}});
+});
+
+it("rejects invalid expansion limits through the API", async () => {
+	const {api} = setup();
+	for (const maxResolvedMappings of [
+		0,
+		-1,
+		1.5,
+		Number.NaN,
+		Number.POSITIVE_INFINITY,
+		"20",
+		Number.MAX_SAFE_INTEGER + 1,
+	]) {
+		expect(
+			await api.request("updateSettings", {
+				settings: {
+					spreadsheetId: "sheet",
+					gameMappingsSheet: "GameMappings",
+					categoryMappingsSheet: "CategoryMappings",
+					maxResolvedMappings,
+				} as never,
+				expectedRevision: 0,
+			}),
+		).toMatchObject({ok: false, error: {code: "invalid_input"}});
+	}
 });

@@ -9,7 +9,14 @@ import {
 
 export type AnyExpansionResult =
 	| {ok: true; mappings: ResolvedCategoryMapping[]}
-	| {ok: false; message: string};
+	| {ok: false; status: "inconsistent"; message: string}
+	| {
+			ok: false;
+			status: "limit_exceeded";
+			required: number;
+			limit: number;
+			message: string;
+	  };
 
 /** Variable IDs stored as `{mode: "any"}`. */
 export function anyVariableIds(
@@ -89,15 +96,27 @@ function toResolvedMapping(
 }
 
 /**
+ * Exact product of `counts` using BigInt so an extreme cartesian product is
+ * measured without integer overflow and without materializing any mapping.
+ */
+function productCount(counts: readonly number[]): bigint {
+	let product = 1n;
+	for (const count of counts) product *= BigInt(count);
+	return product;
+}
+
+/**
  * Expands a stored Category Mapping into concrete lookups. `Any` Variables are
  * replaced by every defined Value, producing the cartesian product across all
- * such Variables. Pure: it performs no I/O and relies only on the supplied
- * Speedrun.com definitions.
+ * such Variables. When the product would exceed `maxMappings` the expansion is
+ * rejected before any mapping is built. Pure: it performs no I/O and relies
+ * only on the supplied Speedrun.com definitions.
  */
 export function expandCategoryMapping(
 	game: {gameId: string; gameName: string},
 	category: SpeedrunCategorySelection,
 	definitions: readonly SpeedrunVariableOption[],
+	maxMappings: number,
 ): AnyExpansionResult {
 	const {variables, categoryName, ...base} = category;
 	const anyIds = anyVariableIds(variables).sort(compareText);
@@ -127,11 +146,13 @@ export function expandCategoryMapping(
 		if (!variable)
 			return {
 				ok: false,
+				status: "inconsistent",
 				message: `Variable "${id}" is no longer defined for category "${category.categoryId}".`,
 			};
 		if (!supportsAnySelection(variable))
 			return {
 				ok: false,
+				status: "inconsistent",
 				message: `Variable "${id}" no longer supports Any.`,
 			};
 		axes.push({
@@ -140,6 +161,21 @@ export function expandCategoryMapping(
 			values: [...variable.values].map((value) => value.id).sort(compareText),
 			labels: new Map(variable.values.map((value) => [value.id, value.label])),
 		});
+	}
+
+	const required = productCount(axes.map((axis) => axis.values.length));
+	if (required > BigInt(maxMappings)) {
+		const safe =
+			required <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(required) : null;
+		return {
+			ok: false,
+			status: "limit_exceeded",
+			required: safe ?? Number.POSITIVE_INFINITY,
+			limit: maxMappings,
+			message: `Any expansion requires ${
+				safe ?? "more than 9007199254740991"
+			} mappings, but the configured limit is ${maxMappings}.`,
+		};
 	}
 
 	const mappings: ResolvedCategoryMapping[] = [];

@@ -38,6 +38,8 @@ export type CategoryResolutionSource =
 			status: "found";
 			game: GameMapping["speedrunCom"];
 			category: SpeedrunCategorySelection;
+			/** Settings snapshot taken while the mapping was read. */
+			maxResolvedMappings: number;
 	  };
 
 function slotKey(value: string): string {
@@ -269,6 +271,7 @@ export class MappingService {
 				status: "found",
 				game: structuredClone(game.mapping.speedrunCom),
 				category: structuredClone(category.mapping.speedrunCom),
+				maxResolvedMappings: this.state.settings.maxResolvedMappings,
 			};
 		});
 	}

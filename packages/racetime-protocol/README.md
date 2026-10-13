@@ -2,7 +2,7 @@
 
 RaceTime Integration v4の公開型・定数・メッセージ名。ESM/CommonJSの両方に型宣言を含み、NodeCG・Google SDK・Player Managerへの実行時依存はありません。
 
-利用バンドルのmanifestに `"bundleDependencies": {"racetime-integration": "^0.2.0"}` を指定してください。
+利用バンドルのmanifestに `"bundleDependencies": {"racetime-integration": "^0.3.0"}` を指定してください。
 
 ```ts
 import {BUNDLE_NAME, type RaceTimeAPI} from "@nanahuse/racetime-protocol";
@@ -97,9 +97,11 @@ if (watched.ok) {
 
 `resolveCategoryMapping` は `Any` を定義済みの全Valueへ展開し、複数の `Any` がある場合は直積を返します。各結果は安定した `key`（Game ID・Category ID・Level ID・正規化したVariableの組とその他条件から生成）と表示用 `label`（展開されたVariable名とValue名）を持ち、結果に `Any` は残りません。`Any` を含まない場合は具体的なマッピング1件の配列を返し、追加のSRC通信は行いません。展開アルゴリズムはSpreadsheetやHTTP通信に依存しません。
 
+展開件数には上限があり、Settingsの `maxResolvedMappings`（初期値20）で設定します。上限以下なら全件を返します。上限超過時は部分結果を返さず、公開APIは `expansion_limit_exceeded` エラー（作成しようとした件数と現在の上限を含むメッセージ）を返します。これはマッピングの不整合ではなく設定された上限として扱われ、`inconsistent` や `internal_error` にはなりません。上限判定は直積を生成する前に行われ、極端に大きな直積でも全件を生成しません。`Any` を含まない解決には影響しません。DashboardのSettings画面（表示名「Any展開の最大件数」）から変更・保存できます。
+
 `initializeSpreadsheet` は指定されたSpreadsheetへ `GameMappings` と `CategoryMappings` のワークシートを準備します。不足シートは作成（`created`）、空シートにはヘッダーを設定（`initialized`）し、正常な既存シートは変更しません（`unchanged`）。不正な既存データがある場合は変更せずエラーを返します。初期化はSettingsを永続化せず、`settingsRevision` も変更しません。保存前に利用者が明示的に接続先を確定してください。
 
-設定は `{spreadsheetId: string | null, gameMappingsSheet: string, categoryMappingsSheet: string}`。spreadsheetIdがnullなら無効化します。updateSettingsは両シートを読込み・検証してから切替え、失敗時は旧設定を保持します。`SETTINGS_REPLICANT`（racetime-settings）へ永続化されます。設定ReplicantとレースReplicantは参照専用として扱い、変更にはAPIを使ってください。
+設定は `{spreadsheetId: string | null, gameMappingsSheet: string, categoryMappingsSheet: string, maxResolvedMappings: number}`。spreadsheetIdがnullなら無効化します。`maxResolvedMappings` は1以上の安全な整数（初期値20）で、0以下・小数・負数・NaN・Infinity・数値以外・安全な整数範囲外は拒否します。`maxResolvedMappings` を持たない既存の永続化済み設定は、他の項目とrevisionを変更せずに20を補完して読み込みます。updateSettingsは両シートを読込み・検証してから切替え、失敗時は旧設定を保持します。`SETTINGS_REPLICANT`（racetime-settings）へ永続化されます。設定ReplicantとレースReplicantは参照専用として扱い、変更にはAPIを使ってください。
 
 ## Speedrun.com検索
 

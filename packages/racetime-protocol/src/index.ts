@@ -43,6 +43,8 @@ export const API_VERSION = 4;
 export const MESSAGE_PREFIX = "racetime.v4";
 export const RACES_REPLICANT = "racetime-races";
 export const SETTINGS_REPLICANT = "racetime-settings";
+/** Default cap on the number of mappings one Any expansion may produce. */
+export const DEFAULT_MAX_RESOLVED_MAPPINGS = 20;
 export type PlayerSnapshot = {
 	playerId: string;
 	revision: number;
@@ -117,6 +119,8 @@ export type Settings = {
 	spreadsheetId: string | null;
 	gameMappingsSheet: string;
 	categoryMappingsSheet: string;
+	/** Maximum number of mappings a single Any expansion may produce. */
+	maxResolvedMappings: number;
 };
 export type SettingsState = {revision: number; settings: Settings};
 export type MappingSave = {
@@ -141,6 +145,7 @@ export type FailureCode =
 	| "game_mapping_missing"
 	| "category_not_in_game"
 	| "speedrun_unavailable"
+	| "expansion_limit_exceeded"
 	| "settings_changed"
 	| "unsupported_operation"
 	| "internal_error";

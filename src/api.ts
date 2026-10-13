@@ -1,6 +1,7 @@
 import {
 	API_VERSION,
 	type CategoryMapping,
+	DEFAULT_MAX_RESOLVED_MAPPINGS,
 	type GameMapping,
 	type Operations,
 	type RaceTimeAPI,
@@ -57,6 +58,11 @@ function revision(value: unknown, field?: string): number {
 function nullableText(value: unknown, field: string): string | null {
 	return value === null ? null : text(value, field);
 }
+function positiveInteger(value: unknown, field: string): number {
+	if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1)
+		throw new RequestError("invalid_input", `Invalid ${field}`);
+	return value;
+}
 export function parseSettings(raw: unknown): Settings {
 	const input = object(raw, "settings");
 	const spreadsheetId =
@@ -72,6 +78,12 @@ export function parseSettings(raw: unknown): Settings {
 			input.categoryMappingsSheet,
 			"categoryMappingsSheet",
 		),
+		// Settings persisted before this field existed default to the initial cap
+		// rather than being rejected; other values are preserved.
+		maxResolvedMappings:
+			input.maxResolvedMappings === undefined
+				? DEFAULT_MAX_RESOLVED_MAPPINGS
+				: positiveInteger(input.maxResolvedMappings, "maxResolvedMappings"),
 	};
 }
 export function parseSettingsState(raw: unknown): SettingsState {
@@ -343,6 +355,7 @@ export function createAPI(
 							source.game,
 							source.category,
 							[],
+							source.maxResolvedMappings,
 						);
 						value = expanded.ok
 							? {status: "resolved", mappings: expanded.mappings}
@@ -356,7 +369,13 @@ export function createAPI(
 						source.game,
 						source.category,
 						definitions,
+						source.maxResolvedMappings,
 					);
+					if (!expanded.ok && expanded.status === "limit_exceeded")
+						throw new IntegrationError(
+							"expansion_limit_exceeded",
+							expanded.message,
+						);
 					value = expanded.ok
 						? {status: "resolved", mappings: expanded.mappings}
 						: {status: "inconsistent", message: expanded.message};

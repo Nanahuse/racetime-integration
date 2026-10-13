@@ -322,6 +322,7 @@ it("validates the SRC category against the game resolved from the game link", as
 				spreadsheetId: "sheet",
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
+				maxResolvedMappings: 20,
 			},
 		},
 		() => {},

@@ -908,6 +908,38 @@ it("selects Any from the Overview category editor like Mappings", async () => {
 	});
 });
 
+it("removes a deleted Variable from the Overview category editor", async () => {
+	const ghostCategory: CategoryMappingRecord = {
+		...categoryRecord,
+		mapping: {
+			...categoryRecord.mapping,
+			speedrunCom: {
+				...categoryRecord.mapping.speedrunCom,
+				variables: {ghost: {mode: "any"}},
+			},
+		},
+	};
+	const handler = mappingHandler({
+		games: [gameRecord],
+		categories: [ghostCategory],
+	});
+	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
+		const operation = name.replace("racetime.v4.", "");
+		if (operation === "getSpeedrunCategoryVariables")
+			return {ok: true, data: {variables: []}};
+		return handler(name, data);
+	});
+	render(<Overview races={undefined} />);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: race.url},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	await openMappingEditor();
+	expect(await screen.findByText("ghost")).toBeTruthy();
+	fireEvent.click(screen.getByRole("button", {name: "変数 ghost を削除"}));
+	await waitFor(() => expect(screen.queryByText("ghost")).toBeNull());
+});
+
 it("surfaces a mapping save conflict in Overview", async () => {
 	const games: GameMappingRecord[] = [];
 	sendMessage.mockImplementation(

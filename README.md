@@ -19,7 +19,7 @@ pnpm test
 
 Player Managerと同じ構成で、PRとmainへのpush時に`Check`を実行します。Node.js 24 / pnpm 12.9.1とpnpmキャッシュを使い、固定lockfileでのインストール、バージョン検証、型チェック、lint、テスト、ビルドを行います。
 
-ルートとProtocolのpackage.jsonは同じ`MAJOR.MINOR.PATCH`に揃えて更新してください。パッケージ版と公開APIの`API_VERSION`は別に管理します。mainへのpushで`Check`が成功すると、`Tag`がそのコミットのバージョンで注釈付きタグ`vX.Y.Z`を作成します。既存タグやmainが先へ進んだ実行はスキップし、最新リリースタグ以下の新規バージョンは拒否します。
+ルートとProtocolのpackage.jsonは同じ`MAJOR.MINOR.PATCH`に揃えて更新してください。現在のバージョンは`0.3.0`です。パッケージ版と公開APIの`API_VERSION`は別に管理します。mainへのpushで`Check`が成功すると、`Tag`がそのコミットのバージョンで注釈付きタグ`vX.Y.Z`を作成します。既存タグやmainが先へ進んだ実行はスキップし、最新リリースタグ以下の新規バージョンは拒否します。
 
 ## NodeCGへの配置
 
@@ -40,6 +40,8 @@ NodeCGの `bundles/racetime-integration` に配置して `pnpm install --frozen-
 
 起動後はgetSettings/updateSettingsで取得・変更できます。変更はracetime-settings Replicantへ永続化され、次回起動時は保存された設定が優先されます。新しい表へのアクセスと形式を検証できた場合だけ切り替えます。spreadsheetId:nullで無効化できます。Sheets未設定時もレース機能は利用可能です。
 
+設定には `maxResolvedMappings`（Any展開の最大件数、初期値20）も含まれます。DashboardのSettings画面（表示名「Any展開の最大件数」）から1以上の整数で変更・保存できます。この値を持たない旧設定は、他の項目とrevisionを変更せずに20を補完して読み込みます。
+
 Google Sheets APIを有効化し、ADCで使うアカウントに表の編集権限を付与してください。認証はgoogle-auth-libraryの[Application Default Credentials](https://docs.cloud.google.com/docs/authentication/application-default-credentials)を使います。スコープは `https://www.googleapis.com/auth/spreadsheets`。独自の資格情報ファイル設定は設けません。
 
 既存のCategoryMappingsタブに次のヘッダーが必要です（順序自由）。空の表やタブは自動作成しません。
@@ -48,7 +50,9 @@ Google Sheets APIを有効化し、ADCで使うアカウントに表の編集権
 racetime_category_slug,racetime_category_name,racetime_goal,src_game_id,src_game_name,src_category_id,src_category_name,src_level_id,src_variables,src_platform_id,src_region_id,src_emulator,src_timing_method,updated_at
 ```
 
-キーはtrimしたracetime_category_slugとracetime_goalの組です。src_variablesは文字列値のJSON、src_emulatorは文字列true/false/空欄、src_timing_methodはrealtime/realtime_noloads/ingame/空欄です。更新・削除は既知列だけを対象にします。
+キーはtrimしたracetime_category_slugとracetime_goalの組です。src_variablesはValue ID文字列または `Any` を表す `{"mode":"any"}` を持つJSON、src_emulatorは文字列true/false/空欄、src_timing_methodはrealtime/realtime_noloads/ingame/空欄です。更新・削除は既知列だけを対象にします。
+
+`Any` は `obsoletes === true`・`userDefined === false`・定義済みValueが1件以上あるVariableにのみ指定でき、解決時に定義済みの全Valueへ直積展開されます。展開件数が `maxResolvedMappings` を超える場合は部分結果を返さず `expansion_limit_exceeded` エラーになります。Dashboardでは、Any対象外になったVariableは不整合としてエラー表示して保存を禁止し、SRCから削除されたVariableは保存済みIDと警告を表示して、その設定をDraftから削除できます（確定は通常の保存操作）。
 
 一覧・検索結果のrevisionとsettingsRevisionを保存・削除時に送ることで、古い画面からの上書きや別Spreadsheetへの誤書込みを拒否します。expectedRevision:nullは新規登録専用です。
 
