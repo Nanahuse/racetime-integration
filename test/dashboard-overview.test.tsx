@@ -169,7 +169,7 @@ it("displays a single-fetched race with resolved participants without starting a
 	expect(screen.getAllByRole("button", {name: "登録・紐付け"})).toHaveLength(1);
 	expect(screen.getByText("Player Manager timed out")).toBeTruthy();
 	expect(screen.getByText("1位")).toBeTruthy();
-	expect(screen.getByText("PT1H2M3S")).toBeTruthy();
+	expect(screen.getByText("1:02:03")).toBeTruthy();
 	expect(screen.getByText("finished")).toBeTruthy();
 	const operations = sendMessage.mock.calls.map((call) => call[0]);
 	expect(operations).toContain("racetime.v4.fetchRace");

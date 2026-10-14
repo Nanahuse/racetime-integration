@@ -1,8 +1,8 @@
 # @nanahuse/racetime-protocol
 
-RaceTime Integration v4の公開型・定数・メッセージ名。ESM/CommonJSの両方に型宣言を含み、NodeCG・Google SDK・Player Managerへの実行時依存はありません。
+RaceTime Integration v4の公開型・定数・メッセージ名。ESM/CommonJSの両方に型宣言を含み、実行時依存は期間処理に使う `@js-temporal/polyfill` のみです（NodeCG・Google SDK・Player Managerへの実行時依存はありません）。
 
-利用バンドルのmanifestに `"bundleDependencies": {"racetime-integration": "^0.3.0"}` を指定してください。
+利用バンドルのmanifestに `"bundleDependencies": {"racetime-integration": "^0.4.0"}` を指定してください。
 
 ```ts
 import {BUNDLE_NAME, type RaceTimeAPI} from "@nanahuse/racetime-protocol";
@@ -59,7 +59,30 @@ if (watched.ok) {
 
 `Participant.player` はPlayer ID、Player revision、表示名、関連アカウントを含むSnapshotです。Player Manager v3の公開 `list` でDirectoryを取得し、RaceTime Account（Primary/Secondaryを問わない）をRaceTime IDで照合します。directoryChanged通知で監視中のレースを自動再解決します。独自のPlayer作成・Twitch名による推測は行いません。障害時はunavailable、紐付けなしはunresolved、同一RaceTime IDが複数Playerに属する場合はunavailableです。
 
-`Race.raceId` はcategorySlug/raceSlugです。`Race.results` はdone→finished、dnf→dnf、dq→dq、その他→otherに正規化済みです。順位とISO 8601形式の完走時間も提供します。
+`Race.raceId` はcategorySlug/raceSlugです。`Race.results` はdone→finished、dnf→dnf、dq→dq、その他→otherに正規化済みです。順位も提供します。
+
+## 完走時間（期間）
+
+完走時間はISO 8601期間文字列（例 `PT1H2M3.45S`）で公開します。`Entrant.finishTime` と `RaceResult.time` は同じ参加者の同じ期間を表し、記録の無い参加者は `null` です。内部では標準の `Temporal.Duration` として扱い、公開Protocolの共通関数で相互変換します。
+
+- `parseRaceDuration(value)` は文字列を `Temporal.Duration` へ復元します。`null` はそのまま返し、負の期間と年・月・週（基準日が無いと経過時間として曖昧なため）を拒否し、不正な文字列は例外にします。不正値を `0` や `null` に読み替えません。
+- `serializeRaceDuration(value)` は `Temporal.Duration` を精度を保ったISO 8601文字列へ戻します。`null` はそのまま返します。`parseRaceDuration` と同じ検証を適用するため、負の期間と年・月・週を含む `Temporal.Duration` はシリアライズできません。
+
+期間の比較・計算には `Temporal.Duration` の標準APIをそのまま使います。パッケージは `Temporal` も再エクスポートするため、利用側で別途polyfillを導入する必要はありません。
+
+```ts
+import {
+  type RaceDuration,
+  Temporal,
+  parseRaceDuration,
+} from "@nanahuse/racetime-protocol";
+
+const time: RaceDuration | null = parseRaceDuration(race.results[0]?.time ?? null);
+if (time) {
+  console.log(time.total({unit: "seconds"}));
+  console.log(Temporal.Duration.compare(time, parseRaceDuration("PT1H")!));
+}
+```
 
 ## 単発取得
 

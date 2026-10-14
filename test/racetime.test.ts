@@ -31,6 +31,9 @@ it("normalizes result status and preserves canonical race identity, rank and tim
 		place: 1,
 		time: "PT1H2M3.45S",
 	});
+	// Public data never exposes Temporal instances.
+	expect(typeof race.entrants[0]?.finishTime).toBe("string");
+	expect(typeof race.results[0]?.time).toBe("string");
 });
 describe("HTTP boundary", () => {
 	it("fetches the canonical data URL and maps the provider payload", async () => {
@@ -47,9 +50,9 @@ describe("HTTP boundary", () => {
 		);
 		expect(result.entrants[0]).toMatchObject({
 			userId: "user1",
-			finishTime: "PT1H2M3.45S",
 			place: 1,
 		});
+		expect(result.entrants[0]?.finishTime?.toString()).toBe("PT1H2M3.45S");
 	});
 	it.each([
 		"http://racetime.gg/game/race",
@@ -101,6 +104,30 @@ describe("HTTP boundary", () => {
 			).rejects.toMatchObject({code: "invalid_payload"});
 		}
 		expect(() => parseRaceDetail({...payload(), version: Infinity})).toThrow();
+	});
+	it("parses finish_time into a duration and reports invalid values as invalid_payload", async () => {
+		const withFinishTime = (finishTime: unknown) => ({
+			...payload(),
+			entrants: [{...payload().entrants[0], finish_time: finishTime}],
+		});
+		const client = new HttpRaceTimeClient({
+			fetchImpl: vi
+				.fn<typeof fetch>()
+				.mockResolvedValue(Response.json(withFinishTime(null))),
+		});
+		const result = await client.fetchRaceDetail(canonicalizeRaceUrl(url));
+		expect(result.entrants[0]?.finishTime).toBeNull();
+
+		for (const finishTime of ["P1Y", "-PT1H", "not-a-duration", 123]) {
+			const invalid = new HttpRaceTimeClient({
+				fetchImpl: vi
+					.fn<typeof fetch>()
+					.mockResolvedValue(Response.json(withFinishTime(finishTime))),
+			});
+			await expect(
+				invalid.fetchRaceDetail(canonicalizeRaceUrl(url)),
+			).rejects.toMatchObject({code: "invalid_payload"});
+		}
 	});
 	it("distinguishes caller cancellation from request timeout", async () => {
 		vi.useFakeTimers();

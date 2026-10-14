@@ -6,11 +6,7 @@ import {
 	type PlayerManagerAPI,
 	resolveDisplayName,
 } from "@nanahuse/player-manager-protocol";
-import type {
-	Entrant,
-	Participant,
-	PlayerSnapshot,
-} from "@nanahuse/racetime-protocol";
+import type {Participant, PlayerSnapshot} from "@nanahuse/racetime-protocol";
 
 export type ResolutionBatch = {
 	participants: Participant[];
@@ -95,7 +91,7 @@ export class ParticipantResolver {
 	) {}
 
 	async resolve(
-		entrants: readonly Entrant[],
+		entrants: readonly {userId: string}[],
 		signal?: AbortSignal,
 	): Promise<ResolutionBatch> {
 		let timer: ReturnType<typeof setTimeout> | undefined;

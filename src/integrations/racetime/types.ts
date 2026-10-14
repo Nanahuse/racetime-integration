@@ -1,4 +1,6 @@
 // Adapted and modified from Nanahuse/nodecg-race-layouts (Apache-2.0).
+import type {RaceDuration} from "@nanahuse/racetime-protocol";
+
 /**
  * Normalized integration DTO for the RaceTime.gg Race Detail endpoint.
  *
@@ -10,8 +12,8 @@ export type RaceTimeEntrantDto = {
 	name: string;
 	twitchLogin: string | null;
 	status: string;
-	/** ISO 8601 duration string (RaceTime.gg `finish_time`). */
-	finishTime: string | null;
+	/** Elapsed finish time parsed from the RaceTime.gg `finish_time`. */
+	finishTime: RaceDuration | null;
 	place: number | null;
 };
 

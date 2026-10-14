@@ -1,6 +1,6 @@
 {
 	"name": "@nanahuse/racetime-protocol",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"description": "Public NodeCG RaceTime integration contract",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -19,5 +19,6 @@
 		"prepack": "pnpm build"
 	},
 	"publishConfig": { "access": "public" },
+	"dependencies": { "@js-temporal/polyfill": "^0.5.1" },
 	"devDependencies": { "typescript": "^5.9.3" }
 }
