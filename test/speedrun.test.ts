@@ -3,6 +3,7 @@ import type {
 	CategoryMappingRecord,
 	GameMapping,
 	GameMappingRecord,
+	ResolvedCategoryMapping,
 } from "@nanahuse/racetime-protocol";
 import {expect, it, vi} from "vitest";
 import {createAPI} from "../src/api";
@@ -10,6 +11,22 @@ import {IntegrationError} from "../src/errors";
 import {HttpSpeedrunClient} from "../src/integrations/speedrun/client";
 import {MappingService, type MappingsRepository} from "../src/mappings";
 import {gameMapping} from "./fixtures";
+
+const resolvedLookup: ResolvedCategoryMapping = {
+	key: "lookup",
+	label: "Any% (Mode: Hard)",
+	game: {gameId: "g1", gameName: "Game One"},
+	category: {
+		categoryId: "c1",
+		categoryName: "Any%",
+		levelId: "l1",
+		variables: {v1: "hard"},
+		platformId: "p1",
+		regionId: "r1",
+		emulator: false,
+		timingMethod: "realtime_noloads",
+	},
+};
 
 function clientWith(routes: Record<string, unknown>) {
 	const fetchImpl = vi.fn(async (url: string) => {
@@ -323,6 +340,7 @@ it("validates the SRC category against the game resolved from the game link", as
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				leaderboardTop: 20,
 			},
 		},
 		() => {},
@@ -366,4 +384,117 @@ it("validates the SRC category against the game resolved from the game link", as
 			settingsRevision: 0,
 		}),
 	).toMatchObject({ok: false, error: {code: "category_not_in_game"}});
+});
+
+it("requests a filtered level leaderboard, preserves ties, and joins embedded player records", async () => {
+	const {client, fetchImpl} = clientWith({
+		"/api/v1/leaderboards/g1/level/l1/c1": {
+			data: {
+				game: "g1",
+				category: "c1",
+				level: "l1",
+				platform: "p1",
+				region: "r1",
+				emulators: false,
+				timing: "realtime_noloads",
+				values: {v1: "hard"},
+				players: [
+					{
+						rel: "user",
+						id: "u1",
+						names: {international: "Runner"},
+						weblink: "https://www.speedrun.com/user/runner",
+					},
+					{rel: "guest", name: "Guest Runner"},
+				],
+				runs: [
+					{
+						place: 1,
+						run: {
+							id: "run1",
+							weblink: "https://www.speedrun.com/runs/run1",
+							date: "2026-01-02",
+							times: {realtime_noloads: "PT1M2S"},
+							players: [{rel: "user", id: "u1"}],
+						},
+					},
+					{
+						place: 1,
+						run: {
+							id: "run2",
+							times: {realtime_noloads: "PT1M2S"},
+							players: [{rel: "guest", name: "Guest Runner"}],
+						},
+					},
+				],
+			},
+		},
+	});
+	const result = await client.getLeaderboard(resolvedLookup, 20);
+	const requested = new URL(fetchImpl.mock.calls[0]![0] as string);
+	expect(requested.searchParams.get("top")).toBe("20");
+	expect(requested.searchParams.get("platform")).toBe("p1");
+	expect(requested.searchParams.get("region")).toBe("r1");
+	expect(requested.searchParams.get("emulators")).toBe("false");
+	expect(requested.searchParams.get("timing")).toBe("realtime_noloads");
+	expect(requested.searchParams.get("var-v1")).toBe("hard");
+	expect(result.entries.map(({place}) => place)).toEqual([1, 1]);
+	expect(result.entries[0]?.run.players[0]).toMatchObject({
+		userId: "u1",
+		name: "Runner",
+	});
+	expect(result.entries[1]?.run.players[0]).toMatchObject({
+		userId: null,
+		name: "Guest Runner",
+	});
+});
+
+it("filters current personal bests by the resolved conditions and requested timing method", async () => {
+	const {client, fetchImpl} = clientWith({
+		"/api/v1/users/u1/personal-bests": {
+			data: [
+				{
+					place: 5,
+					run: {
+						id: "wrong",
+						game: "g1",
+						category: "c1",
+						level: "l1",
+						system: {platform: "p2", region: "r1", emulated: false},
+						values: {v1: "hard"},
+						times: {realtime_noloads: "PT30S"},
+						players: [
+							{rel: "user", id: "u1", names: {international: "Runner"}},
+						],
+					},
+				},
+				{
+					place: 7,
+					run: {
+						id: "right",
+						game: "g1",
+						category: "c1",
+						level: "l1",
+						system: {platform: "p1", region: "r1", emulated: false},
+						values: {v1: "hard"},
+						times: {realtime_noloads: "PT40S"},
+						players: [
+							{rel: "user", id: "u1", names: {international: "Runner"}},
+						],
+					},
+				},
+			],
+			pagination: {size: 2},
+		},
+	});
+	const runs = await client.getUserPersonalBests("u1", resolvedLookup);
+	const requested = new URL(fetchImpl.mock.calls[0]![0] as string);
+	expect(requested.searchParams.get("game")).toBe("g1");
+	expect(requested.searchParams.get("embed")).toBe("players");
+	expect(runs).toHaveLength(1);
+	expect(runs[0]).toMatchObject({
+		runId: "right",
+		time: "PT40S",
+		players: [{userId: "u1", name: "Runner"}],
+	});
 });

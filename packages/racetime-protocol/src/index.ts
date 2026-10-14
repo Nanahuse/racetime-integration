@@ -4,6 +4,7 @@ import type {
 	GameMapping,
 	GameMappingRecord,
 	ResolveCategoryMappingResult,
+	ResolvedCategoryMapping,
 } from "./category.js";
 import type {
 	SpeedrunGameOptions,
@@ -51,6 +52,7 @@ export const RACES_REPLICANT = "racetime-races";
 export const SETTINGS_REPLICANT = "racetime-settings";
 /** Default cap on the number of mappings one Any expansion may produce. */
 export const DEFAULT_MAX_RESOLVED_MAPPINGS = 20;
+export const DEFAULT_LEADERBOARD_TOP = 20;
 export type PlayerSnapshot = {
 	playerId: string;
 	revision: number;
@@ -137,6 +139,7 @@ export type Settings = {
 	categoryMappingsSheet: string;
 	/** Maximum number of mappings a single Any expansion may produce. */
 	maxResolvedMappings: number;
+	leaderboardTop: number;
 };
 export type SettingsState = {revision: number; settings: Settings};
 export type MappingSave = {
@@ -178,6 +181,39 @@ export type GameMappingList = {
 export type CategoryMappingList = {
 	records: CategoryMappingRecord[];
 	settingsRevision: number;
+};
+export type SpeedrunPlayer =
+	| ({userId: string; name: string; url: string} & {
+			displayName?: string;
+			personalBest?: SpeedrunPlayerBest;
+	  })
+	| ({userId: null; name: string; url: null} & {
+			displayName?: string;
+			personalBest?: SpeedrunPlayerBest;
+	  });
+export type SpeedrunRun = {
+	runId: string;
+	url: string;
+	time: string;
+	date: string | null;
+	players: SpeedrunPlayer[];
+};
+export type SpeedrunLeaderboard = {
+	mapping: ResolvedCategoryMapping;
+	top: number;
+	fetchedAt: string;
+	state: "ready" | "not_found";
+	entries: Array<{place: number; run: SpeedrunRun}>;
+	stale: boolean;
+};
+export type SpeedrunPlayerBest = {
+	playerId: string | null;
+	srcUserId: string | null;
+	state: "found" | "not_found" | "unlinked" | "error";
+	run: SpeedrunRun | null;
+	fetchedAt: string | null;
+	stale: boolean;
+	message?: string;
 };
 /** Per-worksheet result of preparing a spreadsheet destination. */
 export type SpreadsheetSheetOutcome = "created" | "initialized" | "unchanged";
@@ -248,6 +284,31 @@ export type Operations = {
 		request: {categorySlug: string; goal: string};
 		response: ResolveCategoryMappingResult;
 	};
+	getSpeedrunLeaderboards: {
+		request: {categorySlug: string; goal: string; refresh?: boolean};
+		response: ResolveCategoryMappingResult & {
+			leaderboards?: SpeedrunLeaderboard[];
+			fetchedAt?: string;
+			stale?: boolean;
+			top?: number;
+		};
+	};
+	getSpeedrunPlayerBests: {
+		request: {
+			categorySlug: string;
+			goal: string;
+			playerIds: string[];
+			refresh?: boolean;
+		};
+		response: ResolveCategoryMappingResult & {
+			results?: Array<{
+				mapping: ResolvedCategoryMapping;
+				players: SpeedrunPlayerBest[];
+			}>;
+			fetchedAt?: string;
+			stale?: boolean;
+		};
+	};
 	searchSpeedrunGames: {
 		request: {query: string};
 		response: {games: SpeedrunGameSummary[]};
@@ -286,6 +347,8 @@ export const OPERATIONS = [
 	"saveCategoryMapping",
 	"deleteCategoryMapping",
 	"resolveCategoryMapping",
+	"getSpeedrunLeaderboards",
+	"getSpeedrunPlayerBests",
 	"searchSpeedrunGames",
 	"getSpeedrunGameOptions",
 	"getSpeedrunCategoryVariables",

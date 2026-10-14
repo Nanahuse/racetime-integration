@@ -6,6 +6,7 @@ import type {
 	RaceState,
 	RacesState,
 	ResolvedRace,
+	SpeedrunPlayerBest,
 } from "@nanahuse/racetime-protocol";
 import {useCallback, useEffect, useRef, useState} from "react";
 import {errorMessage, request} from "../api/client";
@@ -164,11 +165,19 @@ function Participants({
 	race,
 	onRegister,
 	registerDisabled,
+	bests = [],
+	bestsLoading = false,
+	bestsError = null,
+	onRefreshBests,
 }: {
 	participants: readonly Participant[];
 	race: Race | null;
 	onRegister: (participant: Participant) => void;
 	registerDisabled: boolean;
+	bests?: Array<{playerId: string; label: string; best: SpeedrunPlayerBest}>;
+	bestsLoading?: boolean;
+	bestsError?: string | null;
+	onRefreshBests?: () => void;
 }) {
 	if (participants.length === 0)
 		return race && race.entrants.length === 0 ? (
@@ -179,78 +188,144 @@ function Participants({
 	const names = entrantNames(race?.entrants ?? []);
 	const results = resultByUser(race);
 	return (
-		<table className='participants'>
-			<thead>
-				<tr>
-					<th>RaceTime</th>
-					<th>Player</th>
-					<th>SRC / Twitch</th>
-					<th>結果</th>
-					<th>状態</th>
-					<th />
-				</tr>
-			</thead>
-			<tbody>
-				{participants.map((participant) => {
-					const result = results.get(participant.racetimeUserId);
-					return (
-						<tr
-							key={participant.racetimeUserId}
-							className={participant.status}
-						>
-							<td>
-								<div>
-									{names.get(participant.racetimeUserId) ??
-										participant.player?.racetime?.name ??
-										"—"}
-								</div>
-								<small>{participant.racetimeUserId}</small>
-							</td>
-							<td>
-								{participant.player ? (
-									<>
-										<div>{participant.player.displayName}</div>
-										<small>{participant.playerId}</small>
-									</>
-								) : (
-									<span className='muted'>—</span>
-								)}
-							</td>
-							<td>
-								<div>SRC: {participant.player?.speedrunCom?.name ?? "—"}</div>
-								<div>Twitch: {participant.player?.twitch?.login ?? "—"}</div>
-							</td>
-							<td>
-								{result ? (
-									<>
-										<div>
-											{result.place === null ? "—" : `${result.place}位`}
-										</div>
-										<div>{formatRaceTime(result.time)}</div>
-										<small>{result.status}</small>
-									</>
-								) : (
-									<span className='muted'>—</span>
-								)}
-							</td>
-							<td>
-								<span className={`badge ${participant.status}`}>
-									{participant.status}
-								</span>
-								{participant.message && <small>{participant.message}</small>}
-							</td>
-							<td>
-								<ParticipantActions
-									participant={participant}
-									onRegister={onRegister}
-									registerDisabled={registerDisabled}
-								/>
-							</td>
-						</tr>
-					);
-				})}
-			</tbody>
-		</table>
+		<>
+			<div className='formrow'>
+				<button
+					type='button'
+					disabled={bestsLoading}
+					onClick={onRefreshBests}
+				>
+					PBを再取得
+				</button>
+			</div>
+			<table className='participants'>
+				<thead>
+					<tr>
+						<th>RaceTime</th>
+						<th>Player</th>
+						<th>SRC / Twitch</th>
+						<th>PB</th>
+						<th>結果</th>
+						<th>状態</th>
+						<th />
+					</tr>
+				</thead>
+				<tbody>
+					{participants.map((participant) => {
+						const result = results.get(participant.racetimeUserId);
+						return (
+							<tr
+								key={participant.racetimeUserId}
+								className={participant.status}
+							>
+								<td>
+									<div>
+										{names.get(participant.racetimeUserId) ??
+											participant.player?.racetime?.name ??
+											"—"}
+									</div>
+									<small>{participant.racetimeUserId}</small>
+								</td>
+								<td>
+									{participant.player ? (
+										<>
+											<div>{participant.player.displayName}</div>
+											<small>{participant.playerId}</small>
+										</>
+									) : (
+										<span className='muted'>—</span>
+									)}
+								</td>
+								<td>
+									<div>SRC: {participant.player?.speedrunCom?.name ?? "—"}</div>
+									<div>Twitch: {participant.player?.twitch?.login ?? "—"}</div>
+								</td>
+								<td>
+									{participant.playerId ? (
+										bestsLoading ? (
+											<span className='muted'>取得中…</span>
+										) : bestsError ? (
+											<span title={bestsError}>
+												{bestsError.includes("マッピング")
+													? bestsError
+													: "取得失敗"}
+											</span>
+										) : bests.filter(
+												(item) => item.playerId === participant.playerId,
+											).length ? (
+											bests
+												.filter(
+													(item) => item.playerId === participant.playerId,
+												)
+												.map((item) => (
+													<div key={item.label}>
+														<small>{item.label}: </small>
+														{item.best.state === "found" && item.best.run ? (
+															<a
+																className='link'
+																href={item.best.run.url}
+																target='_blank'
+																rel='noopener noreferrer'
+															>
+																{formatRaceTime(item.best.run.time)}
+															</a>
+														) : (
+															<span className='muted'>
+																{item.best.state === "not_found"
+																	? "記録なし"
+																	: item.best.state === "unlinked"
+																		? "未連携"
+																		: "取得失敗"}
+															</span>
+														)}
+														{item.best.stale && (
+															<small className='muted'>古いデータ</small>
+														)}
+													</div>
+												))
+										) : (
+											<span className='muted'>取得待ち</span>
+										)
+									) : (
+										<span className='muted'>
+											{participant.status === "unresolved"
+												? "Player未解決"
+												: "SRC未連携"}
+										</span>
+									)}
+								</td>
+								<td>
+									{result ? (
+										<>
+											<div>
+												{result.place === null ? "—" : `${result.place}位`}
+											</div>
+											<div>{formatRaceTime(result.time)}</div>
+											<small>{result.status}</small>
+										</>
+									) : (
+										<span className='muted'>—</span>
+									)}
+								</td>
+								<td>
+									<span className={`badge ${participant.status}`}>
+										{participant.status}
+									</span>
+									{participant.message && <small>{participant.message}</small>}
+								</td>
+								<td>
+									<ParticipantActions
+										participant={participant}
+										onRegister={onRegister}
+										registerDisabled={registerDisabled}
+									/>
+								</td>
+							</tr>
+						);
+					})}
+				</tbody>
+			</table>
+		</>
 	);
 }
 
@@ -314,6 +389,92 @@ export function Overview({
 		? raceTarget(displayedRace)
 		: null;
 	const targetKey = target ? targetKeyOf(target) : null;
+	const shownParticipants = isMonitored
+		? (monitoredDisplay?.participants ?? [])
+		: (fetched?.participants ?? []);
+	const playerIds = [
+		...new Set(
+			shownParticipants.flatMap((participant) =>
+				participant.playerId ? [participant.playerId] : [],
+			),
+		),
+	];
+	const playerDirectoryKey = JSON.stringify(
+		shownParticipants.flatMap((participant) =>
+			participant.playerId && participant.player
+				? [[participant.playerId, participant.player.revision]]
+				: [],
+		),
+	);
+	const playerQueryKey = JSON.stringify({playerIds, playerDirectoryKey});
+	const targetCategorySlug = target?.categorySlug ?? null;
+	const targetGoal = target?.goal ?? null;
+	const [participantBests, setParticipantBests] = useState<
+		Array<{playerId: string; label: string; best: SpeedrunPlayerBest}>
+	>([]);
+	const [bestsLoading, setBestsLoading] = useState(false);
+	const [bestsError, setBestsError] = useState<string | null>(null);
+	const [bestsRefreshToken, setBestsRefreshToken] = useState(0);
+	const lastBestsRefreshToken = useRef(0);
+	useEffect(() => {
+		const requestPlayerIds = (
+			JSON.parse(playerQueryKey) as {
+				playerIds: string[];
+				playerDirectoryKey: string;
+			}
+		).playerIds;
+		if (!targetCategorySlug || !targetGoal || requestPlayerIds.length === 0) {
+			setParticipantBests([]);
+			setBestsLoading(false);
+			setBestsError(null);
+			return;
+		}
+		let active = true;
+		setBestsLoading(true);
+		setBestsError(null);
+		void request("getSpeedrunPlayerBests", {
+			categorySlug: targetCategorySlug,
+			goal: targetGoal,
+			playerIds: requestPlayerIds,
+			refresh: bestsRefreshToken > lastBestsRefreshToken.current,
+		})
+			.then((response) => {
+				if (!active) return;
+				if (response.status !== "resolved") {
+					setParticipantBests([]);
+					setBestsError(
+						response.status === "unregistered"
+							? "マッピング未登録"
+							: response.message,
+					);
+					return;
+				}
+				setParticipantBests(
+					response.results?.flatMap(({mapping, players}) =>
+						players.map((best) => ({
+							playerId: best.playerId ?? "",
+							label: mapping.label,
+							best,
+						})),
+					) ?? [],
+				);
+			})
+			.catch((cause) => {
+				if (active) {
+					setParticipantBests([]);
+					setBestsError(errorMessage(cause));
+				}
+			})
+			.finally(() => {
+				if (active) setBestsLoading(false);
+			});
+		return () => {
+			active = false;
+		};
+	}, [targetCategorySlug, targetGoal, playerQueryKey, bestsRefreshToken]);
+	useEffect(() => {
+		lastBestsRefreshToken.current = bestsRefreshToken;
+	}, [bestsRefreshToken]);
 	const targetKeyRef = useRef<string | null>(null);
 	targetKeyRef.current = targetKey;
 
@@ -691,6 +852,10 @@ export function Overview({
 							race={monitoredDisplay.race}
 							onRegister={(participant) => void register(participant)}
 							registerDisabled={false}
+							bests={participantBests}
+							bestsLoading={bestsLoading}
+							bestsError={bestsError}
+							onRefreshBests={() => setBestsRefreshToken((value) => value + 1)}
 						/>
 					</>
 				) : fetched ? (
@@ -710,6 +875,10 @@ export function Overview({
 							race={fetched.race}
 							onRegister={(participant) => void register(participant)}
 							registerDisabled={fetching}
+							bests={participantBests}
+							bestsLoading={bestsLoading}
+							bestsError={bestsError}
+							onRefreshBests={() => setBestsRefreshToken((value) => value + 1)}
 						/>
 						<div className='formrow'>
 							<button

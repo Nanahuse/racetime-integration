@@ -80,6 +80,7 @@ beforeEach(() => {
 							gameMappingsSheet: "GameMappings",
 							categoryMappingsSheet: "CategoryMappings",
 							maxResolvedMappings: 20,
+							leaderboardTop: 20,
 						},
 					},
 				};
@@ -205,6 +206,7 @@ it("cannot discard edits to switch tabs while a mapping save is in progress", as
 							gameMappingsSheet: "GameMappings",
 							categoryMappingsSheet: "CategoryMappings",
 							maxResolvedMappings: 20,
+							leaderboardTop: 20,
 						},
 					},
 				};

@@ -4,6 +4,7 @@ import {
 	type PlayerManagerAPI,
 } from "@nanahuse/player-manager-protocol";
 import {
+	DEFAULT_LEADERBOARD_TOP,
 	DEFAULT_MAX_RESOLVED_MAPPINGS,
 	OPERATIONS,
 	operationMessageName,
@@ -24,6 +25,7 @@ import {SpreadsheetGameMappingsRepository} from "../integrations/spreadsheet/gam
 import {GoogleSheetsClient} from "../integrations/spreadsheet/google-sheets-client";
 import {MappingService} from "../mappings";
 import {RaceService} from "../service";
+import {SpeedrunRecordService} from "../speedrun-records";
 
 export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 	const config = nodecg.bundleConfig as {
@@ -53,6 +55,7 @@ export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 			gameMappingsSheet: config.gameMappingsSheet ?? "GameMappings",
 			categoryMappingsSheet: config.categoryMappingsSheet ?? "CategoryMappings",
 			maxResolvedMappings: DEFAULT_MAX_RESOLVED_MAPPINGS,
+			leaderboardTop: DEFAULT_LEADERBOARD_TOP,
 		},
 	};
 	const settings = nodecg.Replicant<SettingsState>(SETTINGS_REPLICANT, {
@@ -73,6 +76,15 @@ export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 		initialSettings = structuredClone(defaultSettings);
 		settings.value = structuredClone(initialSettings);
 	}
+	if (
+		settings.value &&
+		typeof settings.value === "object" &&
+		"settings" in settings.value &&
+		settings.value.settings &&
+		typeof settings.value.settings === "object" &&
+		!("leaderboardTop" in settings.value.settings)
+	)
+		settings.value = structuredClone(initialSettings);
 	const speedrun = new HttpSpeedrunClient({
 		userAgent: `racetime-integration/${nodecg.bundleVersion}`,
 	});
@@ -94,8 +106,18 @@ export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 			};
 		},
 	);
-	const api = createAPI(races, mappings, speedrun, (spreadsheetId) =>
-		GoogleSheetsClient.create(spreadsheetId),
+	const records = new SpeedrunRecordService(
+		mappings,
+		speedrun,
+		players,
+		() => mappings.settings().settings.leaderboardTop,
+	);
+	const api = createAPI(
+		races,
+		mappings,
+		speedrun,
+		(spreadsheetId) => GoogleSheetsClient.create(spreadsheetId),
+		records,
 	);
 	const directoryChanged = (data: {directoryRevision?: unknown}) => {
 		if (typeof data?.directoryRevision === "number")

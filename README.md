@@ -1,6 +1,6 @@
 # racetime-integration
 
-NodeCG 2.8向けのRaceTime連携バンドル。複数の利用者でレース監視を共有し、Player Manager v3で参加者を解決、Google Sheetsでカテゴリ対応を管理します。
+NodeCG 2.8向けのRaceTime連携バンドル。複数の利用者でレース監視を共有し、Player Manager v3で参加者を解決、Google Sheetsでカテゴリ対応を管理します。Speedrun.comの条件別Leaderboardと参加者PBもExtension経由で取得できます。
 
 ## 開発
 
@@ -19,13 +19,13 @@ pnpm test
 
 Player Managerと同じ構成で、PRとmainへのpush時に`Check`を実行します。Node.js 24 / pnpm 12.9.1とpnpmキャッシュを使い、固定lockfileでのインストール、バージョン検証、型チェック、lint、テスト、ビルドを行います。
 
-ルートとProtocolのpackage.jsonは同じ`MAJOR.MINOR.PATCH`に揃えて更新してください。現在のバージョンは`0.4.0`です。パッケージ版と公開APIの`API_VERSION`は別に管理します。mainへのpushで`Check`が成功すると、`Tag`がそのコミットのバージョンで注釈付きタグ`vX.Y.Z`を作成します。既存タグやmainが先へ進んだ実行はスキップし、最新リリースタグ以下の新規バージョンは拒否します。
+ルートとProtocolのpackage.jsonは同じ`MAJOR.MINOR.PATCH`に揃えて更新してください。現在のバージョンは`0.5.0`です。パッケージ版と公開APIの`API_VERSION`は別に管理します。mainへのpushで`Check`が成功すると、`Tag`がそのコミットのバージョンで注釈付きタグ`vX.Y.Z`を作成します。既存タグやmainが先へ進んだ実行はスキップし、最新リリースタグ以下の新規バージョンは拒否します。
 
 ## NodeCGへの配置
 
 NodeCGの `bundles/racetime-integration` に配置して `pnpm install --frozen-lockfile`、`pnpm build` を実行します。同じNodeCGに `player-manager` >=3.0.0 を配置してください。bundleDependenciesで読込み順を指定しています。
 
-このバンドルの画面はありません。利用バンドルは公開APIとReplicantを利用します。
+DashboardにはOverview / Rankings / Mappings / Settingsがあります。Rankingsでは保存済みMappingから条件別Leaderboardを表示し、OverviewではRaceTime参加者のPBを確認できます。NodeCGの外部バンドルもDashboardと同じ `RaceTimeAPI.request()` を利用できます。
 
 ## Google Spreadsheet
 
@@ -41,6 +41,10 @@ NodeCGの `bundles/racetime-integration` に配置して `pnpm install --frozen-
 起動後はgetSettings/updateSettingsで取得・変更できます。変更はracetime-settings Replicantへ永続化され、次回起動時は保存された設定が優先されます。新しい表へのアクセスと形式を検証できた場合だけ切り替えます。spreadsheetId:nullで無効化できます。Sheets未設定時もレース機能は利用可能です。
 
 設定には `maxResolvedMappings`（Any展開の最大件数、初期値20）も含まれます。DashboardのSettings画面（表示名「Any展開の最大件数」）から1以上の整数で変更・保存できます。この値を持たない旧設定は、他の項目とrevisionを変更せずに20を補完して読み込みます。
+
+`leaderboardTop`（初期値20）はLeaderboardの取得順位上限です。Settings画面の「リーダーボード取得順位数」から1以上の安全な整数で変更できます。SRCが同順位として返したRunはすべて表示します。旧設定ではrevisionを変えずに20を補完します。Rankingsタブと公開APIはExtensionの共通5分キャッシュを使い、手動再取得もできます。
+
+公開APIの `getSpeedrunLeaderboards` と `getSpeedrunPlayerBests` は、RaceTimeのcategorySlug/goalから保存済みMappingを解決します。`Any` は具体条件へ展開され、LeaderboardとPBは条件ごとに分かれます。PBはPlayer ManagerのPlayer IDからPrimary/Secondary両方のSpeedrun.comアカウントを検索し、SRC Personal Bestsに含まれる有効RunをVariable、Platform、Region、Emulator、Timing Methodで照合して最速を選びます。PBの状態は `found` / `not_found` / `unlinked` / `error` です。
 
 Google Sheets APIを有効化し、ADCで使うアカウントに表の編集権限を付与してください。認証はgoogle-auth-libraryの[Application Default Credentials](https://docs.cloud.google.com/docs/authentication/application-default-credentials)を使います。スコープは `https://www.googleapis.com/auth/spreadsheets`。独自の資格情報ファイル設定は設けません。
 

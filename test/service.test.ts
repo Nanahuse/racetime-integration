@@ -27,6 +27,18 @@ function raceTimeAccount(
 	};
 }
 
+function speedrunComAccount(
+	userId: string,
+	role: "primary" | "secondary",
+): DirectoryAccount {
+	return {
+		id: `src-${userId}`,
+		service: "speedrunCom",
+		role,
+		identity: {userId, name: userId},
+	};
+}
+
 const player = (
 	name = "Runner",
 	revision = 1,
@@ -92,6 +104,27 @@ it("resolves Primary and Secondary RaceTime accounts from one directory snapshot
 		playerId: "p1",
 	});
 	expect(request.mock.calls.every(([op]) => op === "list")).toBe(true);
+});
+
+it("resolves Primary and Secondary Speedrun.com accounts and display names", async () => {
+	const {api, directory} = playerAPI();
+	directory.players = [
+		{
+			...player("Runner"),
+			speedrunCom: {userId: "src-primary", name: "Primary"},
+			accounts: [
+				speedrunComAccount("src-primary", "primary"),
+				speedrunComAccount("src-secondary", "secondary"),
+			],
+		},
+	];
+	const resolver = new ParticipantResolver(() => api);
+	expect(await resolver.speedrunAccounts(["p1"])).toEqual(
+		new Map([["p1", ["src-primary", "src-secondary"]]]),
+	);
+	expect(await resolver.speedrunDisplayNames(["src-secondary"])).toEqual(
+		new Map([["src-secondary", "Runner"]]),
+	);
 });
 
 it("publishes v3-compatible snapshots with accounts and Twitch without a userId", async () => {
@@ -440,6 +473,7 @@ it("validates new public write contracts and reports disabled Sheets without aff
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				leaderboardTop: 20,
 			},
 		},
 		() => {},
@@ -598,6 +632,7 @@ it("returns an API error when the RaceTime fetch fails without touching monitori
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				leaderboardTop: 20,
 			},
 		},
 		() => {},
