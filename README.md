@@ -44,7 +44,9 @@ DashboardにはOverview / Rankings / Mappings / Settingsがあります。Rankin
 
 `leaderboardTop`（初期値20）はLeaderboardの取得順位上限です。Settings画面の「リーダーボード取得順位数」から1以上の安全な整数で変更できます。SRCが同順位として返したRunはすべて表示します。旧設定ではrevisionを変えずに20を補完します。Rankingsタブと公開APIはExtensionの共通5分キャッシュを使い、手動再取得もできます。
 
-公開APIの `getSpeedrunLeaderboards` と `getSpeedrunPlayerBests` は、RaceTimeのcategorySlug/goalから保存済みMappingを解決します。`Any` は具体条件へ展開され、LeaderboardとPBは条件ごとに分かれます。PBはPlayer ManagerのPlayer IDからPrimary/Secondary両方のSpeedrun.comアカウントを検索し、SRC Personal Bestsに含まれる有効RunをVariable、Platform、Region、Emulator、Timing Methodで照合して最速を選びます。PBの状態は `found` / `not_found` / `unlinked` / `error` です。
+公開APIの `getSpeedrunLeaderboards` と `getSpeedrunPlayerBests` は、RaceTimeのcategorySlug/goalから保存済みMappingを解決します。`Any` は具体条件へ展開され、LeaderboardとPBは条件ごとに分かれます。条件付きPBは、Game、Category、Level、Variables、Platform、Region、Emulator、Timing Methodに一致する有効記録のうち最速のRunです。Leaderboard上位件数やPersonal Bests APIの一覧に依存せず、Runs APIを最後のページまで確認した候補をRunデータでも条件検証して比較します。未記録のTiming Method値を持つRunはそのRunだけを候補から除外します。PBの状態は `found` / `not_found` / `unlinked` / `error` です。`not_found` は検索を完了して一致記録がなかった状態で、ページ取得失敗は `error` になります。複数SRCアカウントでは全アカウントを確認して最速を選び、一部の取得に失敗した場合は部分結果だけで確定しません。
+
+`Any` が複数Mappingへ展開されたときは、LeaderboardをMapping単位で返します。一部の取得が失敗しても他のMappingの成功結果を保持し、失敗Mappingに正常キャッシュがある場合は `stale: true` を付けて返します。再取得は対象条件のキャッシュだけを更新し、失敗結果は正常値としてキャッシュしません。
 
 Google Sheets APIを有効化し、ADCで使うアカウントに表の編集権限を付与してください。認証はgoogle-auth-libraryの[Application Default Credentials](https://docs.cloud.google.com/docs/authentication/application-default-credentials)を使います。スコープは `https://www.googleapis.com/auth/spreadsheets`。独自の資格情報ファイル設定は設けません。
 

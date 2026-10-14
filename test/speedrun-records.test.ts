@@ -1,6 +1,7 @@
 import type {
 	ResolvedCategoryMapping,
 	SpeedrunRun,
+	SpeedrunVariableOption,
 } from "@nanahuse/racetime-protocol";
 import {expect, it, vi} from "vitest";
 import {SpeedrunRecordService} from "../src/speedrun-records";
@@ -36,13 +37,15 @@ function run(runId: string, time: string, userId = "u1"): SpeedrunRun {
 function setup() {
 	const mapping = {resolveSource: vi.fn(async () => structuredClone(source))};
 	const speedrun = {
-		getCategoryVariables: vi.fn(async () => []),
-		getUserPersonalBests: vi.fn(async (userId: string) => [
-			run(`${userId}-pb`, userId === "u1" ? "PT45S" : "PT1M"),
-		]),
-		getUserRuns: vi.fn(async (userId: string) => [
-			run(`${userId}-verified`, "PT44S", userId),
-		]),
+		getCategoryVariables: vi.fn(
+			async (): Promise<SpeedrunVariableOption[]> => [],
+		),
+		getUserPersonalBests: vi.fn(async (userId: string) => [`${userId}-pb`]),
+		getUserRuns: vi.fn(
+			async (userId: string, _mapping: ResolvedCategoryMapping) => [
+				run(`${userId}-pb`, userId === "u1" ? "PT45S" : "PT30S", userId),
+			],
+		),
 		getLeaderboard: vi.fn(
 			async (resolved: ResolvedCategoryMapping, top: number) => ({
 				mapping: resolved,
@@ -64,10 +67,33 @@ function setup() {
 		players as never,
 		() => 20,
 	);
-	return {service, speedrun, players};
+	return {service, speedrun, players, mapping};
 }
 
-it("chooses the fastest current PB across every linked SRC account and shares its cache", async () => {
+async function configureAny(
+	mapping: ReturnType<typeof setup>["mapping"],
+	speedrun: ReturnType<typeof setup>["speedrun"],
+) {
+	mapping.resolveSource.mockResolvedValue({
+		...structuredClone(source),
+		category: {...source.category, variables: {v1: {mode: "any"}}},
+	} as never);
+	vi.mocked(speedrun.getCategoryVariables).mockResolvedValue([
+		{
+			id: "v1",
+			name: "Mode",
+			mandatory: true,
+			userDefined: false,
+			obsoletes: true,
+			values: [
+				{id: "easy", label: "Easy"},
+				{id: "hard", label: "Hard"},
+			],
+		},
+	]);
+}
+
+it("chooses the fastest matching run across every linked SRC account and shares its cache", async () => {
 	const {service, speedrun, players} = setup();
 	const first = await service.playerBests("race-game", "Any%", ["p1"]);
 	const second = await service.playerBests("race-game", "Any%", ["p1"]);
@@ -75,12 +101,12 @@ it("chooses the fastest current PB across every linked SRC account and shares it
 	if (first.status !== "resolved") return;
 	expect(first.results?.[0]?.players[0]).toMatchObject({
 		playerId: "p1",
-		srcUserId: "u1",
+		srcUserId: "u2",
 		state: "found",
-		run: {runId: "u1-pb", time: "PT45S"},
+		run: {runId: "u2-pb", time: "PT30S"},
 	});
 	expect(second.status).toBe("resolved");
-	expect(speedrun.getUserPersonalBests).toHaveBeenCalledTimes(2);
+	expect(speedrun.getUserPersonalBests).not.toHaveBeenCalled();
 	expect(players.speedrunAccounts).toHaveBeenCalledTimes(2);
 });
 
@@ -103,24 +129,15 @@ it("attaches player-manager names and PBs to leaderboard players without changin
 	});
 });
 
-it("falls back to verified runs only when the filtered leaderboard confirms them", async () => {
+it("finds a condition-matching PB outside the configured leaderboard top even when Personal Bests is empty", async () => {
 	const {service, speedrun, players} = setup();
 	vi.mocked(players.speedrunAccounts).mockResolvedValue(
 		new Map([["p1", ["u1"]]]),
 	);
-	vi.mocked(speedrun.getUserPersonalBests).mockRejectedValue(
-		new Error("PB response did not include condition data"),
-	);
-	vi.mocked(speedrun.getLeaderboard).mockImplementation(
-		async (resolved: ResolvedCategoryMapping, top: number) => ({
-			mapping: resolved,
-			top,
-			fetchedAt: "2026-01-01T00:00:00.000Z",
-			state: "ready",
-			entries: [{place: 1, run: run("u1-verified", "PT44S")}],
-			stale: false,
-		}),
-	);
+	vi.mocked(speedrun.getUserPersonalBests).mockResolvedValue(["u1-verified"]);
+	vi.mocked(speedrun.getUserRuns).mockResolvedValue([
+		run("u1-verified", "PT44S"),
+	]);
 	const response = await service.playerBests("race-game", "Any%", ["p1"]);
 	expect(response.status).toBe("resolved");
 	if (response.status !== "resolved") return;
@@ -128,10 +145,162 @@ it("falls back to verified runs only when the filtered leaderboard confirms them
 		state: "found",
 		run: {runId: "u1-verified", time: "PT44S"},
 	});
-	expect(speedrun.getUserRuns).toHaveBeenCalledWith(
-		"u1",
-		expect.objectContaining({
-			category: expect.objectContaining({categoryId: "c1"}),
-		}),
+	expect(speedrun.getLeaderboard).not.toHaveBeenCalled();
+});
+
+it("returns not_found only after a complete Runs search has no matching record", async () => {
+	const {service, speedrun} = setup();
+	vi.mocked(speedrun.getUserRuns).mockResolvedValue([]);
+	const response = await service.playerBests("race-game", "Any%", ["p1"]);
+	expect(response.status).toBe("resolved");
+	if (response.status !== "resolved") return;
+	expect(response.results?.[0]?.players[0]).toMatchObject({state: "not_found"});
+	expect(speedrun.getUserRuns).toHaveBeenCalled();
+	expect(speedrun.getUserPersonalBests).not.toHaveBeenCalled();
+});
+
+it("chooses the fastest Run after checking all matching candidates", async () => {
+	const {service, speedrun, players} = setup();
+	vi.mocked(players.speedrunAccounts).mockResolvedValue(
+		new Map([["p1", ["u1"]]]),
 	);
+	vi.mocked(speedrun.getUserRuns).mockResolvedValue([
+		run("slower", "PT45S"),
+		run("fastest", "PT34S"),
+		run("middle", "PT40S"),
+	]);
+	const response = await service.playerBests("race-game", "Any%", ["p1"]);
+	expect(response.status).toBe("resolved");
+	if (response.status !== "resolved") return;
+	expect(response.results?.[0]?.players[0]).toMatchObject({
+		state: "found",
+		run: {runId: "fastest", time: "PT34S"},
+	});
+});
+
+it("uses fully searched Runs candidates when Personal Bests returns an empty list", async () => {
+	const {service, speedrun} = setup();
+	vi.mocked(speedrun.getUserRuns).mockResolvedValue([
+		run("candidate", "PT40S"),
+	]);
+	vi.mocked(speedrun.getUserPersonalBests).mockResolvedValue([]);
+	const response = await service.playerBests("race-game", "Any%", ["p1"]);
+	expect(response.status).toBe("resolved");
+	if (response.status !== "resolved") return;
+	expect(response.results?.[0]?.players[0]).toMatchObject({
+		state: "found",
+		run: {runId: "candidate", time: "PT40S"},
+	});
+});
+
+it("does not resolve a Player PB from another account when one account failed", async () => {
+	const {service, speedrun} = setup();
+	vi.mocked(speedrun.getUserRuns).mockImplementation(async (userId) => {
+		if (userId === "u2") throw new Error("SRC unavailable");
+		return [run("u1-pb", "PT45S", userId)];
+	});
+	const response = await service.playerBests("race-game", "Any%", ["p1"]);
+	expect(response.status).toBe("resolved");
+	if (response.status !== "resolved") return;
+	expect(response.results?.[0]?.players[0]).toMatchObject({
+		state: "error",
+		run: null,
+	});
+});
+
+it("does not reuse a stale PB after the linked SRC accounts change", async () => {
+	const {service, speedrun, players} = setup();
+	const first = await service.playerBests("race-game", "Any%", ["p1"]);
+	expect(first.status).toBe("resolved");
+	vi.mocked(players.speedrunAccounts).mockResolvedValue(
+		new Map([["p1", ["u3"]]]),
+	);
+	vi.mocked(speedrun.getUserRuns).mockRejectedValue(
+		new Error("SRC unavailable"),
+	);
+	const second = await service.playerBests("race-game", "Any%", ["p1"], true);
+	expect(second.status).toBe("resolved");
+	if (second.status !== "resolved") return;
+	expect(second.results?.[0]?.players[0]).toMatchObject({
+		srcUserId: "u3",
+		state: "error",
+		run: null,
+		stale: false,
+	});
+});
+
+it("returns each Any leaderboard independently and marks only the failed mapping as error", async () => {
+	const {service, speedrun, mapping} = setup();
+	await configureAny(mapping, speedrun);
+	vi.mocked(speedrun.getLeaderboard).mockImplementation(
+		async (resolved: ResolvedCategoryMapping, top: number) => {
+			if (resolved.category.variables.v1 === "hard")
+				throw new Error("temporary SRC failure");
+			return {
+				mapping: resolved,
+				top,
+				fetchedAt: "2026-01-01T00:00:00.000Z",
+				state: "ready",
+				entries: [{place: 1, run: run("easy-run", "PT40S")}],
+				stale: false,
+			};
+		},
+	);
+	const first = await service.leaderboards("race-game", "Any%");
+	expect(first.status).toBe("resolved");
+	if (first.status !== "resolved") return;
+	expect(first.leaderboards?.map(({state}) => state)).toEqual([
+		"ready",
+		"error",
+	]);
+	expect(first.leaderboards?.[1]).toMatchObject({
+		mapping: {category: {variables: {v1: "hard"}}},
+		message: "temporary SRC failure",
+	});
+
+	vi.mocked(speedrun.getLeaderboard).mockRejectedValue(new Error("still down"));
+	const refreshed = await service.leaderboards("race-game", "Any%", true);
+	expect(refreshed.status).toBe("resolved");
+	if (refreshed.status !== "resolved") return;
+	expect(
+		refreshed.leaderboards?.map(({state, stale}) => [state, stale]),
+	).toEqual([
+		["ready", true],
+		["error", false],
+	]);
+});
+
+it("reports every Any mapping independently when all leaderboard requests fail", async () => {
+	const {service, speedrun, mapping} = setup();
+	await configureAny(mapping, speedrun);
+	vi.mocked(speedrun.getLeaderboard).mockRejectedValue(new Error("offline"));
+	const response = await service.leaderboards("race-game", "Any%");
+	expect(response.status).toBe("resolved");
+	if (response.status !== "resolved") return;
+	expect(response.leaderboards).toHaveLength(2);
+	expect(response.leaderboards?.map(({state}) => state)).toEqual([
+		"error",
+		"error",
+	]);
+});
+
+it("keeps PB results independent when one Any mapping fails", async () => {
+	const {service, speedrun, mapping, players} = setup();
+	await configureAny(mapping, speedrun);
+	vi.mocked(players.speedrunAccounts).mockResolvedValue(
+		new Map([["p1", ["u1"]]]),
+	);
+	vi.mocked(speedrun.getUserRuns).mockImplementation(
+		async (_userId: string, resolved: ResolvedCategoryMapping) => {
+			if (resolved.category.variables.v1 === "hard")
+				throw new Error("page failed");
+			return [run("u1-pb", "PT40S")];
+		},
+	);
+	const response = await service.playerBests("race-game", "Any%", ["p1"]);
+	expect(response.status).toBe("resolved");
+	if (response.status !== "resolved") return;
+	expect(
+		response.results?.map(({players: results}) => results[0]?.state),
+	).toEqual(["found", "error"]);
 });

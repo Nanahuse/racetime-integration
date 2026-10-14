@@ -202,9 +202,10 @@ export type SpeedrunLeaderboard = {
 	mapping: ResolvedCategoryMapping;
 	top: number;
 	fetchedAt: string;
-	state: "ready" | "not_found";
+	state: "ready" | "not_found" | "error";
 	entries: Array<{place: number; run: SpeedrunRun}>;
 	stale: boolean;
+	message?: string;
 };
 export type SpeedrunPlayerBest = {
 	playerId: string | null;

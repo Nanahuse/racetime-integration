@@ -11,18 +11,25 @@ function mappingId(record: CategoryMappingRecord): string {
 	return `${record.mapping.racetime.categorySlug}\u0000${record.mapping.racetime.goal}`;
 }
 
+type MappingResult = {
+	boards: SpeedrunLeaderboard[];
+	state: string;
+	error: string | null;
+};
+
 export function Rankings() {
 	const [records, setRecords] = useState<CategoryMappingRecord[]>([]);
+	const [mappingsError, setMappingsError] = useState<string | null>(null);
 	const [selected, setSelected] = useState("");
-	const [boards, setBoards] = useState<SpeedrunLeaderboard[]>([]);
-	const [busy, setBusy] = useState(false);
-	const busyRef = useRef(false);
-	const [error, setError] = useState<string | null>(null);
-	const [state, setState] = useState<string | null>(null);
+	const [results, setResults] = useState<Record<string, MappingResult>>({});
+	const [loadingIds, setLoadingIds] = useState<string[]>([]);
+	const activeIds = useRef(new Set<string>());
 	const selectedRecord = useMemo(
 		() => records.find((record) => mappingId(record) === selected),
 		[records, selected],
 	);
+	const selectedResult = results[selected];
+	const selectedLoading = loadingIds.includes(selected);
 
 	useEffect(() => {
 		void request("listCategoryMappings", undefined)
@@ -32,47 +39,65 @@ export function Rankings() {
 					(current) => current || (next[0] ? mappingId(next[0]) : ""),
 				);
 			})
-			.catch((cause) => setError(errorMessage(cause)));
+			.catch((cause) => setMappingsError(errorMessage(cause)));
 	}, []);
 
 	const load = useCallback(
-		async (refresh = false) => {
-			if (!selectedRecord || busyRef.current) return;
-			busyRef.current = true;
-			setBusy(true);
-			setError(null);
-			setState("取得中");
+		async (record: CategoryMappingRecord, refresh = false) => {
+			const id = mappingId(record);
+			if (activeIds.current.has(id)) return;
+			activeIds.current.add(id);
+			setLoadingIds((current) => [...current, id]);
+			setResults((current) => ({
+				...current,
+				[id]: {
+					boards: current[id]?.boards ?? [],
+					state: "取得中",
+					error: null,
+				},
+			}));
 			try {
 				const result = await request("getSpeedrunLeaderboards", {
-					categorySlug: selectedRecord.mapping.racetime.categorySlug,
-					goal: selectedRecord.mapping.racetime.goal,
+					categorySlug: record.mapping.racetime.categorySlug,
+					goal: record.mapping.racetime.goal,
 					refresh,
 				});
+				let next: MappingResult;
 				if (result.status === "unregistered") {
-					setBoards([]);
-					setState("マッピング未登録");
-					return;
+					next = {boards: [], state: "マッピング未登録", error: null};
+				} else if (result.status === "inconsistent") {
+					next = {
+						boards: [],
+						state: `マッピング不整合: ${result.message}`,
+						error: null,
+					};
+				} else {
+					next = {
+						boards: result.leaderboards ?? [],
+						state: result.stale ? "古いキャッシュを表示中" : "取得済み",
+						error: null,
+					};
 				}
-				if (result.status === "inconsistent") {
-					setBoards([]);
-					setState(`マッピング不整合: ${result.message}`);
-					return;
-				}
-				setBoards(result.leaderboards ?? []);
-				setState(result.stale ? "古いキャッシュを表示中" : "取得済み");
+				setResults((current) => ({...current, [id]: next}));
 			} catch (cause) {
-				setError(errorMessage(cause));
-				setState("通信エラー");
+				setResults((current) => ({
+					...current,
+					[id]: {
+						boards: current[id]?.boards ?? [],
+						state: "通信エラー",
+						error: errorMessage(cause),
+					},
+				}));
 			} finally {
-				busyRef.current = false;
-				setBusy(false);
+				activeIds.current.delete(id);
+				setLoadingIds((current) => current.filter((active) => active !== id));
 			}
 		},
-		[selectedRecord],
+		[],
 	);
 
 	useEffect(() => {
-		if (selectedRecord) void load();
+		if (selectedRecord) void load(selectedRecord);
 	}, [selectedRecord, load]);
 
 	return (
@@ -84,10 +109,7 @@ export function Rankings() {
 					<select
 						aria-label='Ranking mapping'
 						value={selected}
-						onChange={(event) => {
-							setSelected(event.target.value);
-							setBoards([]);
-						}}
+						onChange={(event) => setSelected(event.target.value)}
 					>
 						{records.map((record) => (
 							<option
@@ -102,25 +124,28 @@ export function Rankings() {
 				</label>
 				<button
 					type='button'
-					disabled={!selectedRecord || busy}
-					onClick={() => void load(true)}
+					disabled={!selectedRecord || selectedLoading}
+					onClick={() => selectedRecord && void load(selectedRecord, true)}
 				>
-					{busy ? "取得中…" : "再取得"}
+					{selectedLoading ? "取得中…" : "再取得"}
 				</button>
 			</div>
-			{error && <Callout tone='error'>{error}</Callout>}
-			{state && (
+			{mappingsError && <Callout tone='error'>{mappingsError}</Callout>}
+			{selectedResult?.error && (
+				<Callout tone='error'>{selectedResult.error}</Callout>
+			)}
+			{selectedResult && (
 				<p className='muted'>
-					{state}
-					{boards[0]
-						? ` · 最終取得 ${new Date(boards[0].fetchedAt).toLocaleString()}`
+					{selectedResult.state}
+					{selectedResult.boards[0]
+						? ` · 最終取得 ${new Date(selectedResult.boards[0].fetchedAt).toLocaleString()}`
 						: ""}
 				</p>
 			)}
-			{!records.length && !error && (
+			{!records.length && !selectedResult?.error && (
 				<p className='muted'>Category Mappingがありません。</p>
 			)}
-			{boards.map((board) => (
+			{selectedResult?.boards.map((board) => (
 				<div
 					className='subpanel'
 					key={board.mapping.key}
@@ -128,7 +153,12 @@ export function Rankings() {
 					<h3>
 						{board.mapping.game.gameName} / {board.mapping.label}
 					</h3>
-					{board.state === "not_found" ? (
+					{board.state === "error" ? (
+						<Callout tone='error'>
+							{board.message ?? "この条件のLeaderboardを取得できませんでした。"}
+							{board.stale ? " · 古いキャッシュを表示中" : ""}
+						</Callout>
+					) : board.state === "not_found" ? (
 						<p className='muted'>該当する記録はありません。</p>
 					) : (
 						<table>

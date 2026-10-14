@@ -136,11 +136,11 @@ if (time) {
 
 両操作は `categorySlug` と `goal` から既存Mappingを解決し、`Any` を `maxResolvedMappings` の範囲内で具体的な条件へ展開します。条件ごとに独立した結果を返し、`mapping.key` で識別します。未登録は `unregistered`、MappingとSRC定義の不一致は `inconsistent`、SRC通信失敗は `Response` のerrorになります。
 
-`getSpeedrunLeaderboards` は設定 `leaderboardTop` をSRCの `top` に渡します。SRCの `place` を維持し、同順位のRunをすべて返します。RunはID、URL、検証済みISO 8601時間、日付、ユーザー/ゲスト情報を含みます。Timing Method指定時はその時間、未指定時はSRC Primary Timeを使用します。
+`getSpeedrunLeaderboards` は設定 `leaderboardTop` をSRCの `top` に渡します。SRCの `place` を維持し、同順位のRunをすべて返します。RunはID、URL、検証済みISO 8601時間、日付、ユーザー/ゲスト情報を含みます。Timing Method指定時はその時間、未指定時はSRC Primary Timeを使用します。各Mappingの `state` は `ready` / `not_found` / `error` で、取得失敗時は `message` を含みます。Any展開ではMappingごとに状態と `stale` を返すため、一部の失敗が他の成功結果を失わせません。
 
-`getSpeedrunPlayerBests` は `playerIds` のPlayer Manager Player IDごとに、Primary/Secondaryの全SRCアカウントを検索します。SRC Personal Bestsから現行の有効Runを取得し、Game/Category/Level、Variables、Platform、Region、Emulator、Timing Methodを照合して最速を `Temporal.Duration` で選びます。PB状態は `found` / `not_found` / `unlinked` / `error` です。Leaderboard上位n位への掲載有無には依存しません。
+`getSpeedrunPlayerBests` は `playerIds` のPlayer Manager Player IDごとに、Primary/Secondaryの全SRCアカウントを検索します。条件付きPBは、Game/Category/Level、Variables、Platform、Region、Emulator、Timing Methodに一致する有効Runのうち最速の記録です。Runs APIの全ページから条件と時間をRunデータでも検証して `Temporal.Duration` で最速を選びます。Leaderboard上位n位やPersonal Bests APIの一覧には依存しません。未記録のTiming Method値はそのRunだけを除外し、不正な時間は取得エラーとします。PB状態は `found` / `not_found` / `unlinked` / `error` です。`not_found` は必要な全検索が完了し一致候補がなかった場合に限り、途中のページ取得失敗は `error` です。複数アカウントの一部が失敗した場合は他のアカウントの部分結果だけでPBを確定しません。
 
-Extension内の条件別キャッシュは5分TTLで、同時要求は共有し、HTTP並行数を4に制限します。`refresh: true` で再取得します。再取得に失敗して直前の正常値がある場合は `stale: true` を付けて返し、キャッシュなしの失敗はerrorです。DashboardとNodeCG外部バンドルは同じ公開Protocolとキャッシュを使用します。レース監視更新はSRC取得を開始しません。
+Extension内の条件別キャッシュは5分TTLで、同時要求は共有し、HTTP並行数を4に制限します。`refresh: true` は該当条件だけを再取得します。再取得に失敗して直前の正常値がある場合は `stale: true` を付けて返し、キャッシュなしのLeaderboard失敗はMappingの `state: "error"`、PB失敗はPlayerの `state: "error"` です。アカウント構成が変わった場合は、異なる構成で保存した集約PBをstale結果として再利用しません。通信失敗は正常値としてキャッシュしません。DashboardとNodeCG外部バンドルは同じ公開Protocolとキャッシュを使用します。レース監視更新はSRC取得を開始しません。
 
 Sheetsの同時操作・設定変更はプロセス内で直列化します。外部アプリや別プロセスが読み書きの間に変更することを排他する契約ではありません。
 

@@ -33,16 +33,18 @@ export interface SpeedrunClient {
 	getLeaderboard?(
 		mapping: ResolvedCategoryMapping,
 		top: number,
+		refresh?: boolean,
 	): Promise<SpeedrunLeaderboard>;
 	getUserRuns?(
 		userId: string,
 		mapping: ResolvedCategoryMapping,
+		refresh?: boolean,
 	): Promise<SpeedrunRun[]>;
 	getUserPersonalBests?(
 		userId: string,
 		mapping: ResolvedCategoryMapping,
-	): Promise<SpeedrunRun[]>;
-	clearRecordCache?(): void;
+		refresh?: boolean,
+	): Promise<string[]>;
 }
 
 type Fetcher = (
@@ -104,6 +106,13 @@ function requireDuration(value: unknown, path: string): string {
 		);
 	}
 	return value;
+}
+
+function optionalDuration(value: unknown, path: string): string | null {
+	if (value === undefined || value === null) return null;
+	if (typeof value !== "string")
+		throw new SpeedrunError("invalid_payload", `${path} is not a duration.`);
+	return requireDuration(value, path);
 }
 
 function optionalStringArray(
@@ -312,15 +321,6 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 			else this.activeRequests--;
 		};
 	}
-	clearRecordCache(): void {
-		for (const key of this.cache.keys())
-			if (
-				key.startsWith("leaderboard:") ||
-				key.startsWith("runs:") ||
-				key.startsWith("pbs:")
-			)
-				this.cache.delete(key);
-	}
 	constructor(
 		private readonly options: {
 			fetchImpl?: Fetcher;
@@ -423,9 +423,13 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 		return results;
 	}
 
-	private cached<T>(key: string, load: () => Promise<T>): Promise<T> {
+	private cached<T>(
+		key: string,
+		load: () => Promise<T>,
+		refresh = false,
+	): Promise<T> {
 		const entry = this.cache.get(key);
-		if (entry && entry.expires > Date.now())
+		if (!refresh && entry && entry.expires > Date.now())
 			return Promise.resolve(entry.value as T);
 		const active = this.pending.get(key);
 		if (active) return active as Promise<T>;
@@ -442,10 +446,17 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 	private async paginated<R>(
 		path: string,
 		query: Record<string, string | number>,
-		map: (value: unknown) => R,
+		map: (value: unknown) => R | null,
 	): Promise<R[]> {
 		const results: R[] = [];
-		for (let offset = 0; ; offset += PAGE_SIZE) {
+		const seenPages = new Set<string>();
+		let offset = 0;
+		for (;;) {
+			if (!Number.isSafeInteger(offset))
+				throw new SpeedrunError(
+					"invalid_payload",
+					"Speedrun.com pagination offset exceeded the safe integer range.",
+				);
 			const envelope = requireRecord(
 				await this.request(path, {...query, max: PAGE_SIZE, offset}),
 				"response",
@@ -455,20 +466,62 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 					"invalid_payload",
 					"response.data must be an array.",
 				);
-			const page = envelope.data.map(map);
-			results.push(...page);
-			const pagination = isRecord(envelope.pagination)
-				? envelope.pagination
-				: {};
+			const pagination = requireRecord(
+				envelope.pagination,
+				"response.pagination",
+			);
 			const size = pagination.size;
-			if (typeof size !== "number" || size < PAGE_SIZE || page.length === 0)
-				return results;
+			if (
+				typeof size !== "number" ||
+				!Number.isSafeInteger(size) ||
+				size < 0 ||
+				size > PAGE_SIZE ||
+				size !== envelope.data.length
+			)
+				throw new SpeedrunError(
+					"invalid_payload",
+					"Speedrun.com pagination size does not match response.data.",
+				);
+			if (pagination.offset !== undefined && pagination.offset !== offset)
+				throw new SpeedrunError(
+					"invalid_payload",
+					"Speedrun.com pagination offset did not advance as requested.",
+				);
+			if (pagination.max !== undefined && pagination.max !== PAGE_SIZE)
+				throw new SpeedrunError(
+					"invalid_payload",
+					"Speedrun.com pagination max changed during the search.",
+				);
+			const page = envelope.data.map(map);
+			results.push(...page.filter((value): value is R => value !== null));
+			if (size < PAGE_SIZE) return results;
+			const fingerprint = JSON.stringify(
+				envelope.data.map((item) => {
+					if (!isRecord(item)) return null;
+					if (isRecord(item.run)) return item.run.id ?? null;
+					return item.id ?? null;
+				}),
+			);
+			if (seenPages.has(fingerprint))
+				throw new SpeedrunError(
+					"invalid_payload",
+					"Speedrun.com repeated a full page without advancing pagination.",
+				);
+			seenPages.add(fingerprint);
+			const nextOffset = offset + size;
+			if (nextOffset <= offset)
+				throw new SpeedrunError(
+					"invalid_payload",
+					"Speedrun.com pagination did not make progress.",
+				);
+			offset = nextOffset;
 		}
 	}
 
 	getLeaderboard(
 		mapping: ResolvedCategoryMapping,
 		top: number,
+		refresh = false,
 	): Promise<SpeedrunLeaderboard> {
 		const {game, category} = mapping;
 		const path = category.levelId
@@ -482,170 +535,178 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 		if (category.timingMethod) query.timing = category.timingMethod;
 		for (const [id, value] of Object.entries(category.variables))
 			query[`var-${id}`] = value;
-		return this.cached(`leaderboard:${mapping.key}:${top}`, async () => {
-			const envelope = requireRecord(
-				await this.request(path, query),
-				"response",
-			);
-			const board = requireRecord(envelope.data, "leaderboard");
-			if (
-				board.game !== game.gameId ||
-				board.category !== category.categoryId ||
-				(board.level ?? null) !== category.levelId
-			)
-				throw new SpeedrunError(
-					"invalid_payload",
-					"Leaderboard response does not match the requested game/category/level.",
+		return this.cached(
+			`leaderboard:${mapping.key}:${top}`,
+			async () => {
+				const envelope = requireRecord(
+					await this.request(path, query),
+					"response",
 				);
-			if (
-				category.platformId !== null &&
-				board.platform !== category.platformId
-			)
-				throw new SpeedrunError(
-					"invalid_payload",
-					"Leaderboard response has a different platform filter.",
-				);
-			if (category.regionId !== null && board.region !== category.regionId)
-				throw new SpeedrunError(
-					"invalid_payload",
-					"Leaderboard response has a different region filter.",
-				);
-			if (category.emulator !== null && board.emulators !== category.emulator)
-				throw new SpeedrunError(
-					"invalid_payload",
-					"Leaderboard response has a different emulator filter.",
-				);
-			if (
-				category.timingMethod !== null &&
-				board.timing !== category.timingMethod
-			)
-				throw new SpeedrunError(
-					"invalid_payload",
-					"Leaderboard response has a different timing filter.",
-				);
-			if (!isRecord(board.values))
-				throw new SpeedrunError(
-					"invalid_payload",
-					"Leaderboard response has invalid variable filters.",
-				);
-			const boardValues = board.values as Record<string, unknown>;
-			if (
-				Object.entries(category.variables).some(
-					([id, value]) => boardValues[id] !== value,
-				)
-			)
-				throw new SpeedrunError(
-					"invalid_payload",
-					"Leaderboard response has different variable filters.",
-				);
-			if (!Array.isArray(board.runs))
-				throw new SpeedrunError(
-					"invalid_payload",
-					"leaderboard.runs must be an array.",
-				);
-			if (!Array.isArray(board.players))
-				throw new SpeedrunError(
-					"invalid_payload",
-					"leaderboard.players must contain the embedded player list.",
-				);
-			const embeddedPlayers = board.players;
-			const playerIndex = new Map<string, SpeedrunRun["players"][number]>();
-			for (const raw of embeddedPlayers) {
-				if (!isRecord(raw)) continue;
-				if (raw.rel === "user" && typeof raw.id === "string") {
-					const names = isRecord(raw.names) ? raw.names : {};
-					const name =
-						typeof names.international === "string"
-							? names.international
-							: raw.id;
-					playerIndex.set(`user:${raw.id}`, {
-						userId: raw.id,
-						name,
-						url:
-							typeof raw.weblink === "string"
-								? raw.weblink
-								: `https://www.speedrun.com/users/${encodeURIComponent(raw.id)}`,
-					});
-				} else if (raw.rel === "guest" && typeof raw.name === "string") {
-					playerIndex.set(`guest:${raw.name}`, {
-						userId: null,
-						name: raw.name,
-						url: null,
-					});
-				}
-			}
-			const entries = board.runs.map((raw, index) => {
-				const item = requireRecord(raw, `leaderboard.runs[${index}]`);
+				const board = requireRecord(envelope.data, "leaderboard");
 				if (
-					typeof item.place !== "number" ||
-					!Number.isSafeInteger(item.place) ||
-					item.place < 1
+					board.game !== game.gameId ||
+					board.category !== category.categoryId ||
+					(board.level ?? null) !== category.levelId
 				)
 					throw new SpeedrunError(
 						"invalid_payload",
-						"leaderboard place is invalid.",
+						"Leaderboard response does not match the requested game/category/level.",
 					);
-				const run = requireRecord(item.run, `leaderboard.runs[${index}].run`);
-				const id = requireString(run, "id", `leaderboard.runs[${index}].run`);
-				const times = requireRecord(run.times, `run ${id}.times`);
-				const time = category.timingMethod
-					? times[category.timingMethod]
-					: times.primary;
-				const duration = requireDuration(time, `run ${id} leaderboard time`);
-				const players: SpeedrunRun["players"] = Array.isArray(run.players)
-					? run.players.map((player): SpeedrunRun["players"][number] => {
-							if (!isRecord(player))
+				if (
+					category.platformId !== null &&
+					board.platform !== category.platformId
+				)
+					throw new SpeedrunError(
+						"invalid_payload",
+						"Leaderboard response has a different platform filter.",
+					);
+				if (category.regionId !== null && board.region !== category.regionId)
+					throw new SpeedrunError(
+						"invalid_payload",
+						"Leaderboard response has a different region filter.",
+					);
+				if (category.emulator !== null && board.emulators !== category.emulator)
+					throw new SpeedrunError(
+						"invalid_payload",
+						"Leaderboard response has a different emulator filter.",
+					);
+				if (
+					category.timingMethod !== null &&
+					board.timing !== category.timingMethod
+				)
+					throw new SpeedrunError(
+						"invalid_payload",
+						"Leaderboard response has a different timing filter.",
+					);
+				if (!isRecord(board.values))
+					throw new SpeedrunError(
+						"invalid_payload",
+						"Leaderboard response has invalid variable filters.",
+					);
+				const boardValues = board.values as Record<string, unknown>;
+				if (
+					Object.entries(category.variables).some(
+						([id, value]) => boardValues[id] !== value,
+					)
+				)
+					throw new SpeedrunError(
+						"invalid_payload",
+						"Leaderboard response has different variable filters.",
+					);
+				if (!Array.isArray(board.runs))
+					throw new SpeedrunError(
+						"invalid_payload",
+						"leaderboard.runs must be an array.",
+					);
+				if (!Array.isArray(board.players))
+					throw new SpeedrunError(
+						"invalid_payload",
+						"leaderboard.players must contain the embedded player list.",
+					);
+				const embeddedPlayers = board.players;
+				const playerIndex = new Map<string, SpeedrunRun["players"][number]>();
+				for (const raw of embeddedPlayers) {
+					if (!isRecord(raw)) continue;
+					if (raw.rel === "user" && typeof raw.id === "string") {
+						const names = isRecord(raw.names) ? raw.names : {};
+						const name =
+							typeof names.international === "string"
+								? names.international
+								: raw.id;
+						playerIndex.set(`user:${raw.id}`, {
+							userId: raw.id,
+							name,
+							url:
+								typeof raw.weblink === "string"
+									? raw.weblink
+									: `https://www.speedrun.com/users/${encodeURIComponent(raw.id)}`,
+						});
+					} else if (raw.rel === "guest" && typeof raw.name === "string") {
+						playerIndex.set(`guest:${raw.name}`, {
+							userId: null,
+							name: raw.name,
+							url: null,
+						});
+					}
+				}
+				const entries = board.runs.flatMap((raw, index) => {
+					const item = requireRecord(raw, `leaderboard.runs[${index}]`);
+					if (
+						typeof item.place !== "number" ||
+						!Number.isSafeInteger(item.place) ||
+						item.place < 1
+					)
+						throw new SpeedrunError(
+							"invalid_payload",
+							"leaderboard place is invalid.",
+						);
+					const run = requireRecord(item.run, `leaderboard.runs[${index}].run`);
+					const id = requireString(run, "id", `leaderboard.runs[${index}].run`);
+					const times = requireRecord(run.times, `run ${id}.times`);
+					const time = category.timingMethod
+						? times[category.timingMethod]
+						: times.primary;
+					const duration = optionalDuration(time, `run ${id} leaderboard time`);
+					if (duration === null) return [];
+					const players: SpeedrunRun["players"] = Array.isArray(run.players)
+						? run.players.map((player): SpeedrunRun["players"][number] => {
+								if (!isRecord(player))
+									throw new SpeedrunError(
+										"invalid_payload",
+										`run ${id} has invalid player data.`,
+									);
+								if (player.rel === "user" && typeof player.id === "string") {
+									const embedded = playerIndex.get(`user:${player.id}`);
+									if (embedded) return embedded;
+								}
+								if (player.rel === "guest" && typeof player.name === "string") {
+									const embedded = playerIndex.get(`guest:${player.name}`);
+									if (embedded) return embedded;
+								}
 								throw new SpeedrunError(
 									"invalid_payload",
-									`run ${id} has invalid player data.`,
+									`run ${id} has an unknown player reference.`,
 								);
-							if (player.rel === "user" && typeof player.id === "string") {
-								const embedded = playerIndex.get(`user:${player.id}`);
-								if (embedded) return embedded;
-							}
-							if (player.rel === "guest" && typeof player.name === "string") {
-								const embedded = playerIndex.get(`guest:${player.name}`);
-								if (embedded) return embedded;
-							}
-							throw new SpeedrunError(
-								"invalid_payload",
-								`run ${id} has an unknown player reference.`,
-							);
-						})
-					: [];
-				if (!Array.isArray(run.players))
-					throw new SpeedrunError(
-						"invalid_payload",
-						`run ${id}.players must be an array.`,
-					);
+							})
+						: [];
+					if (!Array.isArray(run.players))
+						throw new SpeedrunError(
+							"invalid_payload",
+							`run ${id}.players must be an array.`,
+						);
+					return [
+						{
+							place: item.place,
+							run: {
+								runId: id,
+								url:
+									typeof run.weblink === "string"
+										? run.weblink
+										: `https://www.speedrun.com/runs/${encodeURIComponent(id)}`,
+								time: duration,
+								date: typeof run.date === "string" ? run.date : null,
+								players,
+							},
+						},
+					];
+				});
 				return {
-					place: item.place,
-					run: {
-						runId: id,
-						url:
-							typeof run.weblink === "string"
-								? run.weblink
-								: `https://www.speedrun.com/runs/${encodeURIComponent(id)}`,
-						time: duration,
-						date: typeof run.date === "string" ? run.date : null,
-						players,
-					},
+					mapping,
+					top,
+					fetchedAt: new Date().toISOString(),
+					state: entries.length ? "ready" : "not_found",
+					entries,
+					stale: false,
 				};
-			});
-			return {
-				mapping,
-				top,
-				fetchedAt: new Date().toISOString(),
-				state: entries.length ? "ready" : "not_found",
-				entries,
-				stale: false,
-			};
-		});
+			},
+			refresh,
+		);
 	}
 
 	getUserRuns(
 		userId: string,
 		mapping: ResolvedCategoryMapping,
+		refresh = false,
 	): Promise<SpeedrunRun[]> {
 		const {game, category} = mapping;
 		const query: Record<string, string | number> = {
@@ -660,25 +721,76 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 		if (category.regionId) query.region = category.regionId;
 		if (category.emulator !== null)
 			query.emulated = category.emulator ? "yes" : "no";
-		return this.cached(`runs:${userId}:${mapping.key}`, () =>
-			this.paginated("/runs", query, (value) => {
-				const run = requireRecord(value, "run");
-				if (
-					run.status !== undefined &&
-					(!isRecord(run.status) || run.status.status !== "verified")
-				)
-					throw new SpeedrunError(
-						"invalid_payload",
-						"runs response included a non-verified run.",
-					);
-				const id = requireString(run, "id", "run");
-				const times = requireRecord(run.times, `run ${id}.times`);
-				const time = category.timingMethod
-					? times[category.timingMethod]
-					: times.primary;
-				const duration = requireDuration(time, `run ${id} requested time`);
-				const players: SpeedrunRun["players"] = Array.isArray(run.players)
-					? run.players.flatMap((player): SpeedrunRun["players"] => {
+		return this.cached(
+			`runs:${userId}:${mapping.key}`,
+			() =>
+				this.paginated("/runs", query, (value) => {
+					const run = requireRecord(value, "run");
+					const status = requireRecord(run.status, "run.status");
+					const statusName = requireString(status, "status", "run.status");
+					if (statusName !== "verified") return null;
+					const id = requireString(run, "id", "run");
+					if (
+						run.game !== game.gameId ||
+						run.category !== category.categoryId ||
+						(run.level ?? null) !== category.levelId
+					)
+						return null;
+					const players = run.players;
+					if (!Array.isArray(players))
+						throw new SpeedrunError(
+							"invalid_payload",
+							`run ${id}.players must be an array.`,
+						);
+					if (
+						!players.some(
+							(player) =>
+								isRecord(player) &&
+								player.rel === "user" &&
+								player.id === userId,
+						)
+					)
+						return null;
+					const system =
+						category.platformId !== null ||
+						category.regionId !== null ||
+						category.emulator !== null
+							? requireRecord(run.system, `run ${id}.system`)
+							: isRecord(run.system)
+								? run.system
+								: {};
+					if (
+						category.platformId !== null &&
+						system.platform !== category.platformId
+					)
+						return null;
+					if (category.regionId !== null && system.region !== category.regionId)
+						return null;
+					if (
+						category.emulator !== null &&
+						system.emulated !== category.emulator
+					)
+						return null;
+					const categoryValues = Object.entries(category.variables);
+					const values = categoryValues.length
+						? requireRecord(run.values, `run ${id}.values`)
+						: isRecord(run.values)
+							? run.values
+							: {};
+					if (
+						categoryValues.some(
+							([variableId, expected]) => values[variableId] !== expected,
+						)
+					)
+						return null;
+					const times = requireRecord(run.times, `run ${id}.times`);
+					const time = category.timingMethod
+						? times[category.timingMethod]
+						: times.primary;
+					const duration = optionalDuration(time, `run ${id} requested time`);
+					if (duration === null) return null;
+					const mappedPlayers: SpeedrunRun["players"] = players.flatMap(
+						(player): SpeedrunRun["players"] => {
 							if (!isRecord(player)) return [];
 							if (player.rel === "user" && typeof player.id === "string") {
 								const names = isRecord(player.names) ? player.names : {};
@@ -699,19 +811,20 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 							if (player.rel === "guest" && typeof player.name === "string")
 								return [{userId: null, name: player.name, url: null}];
 							return [];
-						})
-					: [];
-				return {
-					runId: id,
-					url:
-						typeof run.weblink === "string"
-							? run.weblink
-							: `https://www.speedrun.com/runs/${encodeURIComponent(id)}`,
-					time: duration,
-					date: typeof run.date === "string" ? run.date : null,
-					players,
-				};
-			}),
+						},
+					);
+					return {
+						runId: id,
+						url:
+							typeof run.weblink === "string"
+								? run.weblink
+								: `https://www.speedrun.com/runs/${encodeURIComponent(id)}`,
+						time: duration,
+						date: typeof run.date === "string" ? run.date : null,
+						players: mappedPlayers,
+					};
+				}),
+			refresh,
 		);
 	}
 
@@ -783,94 +896,31 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 	getUserPersonalBests(
 		userId: string,
 		mapping: ResolvedCategoryMapping,
-	): Promise<SpeedrunRun[]> {
+		refresh = false,
+	): Promise<string[]> {
 		const path = `/users/${encodeURIComponent(userId)}/personal-bests`;
-		return this.cached(`pbs:${userId}:${mapping.key}`, async () => {
-			const pages = await this.paginated(
-				path,
-				{game: mapping.game.gameId, embed: "players"},
-				(raw) => {
-					const entry = requireRecord(raw, "personal-bests entry");
-					const run = requireRecord(entry.run, "personal-bests entry.run");
-					const category = mapping.category;
-					if (!isRecord(run.system) || !isRecord(run.values))
-						throw new SpeedrunError(
-							"invalid_payload",
-							`run ${String(run.id)} has no condition data.`,
-						);
-					const runValues = run.values as Record<string, unknown>;
-					if (
-						run.game !== mapping.game.gameId ||
-						run.category !== category.categoryId ||
-						(run.level ?? null) !== category.levelId
-					)
-						return [];
-					if (
-						category.platformId !== null &&
-						run.system.platform !== category.platformId
-					)
-						return [];
-					if (
-						category.regionId !== null &&
-						run.system.region !== category.regionId
-					)
-						return [];
-					if (
-						category.emulator !== null &&
-						run.system.emulated !== category.emulator
-					)
-						return [];
-					if (
-						Object.entries(category.variables).some(
-							([id, value]) => runValues[id] !== value,
+		return this.cached(
+			`pbs:${userId}:${mapping.game.gameId}`,
+			() =>
+				this.paginated(
+					path,
+					{game: mapping.game.gameId, embed: "players"},
+					(raw) => {
+						const entry = requireRecord(raw, "personal-bests entry");
+						const run = requireRecord(entry.run, "personal-bests entry.run");
+						const id = requireString(run, "id", "personal-bests entry.run");
+						const status = requireRecord(run.status, `run ${id}.status`);
+						if (
+							requireString(status, "status", `run ${id}.status`) !== "verified"
 						)
-					)
-						return [];
-					const id = requireString(run, "id", "personal-bests entry.run");
-					const times = requireRecord(run.times, `run ${id}.times`);
-					const time = mapping.category.timingMethod
-						? times[mapping.category.timingMethod]
-						: times.primary;
-					const duration = requireDuration(time, `run ${id} requested time`);
-					const players: SpeedrunRun["players"] = Array.isArray(run.players)
-						? run.players.flatMap((player): SpeedrunRun["players"] => {
-								if (!isRecord(player)) return [];
-								if (player.rel === "user" && typeof player.id === "string") {
-									const names = isRecord(player.names) ? player.names : {};
-									return [
-										{
-											userId: player.id,
-											name:
-												typeof names.international === "string"
-													? names.international
-													: player.id,
-											url:
-												typeof player.weblink === "string"
-													? player.weblink
-													: `https://www.speedrun.com/users/${encodeURIComponent(player.id)}`,
-										},
-									];
-								}
-								if (player.rel === "guest" && typeof player.name === "string")
-									return [{userId: null, name: player.name, url: null}];
-								return [];
-							})
-						: [];
-					return [
-						{
-							runId: id,
-							url:
-								typeof run.weblink === "string"
-									? run.weblink
-									: `https://www.speedrun.com/runs/${encodeURIComponent(id)}`,
-							time: duration,
-							date: typeof run.date === "string" ? run.date : null,
-							players,
-						},
-					];
-				},
-			);
-			return pages.flat();
-		});
+							throw new SpeedrunError(
+								"invalid_payload",
+								`Personal Bests included a non-verified run ${id}.`,
+							);
+						return id;
+					},
+				),
+			refresh,
+		);
 	}
 }

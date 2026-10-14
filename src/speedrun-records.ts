@@ -15,7 +15,11 @@ type Resolution =
 	| {status: "resolved"; mappings: ResolvedCategoryMapping[]}
 	| {status: "unregistered"}
 	| {status: "inconsistent"; message: string};
-type RecordCacheEntry = {expiresAt: number; value: unknown};
+type RecordCacheEntry = {
+	expiresAt: number;
+	value: unknown;
+	accountIds?: readonly string[];
+};
 const RECORD_CACHE_TTL_MS = 5 * 60 * 1000;
 
 function compareTime(a: SpeedrunRun, b: SpeedrunRun): number {
@@ -94,42 +98,14 @@ export class SpeedrunRecordService {
 				`pb:${userId}:${mapping.key}`,
 				refresh,
 				async () => {
-					if (!this.speedrun.getUserPersonalBests)
-						throw new Error("Speedrun.com Personal Bests API is unavailable");
-					try {
-						return {
-							runs: await this.speedrun.getUserPersonalBests(userId, mapping),
-							fetchedAt: new Date().toISOString(),
-						};
-					} catch (pbError) {
-						if (!this.speedrun.getUserRuns || !this.speedrun.getLeaderboard)
-							throw pbError;
-						const runs = await this.speedrun.getUserRuns(userId, mapping);
-						if (runs.length === 0)
-							return {runs: [], fetchedAt: new Date().toISOString()};
-						const leaderboard = await this.speedrun.getLeaderboard(
-							mapping,
-							this.getLeaderboardTop(),
-						);
-						const confirmedRunIds = new Set(
-							leaderboard.entries
-								.filter((entry) =>
-									entry.run.players.some((player) => player.userId === userId),
-								)
-								.map((entry) => entry.run.runId),
-						);
-						const confirmed = runs.filter((run) =>
-							confirmedRunIds.has(run.runId),
-						);
-						if (confirmed.length === 0)
-							throw new Error(
-								`Could not verify ${userId}'s runs against the filtered leaderboard`,
-							);
-						return {
-							runs: confirmed,
-							fetchedAt: new Date().toISOString(),
-						};
-					}
+					if (!this.speedrun.getUserRuns)
+						throw new Error("Speedrun.com Runs API is unavailable");
+					const runs = await this.speedrun.getUserRuns(
+						userId,
+						mapping,
+						refresh,
+					);
+					return {runs, fetchedAt: new Date().toISOString()};
 				},
 			);
 			const run = [...result.value.runs].sort(compareTime)[0] ?? null;
@@ -154,16 +130,28 @@ export class SpeedrunRecordService {
 		}
 	}
 
-	private savePlayerBest(key: string, value: SpeedrunPlayerBest): void {
+	private savePlayerBest(
+		key: string,
+		value: SpeedrunPlayerBest,
+		accountIds: readonly string[],
+	): void {
 		this.cache.set(key, {
 			expiresAt: Date.now() + RECORD_CACHE_TTL_MS,
 			value,
+			accountIds: [...accountIds].sort(),
 		});
 	}
 
-	private stalePlayerBest(key: string): SpeedrunPlayerBest | null {
+	private stalePlayerBest(
+		key: string,
+		accountIds: readonly string[],
+	): SpeedrunPlayerBest | null {
 		const previous = this.cache.get(key);
-		return previous
+		const sameAccounts =
+			previous &&
+			JSON.stringify(previous.accountIds ?? []) ===
+				JSON.stringify([...accountIds].sort());
+		return previous && sameAccounts
 			? {...(previous.value as SpeedrunPlayerBest), stale: true}
 			: null;
 	}
@@ -172,15 +160,33 @@ export class SpeedrunRecordService {
 		const resolution = await this.resolve(categorySlug, goal);
 		if (resolution.status !== "resolved") return resolution;
 		const top = this.getLeaderboardTop();
-		if (refresh) this.speedrun.clearRecordCache?.();
 		const results = await Promise.all(
-			resolution.mappings.map(async (mapping) =>
-				this.cached(`leaderboard:${mapping.key}:${top}`, refresh, () => {
-					if (!this.speedrun.getLeaderboard)
-						throw new Error("Speedrun.com leaderboard API is unavailable");
-					return this.speedrun.getLeaderboard(mapping, top);
-				}),
-			),
+			resolution.mappings.map(async (mapping) => {
+				try {
+					return await this.cached(
+						`leaderboard:${mapping.key}:${top}`,
+						refresh,
+						() => {
+							if (!this.speedrun.getLeaderboard)
+								throw new Error("Speedrun.com leaderboard API is unavailable");
+							return this.speedrun.getLeaderboard(mapping, top, refresh);
+						},
+					);
+				} catch (error) {
+					return {
+						value: {
+							mapping,
+							top,
+							fetchedAt: new Date().toISOString(),
+							state: "error" as const,
+							entries: [],
+							stale: false,
+							message: error instanceof Error ? error.message : String(error),
+						},
+						stale: false,
+					};
+				}
+			}),
 		);
 		const userIds = results.flatMap(({value}) =>
 			value.entries.flatMap(({run}) =>
@@ -193,15 +199,18 @@ export class SpeedrunRecordService {
 		const leaderboards = await Promise.all(
 			results.map(async ({value, stale}, index) => {
 				const mapping = resolution.mappings[index]!;
-				const sourceIds = [
-					...new Set(
-						value.entries.flatMap(({run}) =>
-							run.players.flatMap((player) =>
-								player.userId ? [player.userId] : [],
-							),
-						),
-					),
-				];
+				const sourceIds =
+					value.state === "error"
+						? []
+						: [
+								...new Set(
+									value.entries.flatMap(({run}) =>
+										run.players.flatMap((player) =>
+											player.userId ? [player.userId] : [],
+										),
+									),
+								),
+							];
 				const bests = new Map(
 					await Promise.all(
 						sourceIds.map(
@@ -253,7 +262,6 @@ export class SpeedrunRecordService {
 	) {
 		const resolution = await this.resolve(categorySlug, goal);
 		if (resolution.status !== "resolved") return resolution;
-		if (refresh) this.speedrun.clearRecordCache?.();
 		let accountMap = new Map<string, string[]>();
 		let accountError: string | null = null;
 		try {
@@ -267,17 +275,15 @@ export class SpeedrunRecordService {
 					playerIds.map(async (playerId): Promise<SpeedrunPlayerBest> => {
 						const playerCacheKey = `player:${playerId}:${mapping.key}`;
 						if (accountError)
-							return (
-								this.stalePlayerBest(playerCacheKey) ?? {
-									playerId,
-									srcUserId: null,
-									state: "error",
-									run: null,
-									fetchedAt: new Date().toISOString(),
-									stale: false,
-									message: accountError,
-								}
-							);
+							return {
+								playerId,
+								srcUserId: null,
+								state: "error",
+								run: null,
+								fetchedAt: new Date().toISOString(),
+								stale: false,
+								message: accountError,
+							};
 						const accounts = accountMap.get(playerId);
 						if (!accounts?.length) {
 							const unlinked: SpeedrunPlayerBest = {
@@ -291,12 +297,14 @@ export class SpeedrunRecordService {
 									? {}
 									: {message: "Player was not found in Player Manager"}),
 							};
-							this.savePlayerBest(playerCacheKey, unlinked);
+							this.savePlayerBest(playerCacheKey, unlinked, []);
 							return unlinked;
 						}
 						try {
 							const candidates = await Promise.all(
-								accounts.map((id) => this.bestForSrcUser(id, mapping, refresh)),
+								[...new Set(accounts)].map((id) =>
+									this.bestForSrcUser(id, mapping, refresh),
+								),
 							);
 							const candidateRuns = candidates.flatMap((candidate) =>
 								candidate.run
@@ -307,7 +315,7 @@ export class SpeedrunRecordService {
 							const best = candidateRuns[0] ?? null;
 							if (candidates.some((candidate) => candidate.state === "error"))
 								return (
-									this.stalePlayerBest(playerCacheKey) ?? {
+									this.stalePlayerBest(playerCacheKey, accounts) ?? {
 										playerId,
 										srcUserId: best?.srcUserId ?? accounts[0] ?? null,
 										state: "error",
@@ -326,11 +334,11 @@ export class SpeedrunRecordService {
 								fetchedAt: new Date().toISOString(),
 								stale: candidates.some((candidate) => candidate.stale),
 							};
-							this.savePlayerBest(playerCacheKey, resolved);
+							this.savePlayerBest(playerCacheKey, resolved, accounts);
 							return resolved;
 						} catch (error) {
 							return (
-								this.stalePlayerBest(playerCacheKey) ?? {
+								this.stalePlayerBest(playerCacheKey, accounts) ?? {
 									playerId,
 									srcUserId: accounts[0] ?? null,
 									state: "error",
