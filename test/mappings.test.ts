@@ -266,7 +266,7 @@ async function saveParent(api: ReturnType<typeof setup>["api"]) {
 	});
 }
 
-it("rejects a category that omits a mandatory Speedrun.com variable", async () => {
+it("allows an unmapped mandatory variable when it does not obsolete records", async () => {
 	const {api, speedrun} = setup();
 	await saveParent(api);
 	speedrun.getCategoryVariables.mockResolvedValueOnce([
@@ -274,6 +274,30 @@ it("rejects a category that omits a mandatory Speedrun.com variable", async () =
 			id: "difficulty",
 			name: "Difficulty",
 			mandatory: true,
+			userDefined: false,
+			obsoletes: false,
+			values: [{id: "normal", label: "Normal"}],
+		},
+	]);
+	const bare = structuredClone(mapping);
+	bare.speedrunCom.variables = {};
+	expect(
+		await api.request("saveCategoryMapping", {
+			mapping: bare,
+			expectedRevision: null,
+			settingsRevision: 0,
+		}),
+	).toMatchObject({ok: true, data: {action: "created"}});
+});
+
+it("requires an obsoleting variable even when SRC does not mark it mandatory", async () => {
+	const {api, speedrun} = setup();
+	await saveParent(api);
+	speedrun.getCategoryVariables.mockResolvedValueOnce([
+		{
+			id: "difficulty",
+			name: "Difficulty",
+			mandatory: false,
 			userDefined: false,
 			obsoletes: true,
 			values: [{id: "normal", label: "Normal"}],
@@ -337,13 +361,25 @@ it("accepts and length-checks user-defined variables", async () => {
 	).toMatchObject({ok: true, data: {action: "created"}});
 	const empty = structuredClone(mapping);
 	empty.speedrunCom.variables = {};
+	const second = setup();
+	await saveParent(second.api);
+	second.speedrun.getCategoryVariables.mockResolvedValue([
+		{
+			id: "runner",
+			name: "Runner",
+			mandatory: true,
+			userDefined: true,
+			obsoletes: false,
+			values: [],
+		},
+	]);
 	expect(
-		await api.request("saveCategoryMapping", {
+		await second.api.request("saveCategoryMapping", {
 			mapping: empty,
 			expectedRevision: null,
 			settingsRevision: 0,
 		}),
-	).toMatchObject({ok: false, error: {code: "invalid_input"}});
+	).toMatchObject({ok: true, data: {action: "created"}});
 	const tooLong = structuredClone(mapping);
 	tooLong.speedrunCom.variables = {runner: "x".repeat(256)};
 	expect(
@@ -573,12 +609,15 @@ it("accepts Any only for eligible variables and rejects malformed objects", asyn
 			name: "Empty",
 			mandatory: false,
 			userDefined: false,
-			obsoletes: true,
+			obsoletes: false,
 			values: [],
 		},
 	]);
 	expect(
-		await saveCategoryVariables(api, {ruleset: {mode: "any"}}),
+		await saveCategoryVariables(api, {
+			ruleset: {mode: "any"},
+			runner: "Runner Name",
+		}),
 	).toMatchObject({ok: true, data: {action: "created"}});
 	for (const variables of [
 		{runner: {mode: "any"}},

@@ -1,18 +1,22 @@
 import {
 	parseRaceDuration,
 	type ResolvedCategoryMapping,
+	type SpeedrunPersonalBestRun,
 	type SpeedrunPlayerBest,
-	type SpeedrunRun,
 	Temporal,
 } from "@nanahuse/racetime-protocol";
 import {IntegrationError} from "./errors";
 import type {ParticipantResolver} from "./integrations/players";
 import type {SpeedrunClient} from "./integrations/speedrun/client";
 import type {MappingService} from "./mappings";
-import {anyVariableIds, expandCategoryMapping} from "./resolve";
+import {expandCategoryMapping} from "./resolve";
 
 type Resolution =
-	| {status: "resolved"; mappings: ResolvedCategoryMapping[]}
+	| {
+			status: "resolved";
+			mappings: ResolvedCategoryMapping[];
+			obsoletesVariableIds: string[];
+	  }
 	| {status: "unregistered"}
 	| {status: "inconsistent"; message: string};
 type RecordCacheEntry = {
@@ -22,7 +26,10 @@ type RecordCacheEntry = {
 };
 const RECORD_CACHE_TTL_MS = 5 * 60 * 1000;
 
-function compareTime(a: SpeedrunRun, b: SpeedrunRun): number {
+function compareTime(
+	a: SpeedrunPersonalBestRun,
+	b: SpeedrunPersonalBestRun,
+): number {
 	const aTime = parseRaceDuration(a.time);
 	const bTime = parseRaceDuration(b.time);
 	if (!aTime || !bTime) throw new Error("Speedrun.com run had no time");
@@ -72,9 +79,12 @@ export class SpeedrunRecordService {
 	): Promise<Resolution> {
 		const source = await this.mappings.resolveSource(categorySlug, goal);
 		if (source.status !== "found") return source;
-		const definitions = anyVariableIds(source.category.variables).length
-			? await this.speedrun.getCategoryVariables(source.category.categoryId)
-			: [];
+		const definitions = await this.speedrun.getCategoryVariables(
+			source.category.categoryId,
+		);
+		const obsoletesVariableIds = definitions
+			.filter(({obsoletes}) => obsoletes)
+			.map(({id}) => id);
 		const expanded = expandCategoryMapping(
 			source.game,
 			source.category,
@@ -84,13 +94,14 @@ export class SpeedrunRecordService {
 		if (!expanded.ok && expanded.status === "limit_exceeded")
 			throw new IntegrationError("expansion_limit_exceeded", expanded.message);
 		return expanded.ok
-			? {status: "resolved", mappings: expanded.mappings}
+			? {status: "resolved", mappings: expanded.mappings, obsoletesVariableIds}
 			: {status: "inconsistent", message: expanded.message};
 	}
 
 	private async bestForSrcUser(
 		userId: string,
 		mapping: ResolvedCategoryMapping,
+		obsoletesVariableIds: readonly string[],
 		refresh: boolean,
 	): Promise<SpeedrunPlayerBest> {
 		try {
@@ -98,22 +109,49 @@ export class SpeedrunRecordService {
 				`pb:${userId}:${mapping.key}`,
 				refresh,
 				async () => {
-					if (!this.speedrun.getUserRuns)
-						throw new Error("Speedrun.com Runs API is unavailable");
-					const runs = await this.speedrun.getUserRuns(
+					const missingVariable = obsoletesVariableIds.find((variableId) => {
+						const value = mapping.category.variables[variableId];
+						return (
+							value === undefined ||
+							(typeof value === "string" && !value.trim())
+						);
+					});
+					if (missingVariable)
+						throw new Error(
+							`PB-defining Variable "${missingVariable}" is not mapped`,
+						);
+					if (!this.speedrun.getUserPersonalBests)
+						throw new Error("Speedrun.com Personal Bests API is unavailable");
+					const personalBests = await this.speedrun.getUserPersonalBests(
 						userId,
-						mapping,
+						mapping.game.gameId,
 						refresh,
 					);
-					return {runs, fetchedAt: new Date().toISOString()};
+					const matches = personalBests.filter(
+						({gameId, categoryId, levelId, variables}) =>
+							gameId === mapping.game.gameId &&
+							categoryId === mapping.category.categoryId &&
+							levelId === mapping.category.levelId &&
+							obsoletesVariableIds.every(
+								(variableId) =>
+									variables[variableId] ===
+									mapping.category.variables[variableId],
+							),
+					);
+					if (matches.length > 1)
+						throw new Error(
+							"Speedrun.com returned multiple Personal Bests for the same PB-defining Variables",
+						);
+					return {run: matches[0] ?? null, fetchedAt: new Date().toISOString()};
 				},
 			);
-			const run = [...result.value.runs].sort(compareTime)[0] ?? null;
+			const run = result.value.run;
 			return {
 				playerId: null,
 				srcUserId: userId,
 				state: run ? "found" : "not_found",
 				run,
+				place: run?.place ?? null,
 				fetchedAt: result.value.fetchedAt,
 				stale: result.stale,
 			};
@@ -123,6 +161,7 @@ export class SpeedrunRecordService {
 				srcUserId: userId,
 				state: "error",
 				run: null,
+				place: null,
 				fetchedAt: new Date().toISOString(),
 				stale: false,
 				message: error instanceof Error ? error.message : String(error),
@@ -217,7 +256,12 @@ export class SpeedrunRecordService {
 							async (userId) =>
 								[
 									userId,
-									await this.bestForSrcUser(userId, value.mapping, refresh),
+									await this.bestForSrcUser(
+										userId,
+										value.mapping,
+										resolution.obsoletesVariableIds,
+										refresh,
+									),
 								] as const,
 						),
 					),
@@ -280,6 +324,7 @@ export class SpeedrunRecordService {
 								srcUserId: null,
 								state: "error",
 								run: null,
+								place: null,
 								fetchedAt: new Date().toISOString(),
 								stale: false,
 								message: accountError,
@@ -291,6 +336,7 @@ export class SpeedrunRecordService {
 								srcUserId: null,
 								state: accountMap.has(playerId) ? "unlinked" : "error",
 								run: null,
+								place: null,
 								fetchedAt: new Date().toISOString(),
 								stale: false,
 								...(accountMap.has(playerId)
@@ -303,7 +349,12 @@ export class SpeedrunRecordService {
 						try {
 							const candidates = await Promise.all(
 								[...new Set(accounts)].map((id) =>
-									this.bestForSrcUser(id, mapping, refresh),
+									this.bestForSrcUser(
+										id,
+										mapping,
+										resolution.obsoletesVariableIds,
+										refresh,
+									),
 								),
 							);
 							const candidateRuns = candidates.flatMap((candidate) =>
@@ -320,6 +371,7 @@ export class SpeedrunRecordService {
 										srcUserId: best?.srcUserId ?? accounts[0] ?? null,
 										state: "error",
 										run: null,
+										place: null,
 										fetchedAt: new Date().toISOString(),
 										stale: false,
 										message:
@@ -331,6 +383,7 @@ export class SpeedrunRecordService {
 								srcUserId: best?.srcUserId ?? accounts[0] ?? null,
 								state: best ? "found" : "not_found",
 								run: best?.run ?? null,
+								place: best?.run.place ?? null,
 								fetchedAt: new Date().toISOString(),
 								stale: candidates.some((candidate) => candidate.stale),
 							};
@@ -343,6 +396,7 @@ export class SpeedrunRecordService {
 									srcUserId: accounts[0] ?? null,
 									state: "error",
 									run: null,
+									place: null,
 									fetchedAt: new Date().toISOString(),
 									stale: false,
 									message:

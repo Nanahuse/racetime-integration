@@ -449,123 +449,81 @@ it("requests a filtered level leaderboard, preserves ties, and joins embedded pl
 	});
 });
 
-it("lists current personal best run IDs for the game without applying category filters", async () => {
-	const {client, fetchImpl} = clientWith({
-		"/api/v1/users/u1/personal-bests": {
-			data: [
-				{
-					place: 5,
-					run: {
-						id: "wrong",
-						status: {status: "verified"},
-						game: "g1",
-						category: "c1",
-						level: "l1",
-						system: {platform: "p2", region: "r1", emulated: false},
-						values: {v1: "hard"},
-						times: {realtime_noloads: "PT30S"},
-						players: [
-							{rel: "user", id: "u1", names: {international: "Runner"}},
-						],
-					},
-				},
-				{
-					place: 7,
-					run: {
-						id: "right",
-						status: {status: "verified"},
-						game: "g1",
-						category: "c1",
-						level: "l1",
-						system: {platform: "p1", region: "r1", emulated: false},
-						values: {v1: "hard"},
-						times: {realtime_noloads: "PT40S"},
-						players: [
-							{rel: "user", id: "u1", names: {international: "Runner"}},
-						],
-					},
-				},
-			],
-			pagination: {size: 2},
-		},
-	});
-	const runs = await client.getUserPersonalBests("u1", resolvedLookup);
-	const requested = new URL(fetchImpl.mock.calls[0]![0] as string);
-	expect(requested.searchParams.get("game")).toBe("g1");
-	expect(requested.searchParams.get("embed")).toBe("players");
-	expect(runs).toEqual(["wrong", "right"]);
-});
-
-function srcRun(id: string, overrides: Record<string, unknown> = {}) {
+function personalBest(
+	id: string,
+	place: number,
+	category = "c1",
+	level: string | null = "l1",
+	values: Record<string, unknown> = {v1: "hard"},
+	primary = "PT40S",
+) {
 	return {
-		id,
-		game: "g1",
-		category: "c1",
-		level: "l1",
-		status: {status: "verified"},
-		system: {platform: "p1", region: "r1", emulated: false},
-		values: {v1: "hard"},
-		times: {primary: "PT50S", realtime_noloads: "PT45S", ingame: "PT40S"},
-		players: [{rel: "user", id: "u1", names: {international: "Runner"}}],
-		...overrides,
+		place,
+		run: {
+			id,
+			status: {status: "verified"},
+			game: "g1",
+			category,
+			level,
+			weblink: `https://www.speedrun.com/runs/${id}`,
+			date: "2025-07-01",
+			times: {primary},
+			values,
+		},
 	};
 }
 
-it("filters Runs with the returned run data and skips only unrecorded timing values", async () => {
+it("normalizes official Personal Best entries and uses game without a top filter", async () => {
 	const {client, fetchImpl} = clientWith({
-		"/api/v1/runs": {
-			data: [
-				srcRun("missing-time", {times: {primary: "PT50S", ingame: null}}),
-				srcRun("wrong-platform", {
-					system: {platform: "p2", region: "r1", emulated: false},
-				}),
-				srcRun("wrong-region", {
-					system: {platform: "p1", region: "r2", emulated: false},
-				}),
-				srcRun("wrong-emulator", {
-					system: {platform: "p1", region: "r1", emulated: true},
-				}),
-				srcRun("wrong-variable", {values: {v1: "normal"}}),
-				srcRun("wrong-level", {level: "l2"}),
-				srcRun("unverified", {status: {status: "new"}}),
-				srcRun("valid"),
-			],
-			pagination: {size: 8, offset: 0, max: 200},
-		},
-	});
-	const mapping = {
-		...resolvedLookup,
-		category: {...resolvedLookup.category, timingMethod: "ingame" as const},
-	};
-	const runs = await client.getUserRuns("u1", mapping);
-	expect(runs.map((run) => run.runId)).toEqual(["valid"]);
-	const query = new URL(fetchImpl.mock.calls[0]![0] as string).searchParams;
-	expect(query.get("status")).toBe("verified");
-	expect(query.get("game")).toBe("g1");
-	expect(query.get("category")).toBe("c1");
-	expect(query.get("level")).toBe("l1");
-});
-
-it("rejects malformed timing values instead of treating them as unrecorded", async () => {
-	const {client} = clientWith({
-		"/api/v1/runs": {
-			data: [srcRun("bad-time", {times: {primary: "PT50S", ingame: "forty"}})],
+		"/api/v1/users/u1/personal-bests": {
+			data: [personalBest("pb1", 7)],
 			pagination: {size: 1, offset: 0, max: 200},
 		},
 	});
-	const mapping = {
-		...resolvedLookup,
-		category: {...resolvedLookup.category, timingMethod: "ingame" as const},
-	};
-	await expect(client.getUserRuns("u1", mapping)).rejects.toMatchObject({
-		code: "invalid_payload",
-	});
+	const personalBests = await client.getUserPersonalBests("u1", "g1");
+	const requested = new URL(fetchImpl.mock.calls[0]![0] as string);
+	expect(requested.searchParams.get("game")).toBe("g1");
+	expect(requested.searchParams.has("top")).toBe(false);
+	expect(personalBests).toEqual([
+		{
+			runId: "pb1",
+			url: "https://www.speedrun.com/runs/pb1",
+			time: "PT40S",
+			date: "2025-07-01",
+			players: [
+				{
+					userId: "u1",
+					name: "u1",
+					url: "https://www.speedrun.com/users/u1",
+				},
+			],
+			place: 7,
+			gameId: "g1",
+			categoryId: "c1",
+			levelId: "l1",
+			variables: {v1: "hard"},
+		},
+	]);
 });
 
-it("reads every Runs page beyond the reference lookup page limit", async () => {
+it("reuses the complete PB list for another category in the same game", async () => {
+	const {client, fetchImpl} = clientWith({
+		"/api/v1/users/u1/personal-bests": {
+			data: [personalBest("pb1", 7), personalBest("pb2", 2, "c2", null, {})],
+			pagination: {size: 2, offset: 0, max: 200},
+		},
+	});
+	const first = await client.getUserPersonalBests("u1", "g1");
+	const second = await client.getUserPersonalBests("u1", "g1");
+	expect(first.map(({categoryId}) => categoryId)).toEqual(["c1", "c2"]);
+	expect(second).toEqual(first);
+	expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
+
+it("reads every Personal Best page and preserves official places", async () => {
 	const pageData = (offset: number) =>
 		Array.from({length: offset === 1000 ? 1 : 200}, (_, index) =>
-			srcRun(`unmatched-${offset}-${index}`, {game: "other-game"}),
+			personalBest(`pb-${offset}-${index}`, index + 1),
 		);
 	const fetchImpl = vi.fn(async (url: string) => {
 		const offset = Number(new URL(url).searchParams.get("offset"));
@@ -575,7 +533,8 @@ it("reads every Runs page beyond the reference lookup page limit", async () => {
 		});
 	});
 	const client = new HttpSpeedrunClient({fetchImpl: fetchImpl as never});
-	expect(await client.getUserRuns("u1", resolvedLookup)).toEqual([]);
+	const results = await client.getUserPersonalBests("u1", "g1");
+	expect(results).toHaveLength(1001);
 	expect(fetchImpl).toHaveBeenCalledTimes(6);
 	expect(
 		fetchImpl.mock.calls.map(([url]) =>
@@ -584,9 +543,39 @@ it("reads every Runs page beyond the reference lookup page limit", async () => {
 	).toEqual([0, 200, 400, 600, 800, 1000]);
 });
 
-it("returns an error when a Runs page fails before pagination completes", async () => {
+it("rejects a repeated full Personal Best page", async () => {
+	const page = Array.from({length: 200}, (_, index) =>
+		personalBest(`pb-${index}`, index + 1),
+	);
+	const fetchImpl = vi.fn(async (url: string) => {
+		const offset = Number(new URL(url).searchParams.get("offset"));
+		return Response.json({
+			data: page,
+			pagination: {size: page.length, offset, max: 200},
+		});
+	});
+	const client = new HttpSpeedrunClient({fetchImpl: fetchImpl as never});
+	await expect(client.getUserPersonalBests("u1", "g1")).rejects.toMatchObject({
+		code: "invalid_payload",
+	});
+	expect(fetchImpl).toHaveBeenCalledTimes(2);
+});
+
+it("refreshes a cached Personal Best list on request", async () => {
+	const {client, fetchImpl} = clientWith({
+		"/api/v1/users/u1/personal-bests": {
+			data: [personalBest("pb1", 7)],
+			pagination: {size: 1, offset: 0, max: 200},
+		},
+	});
+	await client.getUserPersonalBests("u1", "g1");
+	await client.getUserPersonalBests("u1", "g1", true);
+	expect(fetchImpl).toHaveBeenCalledTimes(2);
+});
+
+it("propagates an error when a Personal Best page fails before completion", async () => {
 	const firstPage = Array.from({length: 200}, (_, index) =>
-		srcRun(`unmatched-${index}`, {game: "other-game"}),
+		personalBest(`pb-${index}`, index + 1),
 	);
 	const fetchImpl = vi.fn(async (url: string) => {
 		const offset = Number(new URL(url).searchParams.get("offset"));
@@ -598,25 +587,19 @@ it("returns an error when a Runs page fails before pagination completes", async 
 			: new Response("", {status: 503});
 	});
 	const client = new HttpSpeedrunClient({fetchImpl: fetchImpl as never});
-	await expect(client.getUserRuns("u1", resolvedLookup)).rejects.toMatchObject({
+	await expect(client.getUserPersonalBests("u1", "g1")).rejects.toMatchObject({
 		code: "speedrun_unavailable",
 	});
 });
 
-it("rejects repeated full pages instead of looping forever", async () => {
-	const page = Array.from({length: 200}, (_, index) =>
-		srcRun(`unmatched-${index}`, {game: "other-game"}),
-	);
-	const fetchImpl = vi.fn(async (url: string) => {
-		const offset = Number(new URL(url).searchParams.get("offset"));
-		return Response.json({
-			data: page,
-			pagination: {size: 200, offset, max: 200},
-		});
+it("rejects malformed official PB records instead of treating them as found", async () => {
+	const {client} = clientWith({
+		"/api/v1/users/u1/personal-bests": {
+			data: [{place: 0, run: personalBest("bad", 1).run}],
+			pagination: {size: 1, offset: 0, max: 200},
+		},
 	});
-	const client = new HttpSpeedrunClient({fetchImpl: fetchImpl as never});
-	await expect(client.getUserRuns("u1", resolvedLookup)).rejects.toMatchObject({
+	await expect(client.getUserPersonalBests("u1", "g1")).rejects.toMatchObject({
 		code: "invalid_payload",
 	});
-	expect(fetchImpl).toHaveBeenCalledTimes(2);
 });

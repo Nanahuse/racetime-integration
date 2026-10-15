@@ -198,6 +198,13 @@ export type SpeedrunRun = {
 	date: string | null;
 	players: SpeedrunPlayer[];
 };
+export type SpeedrunPersonalBestRun = SpeedrunRun & {
+	place: number;
+	gameId: string;
+	categoryId: string;
+	levelId: string | null;
+	variables: Record<string, string>;
+};
 export type SpeedrunLeaderboard = {
 	mapping: ResolvedCategoryMapping;
 	top: number;
@@ -211,7 +218,8 @@ export type SpeedrunPlayerBest = {
 	playerId: string | null;
 	srcUserId: string | null;
 	state: "found" | "not_found" | "unlinked" | "error";
-	run: SpeedrunRun | null;
+	run: SpeedrunPersonalBestRun | null;
+	place: number | null;
 	fetchedAt: string | null;
 	stale: boolean;
 	message?: string;

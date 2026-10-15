@@ -268,6 +268,8 @@ function Participants({
 																rel='noopener noreferrer'
 															>
 																{formatRaceTime(item.best.run.time)}
+																{item.best.place !== null &&
+																	` · ${item.best.place}位`}
 															</a>
 														) : (
 															<span className='muted'>

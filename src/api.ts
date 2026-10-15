@@ -131,7 +131,7 @@ function pruneVariables(
 
 /**
  * Validates a category's variable selection against the Speedrun.com
- * definitions: no unknown ids, enum values must be offered options, mandatory
+ * definitions: no unknown ids, enum values must be offered options, PB-defining
  * variables must be set, and user-defined values are length-checked.
  */
 function validateVariables(
@@ -154,10 +154,10 @@ function validateVariables(
 		if (variable.userDefined) {
 			if (value.length > MAX_USER_DEFINED_LENGTH)
 				throw new RequestError("invalid_input", `Variable "${id}" is too long`);
-			if (variable.mandatory && value.trim() === "")
+			if (variable.obsoletes && value.trim() === "")
 				throw new RequestError(
 					"invalid_input",
-					`Missing mandatory variable "${id}"`,
+					`Missing PB-defining variable "${id}"`,
 				);
 			continue;
 		}
@@ -167,12 +167,18 @@ function validateVariables(
 				`Invalid value for variable "${id}"`,
 			);
 	}
-	for (const variable of definitions)
-		if (variable.mandatory && !values[variable.id])
+	for (const variable of definitions) {
+		const value = values[variable.id];
+		if (
+			variable.obsoletes &&
+			(value === undefined ||
+				(typeof value === "string" && value.trim() === ""))
+		)
 			throw new RequestError(
 				"invalid_input",
-				`Missing mandatory variable "${variable.id}"`,
+				`Missing PB-defining variable "${variable.id}"`,
 			);
+	}
 }
 
 function gameMapping(raw: unknown): GameMapping {
