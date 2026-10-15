@@ -13,14 +13,14 @@
 - 統合参照: resolveCategoryMappingでGame MappingとCategory Mappingを結合し、具体的な問い合わせ条件の配列（`ResolvedCategoryMapping[]`）を返す。未登録（unregistered）と不整合（inconsistent）を区別する。`Any` は定義済みの全Valueへ展開し、複数 `Any` は直積とする。各結果は安定した `key` と表示用 `label` を持ち、結果に `Any` は残らない。
 - 展開上限: `Settings.maxResolvedMappings`（初期値20）を上限とする。上限以下は全件、超過時は部分結果を返さず `expansion_limit_exceeded`（件数と上限を含む）を返す。判定はBigIntで直積生成前に正確に行い、極端に大きな直積でも全件生成しない。上限はマッピング不整合ではない。
 - Category VariableのAny: `obsoletes === true`・`userDefined === false`・定義済みValueが1件以上あるVariableにのみ `{mode: "any"}` を許可する。保存時はAPIとUIの両方で検証し、未知Variable・不正Value・対象外VariableへのAnyを拒否する。自由記述型は対象外。UIは保存済みVariableと現在のSRC定義を照合し、Any対象外になったVariableとSRCから削除されたVariableを不整合として表示する。削除されたVariableは保存済みIDと警告を示し、その設定をDraftから除去できる（自動削除・自動初期化はしない。確定は通常の保存）。
-- Speedrun.com: 手動選択用にゲーム・カテゴリ・Level・Variables・Platform・Region・Timing Methodを検索・取得する。PB/WR/Leaderboardは含めない。Variableの `obsoletes` を取得し、欠落・非booleanは不正なAPIレスポンスとして拒否する。カテゴリの所属ゲームはカテゴリ詳細の `links`（`rel: "game"` の `uri`）から構造的に解決し、埋め込み `game` フィールドには依存しない。所属ゲームが解決できない場合は保存時の整合性検証を省略せず拒否する。
-- Protocol: 上記契約の型・定数・メッセージ名。ESM/CommonJSを提供。API_VERSIONは4、MESSAGE_PREFIXはracetime.v4、パッケージ版は0.4.0。旧バージョン互換は提供しない。完走時間は公開では検証済みISO 8601期間文字列（`null` は記録なし）、内部では `Temporal.Duration` として扱い、`parseRaceDuration` / `serializeRaceDuration` と `Temporal` を公開する。期間処理のため `@js-temporal/polyfill` を実行時依存に持つ。
+- Speedrun.com: ゲーム・カテゴリ・Level・Variables・Platform・Region・Timing Methodの選択肢に加えて、Leaderboardと個人PBを取得する。LeaderboardはSRC v1の `top` と条件フィルターを使い、同順位を含む全RunをSRC順位のまま返す。Run内プレイヤー参照はLeaderboard直下のembedded player一覧へIDで結び付け、guestも保持する。PBはユーザーごとに `game` を指定したPersonal Bests APIを全ページ取得し、Game/Category/Levelと `obsoletes: true` のVariable値で照合する。`top` は指定せず、SRCの公式Primary Timeと `place` をそのまま使う。`obsoletes: false` のVariable、Platform、Region、Emulator、Timing MethodはPB照合に使わない。Player ManagerのPrimary/Secondaryアカウントから該当する公式PBを集約し、一部取得失敗は部分結果で確定しない。SRC HTTP要求は4件まで並列化し、5分キャッシュ、同時要求共有、条件別refresh、stale応答をExtension内で管理する。Any展開時のLeaderboard取得状態とstale結果はMappingごとに返す。失敗応答は正常値としてキャッシュしない。カテゴリ所属ゲームは既存どおりカテゴリ詳細 `links` の `rel: "game"` から解決する。
+- Protocol: 上記契約の型・定数・メッセージ名。Leaderboard/PBは既存 `racetime.v4.*` に操作を追加し、API_VERSIONとMESSAGE_PREFIXを維持する。完走時間とSRC時間は公開では検証済みISO 8601期間文字列、比較は `Temporal.Duration` を利用する。`parseRaceDuration` / `serializeRaceDuration` と `Temporal` を公開する。
 - Spreadsheet初期化: `initializeSpreadsheet` で指定Spreadsheetへ `GameMappings`/`CategoryMappings` ワークシートを準備する。
-- Dashboard: `RaceTime Integration` パネル（fullbleed）。Overview / Mappings / Settingsを公開Protocol経由で操作し、Replicantは参照専用とする。
+- Dashboard: `RaceTime Integration` パネル（fullbleed）。Overview / Rankings / Mappings / Settingsを公開Protocol経由で操作し、Replicantは参照専用とする。OverviewのPB要求は参加者とレース情報の表示とは独立し、SRC障害はRaceTime表示に波及しない。
 
 watchRaceの成功条件は初回HTTP取得成功。WebSocket接続完了やPlayer解決完了は別の状態として公開する。接続不良を受けても既存Activeの判断に使えるRaceを返す。初回HTTP失敗時には参照も再試行も残さない。fetchRaceは同じHTTP取得と `mapRace` 正規化で1回だけ取得し、watchRaceと同じParticipantResolverで参加者を解決して `ResolvedRace`（race / participants / resolution）を返す。watchId・WebSocket・監視セッションを生成せず、既存の監視状態やReplicantを変更しない。Player Manager取得失敗時もレース情報は保持し、参加者をunavailable・resolutionをerrorとして返す。`mapRace` は解析済みの `Temporal.Duration` を `serializeRaceDuration` でISO 8601期間文字列へ戻すため、公開データやReplicantに `Temporal.Duration` は混入しない。`Entrant.finishTime` と `RaceResult.time` は同じ期間を表し、記録なしは `null` とする。
 
-表示レイアウト、配信への適用、Player登録UI、Speedrun.com検索・PB取得、レース履歴、RaceTimeチャット送信は含めない。nodecg-race-layouts/player-managerの変更は行わない。
+表示レイアウト、配信への適用、レース履歴、RaceTimeチャット送信は含めない。nodecg-race-layouts/player-managerの変更は行わない。
 
 ## 非同期処理と競合
 

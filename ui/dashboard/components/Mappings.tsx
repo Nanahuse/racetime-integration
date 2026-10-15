@@ -940,12 +940,14 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 	const categoryId = categorySession?.draft.speedrunCom.categoryId ?? "";
 	const variablesReady =
 		categoryId !== "" && !variablesLoading && variablesFor === categoryId;
-	const missingMandatory = categorySession
-		? variables.some(
-				(variable) =>
-					variable.mandatory &&
-					!categorySession.draft.speedrunCom.variables[variable.id],
-			)
+	const missingPbVariable = categorySession
+		? variables.some((variable) => {
+				const value = categorySession.draft.speedrunCom.variables[variable.id];
+				return (
+					variable.obsoletes &&
+					(value === undefined || (typeof value === "string" && !value.trim()))
+				);
+			})
 		: false;
 	const optionsReady =
 		!activeGameId || (optionsFor !== null && optionsFor === activeGameId);
@@ -1343,7 +1345,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 											dirty={categoryDirty}
 											expected={categorySession.baselineRevision}
 											confirmDelete={confirmDelete === "category"}
-											missingMandatory={missingMandatory}
+											missingPbVariable={missingPbVariable}
 											variablesReady={variablesReady}
 											optionsReady={optionsReady}
 											blocked={categoryBlocked}
@@ -1598,7 +1600,7 @@ function CategoryEditor({
 	dirty,
 	expected,
 	confirmDelete,
-	missingMandatory,
+	missingPbVariable,
 	variablesReady,
 	optionsReady,
 	blocked,
@@ -1621,7 +1623,7 @@ function CategoryEditor({
 	dirty: boolean;
 	expected: string | null;
 	confirmDelete: boolean;
-	missingMandatory: boolean;
+	missingPbVariable: boolean;
 	variablesReady: boolean;
 	optionsReady: boolean;
 	blocked: boolean;
@@ -1662,7 +1664,7 @@ function CategoryEditor({
 	const saveDisabled =
 		busy ||
 		disabled ||
-		missingMandatory ||
+		missingPbVariable ||
 		!variablesReady ||
 		blocked ||
 		unsupportedAny.length > 0 ||
@@ -1828,7 +1830,7 @@ function CategoryEditor({
 						{variables.map((variable) => (
 							<Field
 								key={variable.id}
-								label={`${variable.name}${variable.mandatory ? "（必須）" : ""}`}
+								label={`${variable.name}${variable.obsoletes ? "（PB区分）" : ""}`}
 							>
 								{variable.userDefined ? (
 									<input
@@ -1910,9 +1912,9 @@ function CategoryEditor({
 					))}
 				</fieldset>
 			)}
-			{missingMandatory && (
+			{missingPbVariable && (
 				<Callout tone='warning'>
-					必須Variableが未選択のため保存できません。
+					公式PB区分を特定するVariableが未選択のため保存できません。
 				</Callout>
 			)}
 			{unsupportedAny.length > 0 && (

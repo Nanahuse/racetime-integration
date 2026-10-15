@@ -90,6 +90,33 @@ export class ParticipantResolver {
 		private readonly timeoutMs = 15000,
 	) {}
 
+	private async speedrunDirectory(): Promise<Directory> {
+		const api = this.getAPI();
+		if (api?.apiVersion !== API_VERSION)
+			throw new Error("Player Manager v3 is unavailable");
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			const listed = await Promise.race([
+				api.ready.then(() => api.request("list", undefined)),
+				new Promise<never>((_, reject) => {
+					timer = setTimeout(
+						() => reject(new Error("Player Manager timed out")),
+						this.timeoutMs,
+					);
+				}),
+			]);
+			if (!listed.ok || !isDirectory(listed.data))
+				throw new Error(
+					listed.ok
+						? "Player Manager returned an invalid directory"
+						: listed.error.message,
+				);
+			return listed.data;
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+
 	async resolve(
 		entrants: readonly {userId: string}[],
 		signal?: AbortSignal,
@@ -166,5 +193,45 @@ export class ParticipantResolver {
 			clearTimeout(timer);
 			if (onAbort) signal?.removeEventListener("abort", onAbort);
 		}
+	}
+
+	async speedrunAccounts(
+		playerIds: readonly string[],
+	): Promise<Map<string, string[]>> {
+		const directory = await this.speedrunDirectory();
+		const requested = new Set(playerIds);
+		const result = new Map<string, string[]>();
+		for (const player of directory.players) {
+			if (!requested.has(player.playerId)) continue;
+			const ids = new Set<string>();
+			if (player.speedrunCom?.userId) ids.add(player.speedrunCom.userId);
+			for (const account of player.accounts ?? []) {
+				if (account.service !== "speedrunCom") continue;
+				const userId = identityUserId(account.identity);
+				if (userId) ids.add(userId);
+			}
+			result.set(player.playerId, [...ids]);
+		}
+		return result;
+	}
+
+	async speedrunDisplayNames(
+		userIds: readonly string[],
+	): Promise<Map<string, string>> {
+		const directory = await this.speedrunDirectory();
+		const requested = new Set(userIds);
+		const result = new Map<string, string>();
+		for (const player of directory.players) {
+			const ids = new Set<string>();
+			if (player.speedrunCom?.userId) ids.add(player.speedrunCom.userId);
+			for (const account of player.accounts ?? []) {
+				if (account.service !== "speedrunCom") continue;
+				const userId = identityUserId(account.identity);
+				if (userId) ids.add(userId);
+			}
+			for (const id of ids)
+				if (requested.has(id)) result.set(id, resolveDisplayName(player));
+		}
+		return result;
 	}
 }

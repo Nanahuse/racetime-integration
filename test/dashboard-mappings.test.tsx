@@ -454,7 +454,7 @@ it("offers Any only for eligible variables and submits it", async () => {
 		fireEvent.change(select, {target: {value: "c1"}});
 	});
 	const ruleset = (await screen.findByLabelText(
-		"Ruleset",
+		"Ruleset（PB区分）",
 	)) as HTMLSelectElement;
 	const anyOption = Array.from(ruleset.options).find((option) =>
 		option.textContent?.startsWith("Any"),
@@ -536,6 +536,43 @@ it("shows an error when a saved Any is no longer supported", async () => {
 			}) as HTMLButtonElement
 		).disabled,
 	).toBe(false);
+});
+
+it("allows saving without a mandatory non-obsoleting variable", async () => {
+	games = [gameRecord];
+	variablesByCategory = {
+		c1: [
+			{
+				id: "platform-mode",
+				name: "Platform Mode",
+				mandatory: true,
+				userDefined: false,
+				obsoletes: false,
+				values: [{id: "standard", label: "Standard"}],
+			},
+		],
+	};
+	render(<Mappings />);
+	await selectFirstGame();
+	await openNewCategory();
+	const select = screen.getByLabelText("SRC Category（必須）");
+	await act(async () => {
+		fireEvent.change(select, {target: {value: "c1"}});
+	});
+	expect(await screen.findByLabelText("Platform Mode")).toBeTruthy();
+	const save = screen.getByRole("button", {name: /Category Mappingを保存/});
+	expect((save as HTMLButtonElement).disabled).toBe(false);
+	fireEvent.click(save);
+	const call = await waitFor(() => {
+		const found = sendMessage.mock.calls.find(
+			([name]) => name === "racetime.v4.saveCategoryMapping",
+		);
+		expect(found).toBeTruthy();
+		return found;
+	});
+	expect(call?.[1]).toMatchObject({
+		mapping: {speedrunCom: {variables: {}}},
+	});
 });
 
 it("detects a deleted Variable and lets the user remove it from the draft", async () => {

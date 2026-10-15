@@ -890,7 +890,7 @@ it("selects Any from the Overview category editor like Mappings", async () => {
 	fireEvent.click(screen.getByRole("button", {name: "取得"}));
 	await openMappingEditor();
 	const ruleset = (await screen.findByLabelText(
-		"Ruleset",
+		"Ruleset（PB区分）",
 	)) as HTMLSelectElement;
 	const anyOption = Array.from(ruleset.options).find((option) =>
 		option.textContent?.startsWith("Any"),

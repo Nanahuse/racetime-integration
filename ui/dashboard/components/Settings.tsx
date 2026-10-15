@@ -1,4 +1,5 @@
 import {
+	DEFAULT_LEADERBOARD_TOP,
 	DEFAULT_MAX_RESOLVED_MAPPINGS,
 	type SettingsState,
 	type Settings as SettingsValue,
@@ -35,10 +36,17 @@ type SettingsInput = {
 	categoryMappingsSheet: string;
 	// null means the field is invalid or empty; saving is blocked.
 	maxResolvedMappings: number | null;
+	leaderboardTop: number | null;
 };
 
 /** Parses the Any-expansion cap input, or null when it is not a safe integer >= 1. */
 function parseMaxMappings(value: string): number | null {
+	const trimmed = value.trim();
+	if (!/^\d+$/.test(trimmed)) return null;
+	const parsed = Number(trimmed);
+	return Number.isSafeInteger(parsed) && parsed >= 1 ? parsed : null;
+}
+function parseLeaderboardTop(value: string): number | null {
 	const trimmed = value.trim();
 	if (!/^\d+$/.test(trimmed)) return null;
 	const parsed = Number(trimmed);
@@ -62,6 +70,9 @@ export function Settings({
 	const [maxMappingsInput, setMaxMappingsInput] = useState(
 		String(DEFAULT_MAX_RESOLVED_MAPPINGS),
 	);
+	const [leaderboardTopInput, setLeaderboardTopInput] = useState(
+		String(DEFAULT_LEADERBOARD_TOP),
+	);
 	const [busy, setBusy] = useState(false);
 	const [message, setMessage] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
@@ -77,9 +88,11 @@ export function Settings({
 		gameMappingsSheet: gameSheet.trim(),
 		categoryMappingsSheet: categorySheet.trim(),
 		maxResolvedMappings: parseMaxMappings(maxMappingsInput),
+		leaderboardTop: parseLeaderboardTop(leaderboardTopInput),
 	});
 
 	const maxMappingsInvalid = currentInput().maxResolvedMappings === null;
+	const leaderboardTopInvalid = currentInput().leaderboardTop === null;
 
 	// The initialization result only describes the inputs it ran against, so
 	// editing any target field clears it.
@@ -94,6 +107,7 @@ export function Settings({
 		setGameSheet(state.settings.gameMappingsSheet);
 		setCategorySheet(state.settings.categoryMappingsSheet);
 		setMaxMappingsInput(String(state.settings.maxResolvedMappings));
+		setLeaderboardTopInput(String(state.settings.leaderboardTop));
 	}, []);
 
 	const load = useCallback(async () => {
@@ -148,9 +162,13 @@ export function Settings({
 		if (busy || initializing) return;
 		if (!baseline || conflict.status !== "none") return;
 		const input = currentInput();
-		if (input.maxResolvedMappings === null) {
+		if (input.maxResolvedMappings === null || input.leaderboardTop === null) {
 			setValidation("error");
-			setError("Any展開の最大件数は1以上の整数で入力してください。");
+			setError(
+				input.maxResolvedMappings === null
+					? "Any展開の最大件数は1以上の整数で入力してください。"
+					: "リーダーボード取得順位数は1以上の整数で入力してください。",
+			);
 			setMessage(null);
 			return;
 		}
@@ -159,6 +177,7 @@ export function Settings({
 			gameMappingsSheet: input.gameMappingsSheet,
 			categoryMappingsSheet: input.categoryMappingsSheet,
 			maxResolvedMappings: input.maxResolvedMappings,
+			leaderboardTop: input.leaderboardTop,
 		};
 		setBusy(true);
 		setError(null);
@@ -391,9 +410,24 @@ export function Settings({
 						onChange={(event) => setMaxMappingsInput(event.target.value)}
 					/>
 				</Field>
+				<Field label='リーダーボード取得順位数'>
+					<input
+						type='number'
+						min={1}
+						step={1}
+						value={leaderboardTopInput}
+						disabled={busy || initializing}
+						onChange={(event) => setLeaderboardTopInput(event.target.value)}
+					/>
+				</Field>
 				{maxMappingsInvalid && (
 					<Callout tone='error'>
 						Any展開の最大件数は1以上の整数で入力してください。
+					</Callout>
+				)}
+				{leaderboardTopInvalid && (
+					<Callout tone='error'>
+						リーダーボード取得順位数は1以上の整数で入力してください。
 					</Callout>
 				)}
 				<div className='button-row'>
@@ -404,7 +438,8 @@ export function Settings({
 							initializing ||
 							!baseline ||
 							conflict.status !== "none" ||
-							maxMappingsInvalid
+							maxMappingsInvalid ||
+							leaderboardTopInvalid
 						}
 					>
 						{busy ? "検証中…" : "保存"}

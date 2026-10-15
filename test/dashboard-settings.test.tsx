@@ -29,6 +29,7 @@ const initial: SettingsState = {
 		gameMappingsSheet: "GameMappings",
 		categoryMappingsSheet: "CategoryMappings",
 		maxResolvedMappings: 20,
+		leaderboardTop: 20,
 	},
 };
 let updateResult: () => Envelope | Promise<Envelope> = () => ({
@@ -40,6 +41,7 @@ let updateResult: () => Envelope | Promise<Envelope> = () => ({
 			gameMappingsSheet: "GameMappings",
 			categoryMappingsSheet: "CategoryMappings",
 			maxResolvedMappings: 20,
+			leaderboardTop: 20,
 		},
 	},
 });
@@ -60,6 +62,7 @@ beforeEach(() => {
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				leaderboardTop: 20,
 			},
 		},
 	});
@@ -110,6 +113,7 @@ it("does not claim validation when the spreadsheet is disabled", async () => {
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				leaderboardTop: 20,
 			},
 		},
 	});
@@ -339,7 +343,10 @@ it("shows, edits and saves the Any expansion limit", async () => {
 	expect(sendMessage).toHaveBeenCalledWith(
 		"racetime.v4.updateSettings",
 		expect.objectContaining({
-			settings: expect.objectContaining({maxResolvedMappings: 30}),
+			settings: expect.objectContaining({
+				maxResolvedMappings: 30,
+				leaderboardTop: 20,
+			}),
 		}),
 	);
 });
@@ -368,4 +375,20 @@ it("rejects an invalid Any expansion limit before saving", async () => {
 		);
 		cleanup();
 	}
+});
+
+it("shows and validates the leaderboard rank limit", async () => {
+	render(<Settings />);
+	await screen.findByText("未設定");
+	const input = screen.getByLabelText(
+		"リーダーボード取得順位数",
+	) as HTMLInputElement;
+	expect(input.value).toBe("20");
+	fireEvent.change(input, {target: {value: "0"}});
+	expect(
+		await screen.findByText(/リーダーボード取得順位数は1以上の整数/),
+	).toBeTruthy();
+	expect(
+		(screen.getByRole("button", {name: "保存"}) as HTMLButtonElement).disabled,
+	).toBe(true);
 });

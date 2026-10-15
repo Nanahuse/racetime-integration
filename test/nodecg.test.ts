@@ -175,6 +175,7 @@ it("loads the built extension, subscribes to the v3 event, and refreshes its pub
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				leaderboardTop: 20,
 			},
 		},
 	});
@@ -260,6 +261,7 @@ it("initializes from a Proxy-backed settings Replicant and reads the defaults", 
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				leaderboardTop: 20,
 			},
 		},
 	});
@@ -272,6 +274,7 @@ it("loads persisted settings exposed through a Proxy-backed Replicant", async ()
 			gameMappingsSheet: "Games",
 			categoryMappingsSheet: "Mappings",
 			maxResolvedMappings: 20,
+			leaderboardTop: 20,
 		},
 	});
 	expect(await api.request("getSettings", undefined)).toEqual({
@@ -283,6 +286,7 @@ it("loads persisted settings exposed through a Proxy-backed Replicant", async ()
 				gameMappingsSheet: "Games",
 				categoryMappingsSheet: "Mappings",
 				maxResolvedMappings: 20,
+				leaderboardTop: 20,
 			},
 		},
 	});
@@ -296,6 +300,7 @@ it("persists updates through the Replicant and restarts from the saved settings"
 				gameMappingsSheet: "Games",
 				categoryMappingsSheet: "Other",
 				maxResolvedMappings: 20,
+				leaderboardTop: 20,
 			},
 			expectedRevision: 0,
 		}),
@@ -308,6 +313,7 @@ it("persists updates through the Replicant and restarts from the saved settings"
 				gameMappingsSheet: "Games",
 				categoryMappingsSheet: "Other",
 				maxResolvedMappings: 20,
+				leaderboardTop: 20,
 			},
 		},
 	});
@@ -319,6 +325,7 @@ it("persists updates through the Replicant and restarts from the saved settings"
 			gameMappingsSheet: "Games",
 			categoryMappingsSheet: "Other",
 			maxResolvedMappings: 20,
+			leaderboardTop: 20,
 		},
 	});
 	const [restarted] = loadExtension(saved as SettingsState);
@@ -331,6 +338,7 @@ it("persists updates through the Replicant and restarts from the saved settings"
 				gameMappingsSheet: "Games",
 				categoryMappingsSheet: "Other",
 				maxResolvedMappings: 20,
+				leaderboardTop: 20,
 			},
 		},
 	});
@@ -344,7 +352,7 @@ it("fills the default expansion limit for settings persisted before it existed",
 			categoryMappingsSheet: "Mappings",
 		},
 	} as SettingsState;
-	const [api, , warn] = loadExtension(stored);
+	const [api, replicants, warn] = loadExtension(stored);
 	expect(await api.request("getSettings", undefined)).toEqual({
 		ok: true,
 		data: {
@@ -354,11 +362,16 @@ it("fills the default expansion limit for settings persisted before it existed",
 				gameMappingsSheet: "Games",
 				categoryMappingsSheet: "Mappings",
 				maxResolvedMappings: 20,
+				leaderboardTop: 20,
 			},
 		},
 	});
 	// A missing field must not be treated as an invalid configuration.
 	expect(warn).not.toHaveBeenCalled();
+	expect(replicants.get(SETTINGS_REPLICANT)?.stored()).toMatchObject({
+		revision: 4,
+		settings: {maxResolvedMappings: 20, leaderboardTop: 20},
+	});
 });
 
 it("persists a changed expansion limit and reloads it", async () => {
@@ -370,19 +383,23 @@ it("persists a changed expansion limit and reloads it", async () => {
 				gameMappingsSheet: "Games",
 				categoryMappingsSheet: "Other",
 				maxResolvedMappings: 50,
+				leaderboardTop: 20,
 			},
 			expectedRevision: 0,
 		}),
 	).toMatchObject({
 		ok: true,
-		data: {revision: 1, settings: {maxResolvedMappings: 50}},
+		data: {
+			revision: 1,
+			settings: {maxResolvedMappings: 50, leaderboardTop: 20},
+		},
 	});
 	const saved = replicants.get(SETTINGS_REPLICANT)?.stored() as SettingsState;
 	expect(saved.settings.maxResolvedMappings).toBe(50);
 	const [restarted] = loadExtension(saved);
 	expect(await restarted.request("getSettings", undefined)).toMatchObject({
 		ok: true,
-		data: {settings: {maxResolvedMappings: 50}},
+		data: {settings: {maxResolvedMappings: 50, leaderboardTop: 20}},
 	});
 });
 
@@ -393,6 +410,7 @@ const DEFAULT_SETTINGS: SettingsState = {
 		gameMappingsSheet: "GameMappings",
 		categoryMappingsSheet: "CategoryMappings",
 		maxResolvedMappings: 20,
+		leaderboardTop: 20,
 	},
 };
 
@@ -405,6 +423,7 @@ it("resets invalid persisted settings to defaults and keeps the extension runnin
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				leaderboardTop: 20,
 			},
 		},
 		{
@@ -414,6 +433,7 @@ it("resets invalid persisted settings to defaults and keeps the extension runnin
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				leaderboardTop: 20,
 			},
 		},
 		{
@@ -423,6 +443,7 @@ it("resets invalid persisted settings to defaults and keeps the extension runnin
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				leaderboardTop: 20,
 			},
 		},
 		{
@@ -432,6 +453,7 @@ it("resets invalid persisted settings to defaults and keeps the extension runnin
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				leaderboardTop: 20,
 			},
 		},
 		{
@@ -441,6 +463,7 @@ it("resets invalid persisted settings to defaults and keeps the extension runnin
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "",
 				maxResolvedMappings: 20,
+				leaderboardTop: 20,
 			},
 		},
 		{
@@ -449,6 +472,7 @@ it("resets invalid persisted settings to defaults and keeps the extension runnin
 				spreadsheetId: null,
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				leaderboardTop: 20,
 			} as never,
 		},
 		{revision: 0, settings: null as never},
@@ -483,6 +507,7 @@ it("resets when the persisted expansion limit is invalid", async () => {
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: maxResolvedMappings as never,
+				leaderboardTop: 20,
 			},
 		});
 		expect(await api.request("getSettings", undefined)).toEqual({
@@ -496,6 +521,35 @@ it("resets when the persisted expansion limit is invalid", async () => {
 	}
 });
 
+it("rejects invalid leaderboardTop values without changing Settings", async () => {
+	for (const leaderboardTop of [
+		0,
+		-1,
+		1.5,
+		Number.NaN,
+		Number.POSITIVE_INFINITY,
+		"20",
+		Number.MAX_SAFE_INTEGER + 1,
+	]) {
+		const [api] = loadExtension();
+		const result = await api.request("updateSettings", {
+			settings: {
+				spreadsheetId: null,
+				gameMappingsSheet: "GameMappings",
+				categoryMappingsSheet: "CategoryMappings",
+				maxResolvedMappings: 20,
+				leaderboardTop: leaderboardTop as never,
+			},
+			expectedRevision: 0,
+		});
+		expect(result).toMatchObject({ok: false, error: {code: "invalid_input"}});
+		expect(await api.request("getSettings", undefined)).toMatchObject({
+			ok: true,
+			data: {revision: 0, settings: {leaderboardTop: 20}},
+		});
+	}
+});
+
 it("starts even when the persisted settings omit gameMappingsSheet", async () => {
 	const [api, , warn] = loadExtension({
 		revision: 0,
@@ -503,6 +557,7 @@ it("starts even when the persisted settings omit gameMappingsSheet", async () =>
 			spreadsheetId: null,
 			categoryMappingsSheet: "CategoryMappings",
 			maxResolvedMappings: 20,
+			leaderboardTop: 20,
 		} as never,
 	});
 	expect(await api.request("getSettings", undefined)).toEqual({
@@ -520,6 +575,7 @@ it("keeps valid persisted settings unchanged", async () => {
 			gameMappingsSheet: "Games",
 			categoryMappingsSheet: "Mappings",
 			maxResolvedMappings: 20,
+			leaderboardTop: 20,
 		},
 	};
 	const [api, , warn] = loadExtension(stored);

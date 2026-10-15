@@ -1,6 +1,7 @@
 import {
 	API_VERSION,
 	type CategoryMapping,
+	DEFAULT_LEADERBOARD_TOP,
 	DEFAULT_MAX_RESOLVED_MAPPINGS,
 	type GameMapping,
 	type Operations,
@@ -27,6 +28,7 @@ import {initializeSpreadsheet} from "./integrations/spreadsheet/initialize";
 import type {MappingService} from "./mappings";
 import {anyVariableIds, expandCategoryMapping} from "./resolve";
 import type {RaceService} from "./service";
+import type {SpeedrunRecordService} from "./speedrun-records";
 
 class RequestError extends IntegrationError {}
 function object(raw: unknown, field?: string): Record<string, unknown> {
@@ -84,6 +86,10 @@ export function parseSettings(raw: unknown): Settings {
 			input.maxResolvedMappings === undefined
 				? DEFAULT_MAX_RESOLVED_MAPPINGS
 				: positiveInteger(input.maxResolvedMappings, "maxResolvedMappings"),
+		leaderboardTop:
+			input.leaderboardTop === undefined
+				? DEFAULT_LEADERBOARD_TOP
+				: positiveInteger(input.leaderboardTop, "leaderboardTop"),
 	};
 }
 export function parseSettingsState(raw: unknown): SettingsState {
@@ -125,7 +131,7 @@ function pruneVariables(
 
 /**
  * Validates a category's variable selection against the Speedrun.com
- * definitions: no unknown ids, enum values must be offered options, mandatory
+ * definitions: no unknown ids, enum values must be offered options, PB-defining
  * variables must be set, and user-defined values are length-checked.
  */
 function validateVariables(
@@ -148,10 +154,10 @@ function validateVariables(
 		if (variable.userDefined) {
 			if (value.length > MAX_USER_DEFINED_LENGTH)
 				throw new RequestError("invalid_input", `Variable "${id}" is too long`);
-			if (variable.mandatory && value.trim() === "")
+			if (variable.obsoletes && value.trim() === "")
 				throw new RequestError(
 					"invalid_input",
-					`Missing mandatory variable "${id}"`,
+					`Missing PB-defining variable "${id}"`,
 				);
 			continue;
 		}
@@ -161,12 +167,18 @@ function validateVariables(
 				`Invalid value for variable "${id}"`,
 			);
 	}
-	for (const variable of definitions)
-		if (variable.mandatory && !values[variable.id])
+	for (const variable of definitions) {
+		const value = values[variable.id];
+		if (
+			variable.obsoletes &&
+			(value === undefined ||
+				(typeof value === "string" && value.trim() === ""))
+		)
 			throw new RequestError(
 				"invalid_input",
-				`Missing mandatory variable "${variable.id}"`,
+				`Missing PB-defining variable "${variable.id}"`,
 			);
+	}
 }
 
 function gameMapping(raw: unknown): GameMapping {
@@ -247,6 +259,7 @@ export function createAPI(
 	mappings: MappingService,
 	speedrun: SpeedrunClient,
 	createSpreadsheetClient: (spreadsheetId: string) => SpreadsheetClient,
+	records?: SpeedrunRecordService,
 ): RaceTimeAPI {
 	async function request<K extends keyof Operations>(
 		operation: K,
@@ -256,6 +269,37 @@ export function createAPI(
 			const data = raw === undefined ? {} : object(raw);
 			let value: unknown;
 			switch (operation) {
+				case "getSpeedrunLeaderboards":
+					if (!records)
+						throw new RequestError(
+							"unsupported_operation",
+							"Speedrun records are unavailable",
+						);
+					value = await records.leaderboards(
+						text(data.categorySlug),
+						text(data.goal),
+						data.refresh === true,
+					);
+					break;
+				case "getSpeedrunPlayerBests": {
+					if (!records)
+						throw new RequestError(
+							"unsupported_operation",
+							"Speedrun records are unavailable",
+						);
+					if (
+						!Array.isArray(data.playerIds) ||
+						data.playerIds.some((id) => typeof id !== "string")
+					)
+						throw new RequestError("invalid_input", "Invalid playerIds");
+					value = await records.playerBests(
+						text(data.categorySlug),
+						text(data.goal),
+						(data.playerIds as string[]).map((id) => text(id, "playerId")),
+						data.refresh === true,
+					);
+					break;
+				}
 				case "fetchRace":
 					value = await races.fetch(text(data.url));
 					break;

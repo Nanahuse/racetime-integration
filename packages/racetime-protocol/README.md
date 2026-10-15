@@ -2,7 +2,7 @@
 
 RaceTime Integration v4の公開型・定数・メッセージ名。ESM/CommonJSの両方に型宣言を含み、実行時依存は期間処理に使う `@js-temporal/polyfill` のみです（NodeCG・Google SDK・Player Managerへの実行時依存はありません）。
 
-利用バンドルのmanifestに `"bundleDependencies": {"racetime-integration": "^0.4.0"}` を指定してください。
+利用バンドルのmanifestに `"bundleDependencies": {"racetime-integration": "^0.5.0"}` を指定してください。
 
 ```ts
 import {BUNDLE_NAME, type RaceTimeAPI} from "@nanahuse/racetime-protocol";
@@ -36,6 +36,8 @@ if (watched.ok) {
 | saveCategoryMapping | `{mapping, expectedRevision, settingsRevision}` | `{record, action, settingsRevision}` |
 | deleteCategoryMapping | `{categorySlug, goal, expectedRevision, settingsRevision}` | `{deleted: true, settingsRevision}` |
 | resolveCategoryMapping | `{categorySlug, goal}` | `{status: "resolved", mappings: ResolvedCategoryMapping[]} \| {status: "unregistered"} \| {status: "inconsistent", message}` |
+| getSpeedrunLeaderboards | `{categorySlug, goal, refresh?}` | 解決状態と条件ごとの `{mapping, top, fetchedAt, state, entries, stale}` |
+| getSpeedrunPlayerBests | `{categorySlug, goal, playerIds, refresh?}` | 解決状態と条件ごとのPlayer別PB状態・Run情報 |
 | searchSpeedrunGames | `{query}` | `{games}` |
 | getSpeedrunGameOptions | `{gameId}` | `{game, categories, levels, platforms, regions, timingMethods}` |
 | getSpeedrunCategoryVariables | `{categoryId}` | `{variables}` |
@@ -124,11 +126,21 @@ if (time) {
 
 `initializeSpreadsheet` は指定されたSpreadsheetへ `GameMappings` と `CategoryMappings` のワークシートを準備します。不足シートは作成（`created`）、空シートにはヘッダーを設定（`initialized`）し、正常な既存シートは変更しません（`unchanged`）。不正な既存データがある場合は変更せずエラーを返します。初期化はSettingsを永続化せず、`settingsRevision` も変更しません。保存前に利用者が明示的に接続先を確定してください。
 
-設定は `{spreadsheetId: string | null, gameMappingsSheet: string, categoryMappingsSheet: string, maxResolvedMappings: number}`。spreadsheetIdがnullなら無効化します。`maxResolvedMappings` は1以上の安全な整数（初期値20）で、0以下・小数・負数・NaN・Infinity・数値以外・安全な整数範囲外は拒否します。`maxResolvedMappings` を持たない既存の永続化済み設定は、他の項目とrevisionを変更せずに20を補完して読み込みます。updateSettingsは両シートを読込み・検証してから切替え、失敗時は旧設定を保持します。`SETTINGS_REPLICANT`（racetime-settings）へ永続化されます。設定ReplicantとレースReplicantは参照専用として扱い、変更にはAPIを使ってください。
+設定は `{spreadsheetId: string | null, gameMappingsSheet: string, categoryMappingsSheet: string, maxResolvedMappings: number, leaderboardTop: number}`。spreadsheetIdがnullなら無効化します。`maxResolvedMappings` と `leaderboardTop` は1以上の安全な整数（初期値20）で、0以下・小数・負数・NaN・Infinity・数値以外・安全な整数範囲外は拒否します。どちらかを持たない既存の永続化済み設定は、他の値とrevisionを変更せずに20を補完して読み込みます。updateSettingsは両シートを読込み・検証してから切替え、失敗時は旧設定を保持します。`SETTINGS_REPLICANT`（racetime-settings）へ永続化されます。設定ReplicantとレースReplicantは参照専用として扱い、変更にはAPIを使ってください。
 
 ## Speedrun.com検索
 
-`searchSpeedrunGames` / `getSpeedrunGameOptions` / `getSpeedrunCategoryVariables` は手動選択用にSRCのゲーム・カテゴリ・Level・Variables・Platform・Region・Emulator・Timing Methodを取得します。PB・WR・Leaderboardは含みません。SRC v1 APIは認証不要です。
+`searchSpeedrunGames` / `getSpeedrunGameOptions` / `getSpeedrunCategoryVariables` は手動選択用にSRCのゲーム・カテゴリ・Level・Variables・Platform・Region・Emulator・Timing Methodを取得します。SRC v1 APIは認証不要です。
+
+## Speedrun.com Leaderboard / PB
+
+両操作は `categorySlug` と `goal` から既存Mappingを解決し、`Any` を `maxResolvedMappings` の範囲内で具体的な条件へ展開します。条件ごとに独立した結果を返し、`mapping.key` で識別します。未登録は `unregistered`、MappingとSRC定義の不一致は `inconsistent`、SRC通信失敗は `Response` のerrorになります。
+
+`getSpeedrunLeaderboards` は設定 `leaderboardTop` をSRCの `top` に渡します。SRCの `place` を維持し、同順位のRunをすべて返します。RunはID、URL、検証済みISO 8601時間、日付、ユーザー/ゲスト情報を含みます。Timing Method指定時はその時間、未指定時はSRC Primary Timeを使用します。各Mappingの `state` は `ready` / `not_found` / `error` で、取得失敗時は `message` を含みます。Any展開ではMappingごとに状態と `stale` を返すため、一部の失敗が他の成功結果を失わせません。
+
+`getSpeedrunPlayerBests` は `playerIds` のPlayer Manager Player IDごとに、Primary/Secondaryの全SRCアカウントを検索します。PBはSRC Personal Bests APIが返す公式記録です。全ページを取得し、Game/Category/Levelと `obsoletes: true` のVariable値で照合します。`obsoletes: false` のVariable、Platform、Region、Emulator、Timing MethodはPB照合に使わず、記録時間はSRCのPrimary Time、順位は公式 `place` を返します。Personal Best APIは `game` のみで取得し、`top` や `leaderboardTop` に依存しません。`Any` は具体値へ展開され、区分ごとに別のPBを返します。SRC順位などのRun情報は `run` に、順位は `place` に含まれます。PB状態は `found` / `not_found` / `unlinked` / `error` です。全ページ取得後に一致PBがなければ `not_found`、途中失敗やPB区分を特定できない場合は `error` です。複数アカウントの一部が失敗した場合は他のアカウントの部分結果だけでPBを確定しません。
+
+Extension内の条件別キャッシュは5分TTLで、同時要求は共有し、HTTP並行数を4に制限します。`refresh: true` は該当条件だけを再取得します。再取得に失敗して直前の正常値がある場合は `stale: true` を付けて返し、キャッシュなしのLeaderboard失敗はMappingの `state: "error"`、PB失敗はPlayerの `state: "error"` です。アカウント構成が変わった場合は、異なる構成で保存した集約PBをstale結果として再利用しません。通信失敗は正常値としてキャッシュしません。DashboardとNodeCG外部バンドルは同じ公開Protocolとキャッシュを使用します。レース監視更新はSRC取得を開始しません。
 
 Sheetsの同時操作・設定変更はプロセス内で直列化します。外部アプリや別プロセスが読み書きの間に変更することを排他する契約ではありません。
 
