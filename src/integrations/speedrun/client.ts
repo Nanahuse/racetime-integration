@@ -16,7 +16,16 @@ import type {
 	SpeedrunVariableValueOption,
 	TimingMethod,
 } from "@nanahuse/racetime-protocol";
-import {parseRaceDuration} from "@nanahuse/racetime-protocol";
+import {
+	parseRaceDate,
+	parseRaceDuration,
+	type RaceDuration,
+	type RaceInstant,
+	serializeRaceDate,
+	serializeRaceDuration,
+	serializeRaceInstant,
+	Temporal,
+} from "@nanahuse/racetime-protocol";
 import {SpeedrunError, SpeedrunNotFoundError} from "./errors";
 
 export const SPEEDRUN_API_BASE_URL = "https://www.speedrun.com/api/v1";
@@ -86,14 +95,14 @@ function requireBoolean(
 	return value;
 }
 
-function requireDuration(value: unknown, path: string): string {
+function requireDuration(value: unknown, path: string): RaceDuration {
 	if (typeof value !== "string")
 		throw new SpeedrunError(
 			"invalid_payload",
 			`${path} must be an ISO 8601 duration.`,
 		);
 	try {
-		parseRaceDuration(value);
+		return parseRaceDuration(value)!;
 	} catch (cause) {
 		throw new SpeedrunError(
 			"invalid_payload",
@@ -101,14 +110,32 @@ function requireDuration(value: unknown, path: string): string {
 			{cause},
 		);
 	}
-	return value;
 }
 
-function optionalDuration(value: unknown, path: string): string | null {
+function optionalDuration(value: unknown, path: string): RaceDuration | null {
 	if (value === undefined || value === null) return null;
 	if (typeof value !== "string")
 		throw new SpeedrunError("invalid_payload", `${path} is not a duration.`);
 	return requireDuration(value, path);
+}
+
+function optionalDate(value: unknown, path: string): string | null {
+	if (value === undefined || value === null) return null;
+	if (typeof value !== "string") {
+		throw new SpeedrunError(
+			"invalid_payload",
+			`${path} must be an ISO 8601 date or null.`,
+		);
+	}
+	try {
+		return serializeRaceDate(parseRaceDate(value));
+	} catch (cause) {
+		throw new SpeedrunError(
+			"invalid_payload",
+			`${path} must be an ISO 8601 date.`,
+			{cause},
+		);
+	}
 }
 
 function optionalStringArray(
@@ -300,7 +327,7 @@ function gameIdFromLinkUri(uri: string): string {
 	return id;
 }
 
-type CacheEntry = {expires: number; value: unknown};
+type CacheEntry = {expires: RaceInstant; value: unknown};
 
 export class HttpSpeedrunClient implements SpeedrunClient {
 	private readonly cache = new Map<string, CacheEntry>();
@@ -425,13 +452,20 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 		refresh = false,
 	): Promise<T> {
 		const entry = this.cache.get(key);
-		if (!refresh && entry && entry.expires > Date.now())
+		if (
+			!refresh &&
+			entry &&
+			Temporal.Instant.compare(entry.expires, Temporal.Now.instant()) > 0
+		)
 			return Promise.resolve(entry.value as T);
 		const active = this.pending.get(key);
 		if (active) return active as Promise<T>;
 		const promise = load()
 			.then((value) => {
-				this.cache.set(key, {expires: Date.now() + CACHE_TTL_MS, value});
+				this.cache.set(key, {
+					expires: Temporal.Now.instant().add({milliseconds: CACHE_TTL_MS}),
+					value,
+				});
 				return value;
 			})
 			.finally(() => this.pending.delete(key));
@@ -679,8 +713,8 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 									typeof run.weblink === "string"
 										? run.weblink
 										: `https://www.speedrun.com/runs/${encodeURIComponent(id)}`,
-								time: duration,
-								date: typeof run.date === "string" ? run.date : null,
+								time: serializeRaceDuration(duration)!,
+								date: optionalDate(run.date, `run ${id}.date`),
 								players,
 							},
 						},
@@ -689,7 +723,7 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 				return {
 					mapping,
 					top,
-					fetchedAt: new Date().toISOString(),
+					fetchedAt: serializeRaceInstant(Temporal.Now.instant()),
 					state: entries.length ? "ready" : "not_found",
 					entries,
 					stale: false,
@@ -820,20 +854,11 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 							);
 						variables[variableId] = value;
 					}
-					if (
-						run.date !== undefined &&
-						run.date !== null &&
-						typeof run.date !== "string"
-					)
-						throw new SpeedrunError(
-							"invalid_payload",
-							`run ${id}.date must be a string or null.`,
-						);
 					return {
 						runId: id,
 						url: requireString(run, "weblink", `run ${id}`),
-						time,
-						date: typeof run.date === "string" ? run.date : null,
+						time: serializeRaceDuration(time)!,
+						date: optionalDate(run.date, `run ${id}.date`),
 						players: [
 							{
 								userId,

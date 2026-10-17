@@ -20,6 +20,7 @@ import {
 } from "@testing-library/react";
 import {afterEach, expect, it, vi} from "vitest";
 import {Overview} from "../ui/dashboard/components/Overview";
+import {formatRaceInstant} from "../ui/dashboard/model/race-time";
 import {deferred} from "./fixtures";
 
 const sendMessage = vi.fn();
@@ -36,6 +37,20 @@ const race: Race = {
 	version: 1,
 	name: "game/race",
 	status: "in_progress",
+	openedAt: "2026-01-01T00:00:00Z",
+	startedAt: "2026-01-01T00:00:15Z",
+	endedAt: null,
+	cancelledAt: null,
+	startDelay: "PT15S",
+	timeLimit: "P1D",
+	info: "<b>Race details</b>",
+	ranked: true,
+	recordable: false,
+	recorded: false,
+	timeLimitAutoComplete: false,
+	entrantsCount: 8,
+	entrantsCountFinished: 1,
+	entrantsCountInactive: 2,
 	category: {slug: "game", name: "Game", goal: "Any%"},
 	entrants: [
 		{
@@ -44,6 +59,7 @@ const race: Race = {
 			twitchLogin: "runnerone",
 			status: "done",
 			finishTime: "PT1H2M3S",
+			finishedAt: "2026-01-01T01:02:18Z",
 			place: 1,
 		},
 		{
@@ -52,6 +68,7 @@ const race: Race = {
 			twitchLogin: null,
 			status: "in_progress",
 			finishTime: null,
+			finishedAt: null,
 			place: null,
 		},
 		{
@@ -60,6 +77,7 @@ const race: Race = {
 			twitchLogin: null,
 			status: "in_progress",
 			finishTime: null,
+			finishedAt: null,
 			place: null,
 		},
 	],
@@ -69,6 +87,7 @@ const race: Race = {
 			name: "Runner One",
 			place: 1,
 			time: "PT1H2M3S",
+			finishedAt: "2026-01-01T01:02:18Z",
 			status: "finished",
 		},
 		{
@@ -76,6 +95,7 @@ const race: Race = {
 			name: "Runner Two",
 			place: null,
 			time: null,
+			finishedAt: null,
 			status: "other",
 		},
 		{
@@ -83,6 +103,7 @@ const race: Race = {
 			name: "Runner Three",
 			place: null,
 			time: null,
+			finishedAt: null,
 			status: "other",
 		},
 	],
@@ -171,9 +192,82 @@ it("displays a single-fetched race with resolved participants without starting a
 	expect(screen.getByText("1位")).toBeTruthy();
 	expect(screen.getByText("1:02:03")).toBeTruthy();
 	expect(screen.getByText("finished")).toBeTruthy();
+	const detail = (label: string) =>
+		screen.getByText(label, {selector: "dt"}).nextElementSibling?.textContent;
+	expect(detail("作成日時")).toBe(formatRaceInstant(race.openedAt));
+	expect(detail("開始日時")).toBe(formatRaceInstant(race.startedAt));
+	expect(detail("終了日時")).toBe("未設定");
+	expect(detail("中止日時")).toBe("未設定");
+	expect(detail("カウントダウン")).toBe("0:00:15");
+	expect(detail("制限時間")).toBe("24:00:00");
+	expect(detail("Entrants")).toBe("8");
+	expect(detail("完走人数")).toBe("1");
+	expect(detail("DNF / DQ人数")).toBe("2");
+	expect(detail("記録対象設定")).toBe("有効");
+	expect(detail("記録可能状態")).toBe("不可");
+	expect(detail("記録済み状態")).toBe("未記録");
+	expect(detail("制限時間到達時")).toBe("レースを中止");
+	expect(screen.getByText(race.info).querySelector("b")).toBeNull();
+	expect(
+		screen.getByText(
+			`完走日時: ${formatRaceInstant(race.results[0]!.finishedAt)}`,
+		),
+	).toBeTruthy();
 	const operations = sendMessage.mock.calls.map((call) => call[0]);
 	expect(operations).toContain("racetime.v4.fetchRace");
 	expect(operations).not.toContain("racetime.v4.watchRace");
+});
+
+it("displays and updates the same race details from monitored snapshots", async () => {
+	sendMessage.mockResolvedValue({
+		ok: true,
+		data: {records: [], settingsRevision: 0},
+	});
+	const view = render(<Overview races={races} />);
+	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
+	expect(await screen.findByText(race.info)).toBeTruthy();
+	expect(
+		screen.getByText("制限時間", {selector: "dt"}).nextElementSibling
+			?.textContent,
+	).toBe("24:00:00");
+	const updated: Race = {
+		...race,
+		endedAt: "2026-01-01T02:00:00Z",
+		cancelledAt: "2026-01-01T02:00:00Z",
+		info: "Updated description",
+		recorded: true,
+		recordable: true,
+		timeLimitAutoComplete: true,
+	};
+	view.rerender(
+		<Overview
+			races={{
+				schemaVersion: 1,
+				races: [{...raceState, race: updated, revision: 2, raceRevision: 2}],
+			}}
+		/>,
+	);
+	expect(await screen.findByText("Updated description")).toBeTruthy();
+	expect(
+		screen.getByText("終了日時", {selector: "dt"}).nextElementSibling
+			?.textContent,
+	).toBe(formatRaceInstant(updated.endedAt));
+	expect(
+		screen.getByText("中止日時", {selector: "dt"}).nextElementSibling
+			?.textContent,
+	).toBe(formatRaceInstant(updated.cancelledAt));
+	expect(
+		screen.getByText("記録済み状態", {selector: "dt"}).nextElementSibling
+			?.textContent,
+	).toBe("記録済み");
+	expect(
+		screen.getByText("記録可能状態", {selector: "dt"}).nextElementSibling
+			?.textContent,
+	).toBe("可能");
+	expect(
+		screen.getByText("制限時間到達時", {selector: "dt"}).nextElementSibling
+			?.textContent,
+	).toBe("レースを完了");
 });
 
 it("shows an error and clears a stale result when fetching fails", async () => {

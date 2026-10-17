@@ -3,7 +3,7 @@ import type {
 	Player,
 	PlayerManagerAPI,
 } from "@nanahuse/player-manager-protocol";
-import {parseRaceDuration} from "@nanahuse/racetime-protocol";
+import {parseRaceDuration, parseRaceInstant} from "@nanahuse/racetime-protocol";
 import {afterEach, expect, it, vi} from "vitest";
 import {createAPI} from "../src/api";
 import {ParticipantResolver} from "../src/integrations/players";
@@ -548,6 +548,7 @@ it("resolves Primary and Secondary accounts for a completed race and keeps its r
 			twitchLogin: "runner",
 			status: "done",
 			finishTime: parseRaceDuration("PT1H2M3S"),
+			finishedAt: parseRaceInstant("2026-01-01T01:02:18Z"),
 			place: 1,
 		},
 		{
@@ -556,6 +557,7 @@ it("resolves Primary and Secondary accounts for a completed race and keeps its r
 			twitchLogin: null,
 			status: "done",
 			finishTime: parseRaceDuration("PT1H5M0S"),
+			finishedAt: parseRaceInstant("2026-01-01T01:05:15Z"),
 			place: 2,
 		},
 	];
@@ -576,6 +578,7 @@ it("resolves Primary and Secondary accounts for a completed race and keeps its r
 			name: "Runner",
 			place: 1,
 			time: "PT1H2M3S",
+			finishedAt: "2026-01-01T01:02:18Z",
 			status: "finished",
 		},
 		{
@@ -583,6 +586,7 @@ it("resolves Primary and Secondary accounts for a completed race and keeps its r
 			name: "Second",
 			place: 2,
 			time: "PT1H5M",
+			finishedAt: "2026-01-01T01:05:15Z",
 			status: "finished",
 		},
 	]);

@@ -11,6 +11,7 @@ pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm lint
 pnpm test
+pnpm build
 ```
 
 `pnpm test` はプロトコルとNodeCG拡張をビルドして境界テストを実行します。`pnpm dev` は拡張の変更を監視してビルドします。NodeCGの再起動は別途行ってください。
@@ -19,7 +20,7 @@ pnpm test
 
 Player Managerと同じ構成で、PRとmainへのpush時に`Check`を実行します。Node.js 24 / pnpm 12.9.1とpnpmキャッシュを使い、固定lockfileでのインストール、バージョン検証、型チェック、lint、テスト、ビルドを行います。
 
-ルートとProtocolのpackage.jsonは同じ`MAJOR.MINOR.PATCH`に揃えて更新してください。現在のバージョンは`0.5.0`です。パッケージ版と公開APIの`API_VERSION`は別に管理します。mainへのpushで`Check`が成功すると、`Tag`がそのコミットのバージョンで注釈付きタグ`vX.Y.Z`を作成します。既存タグやmainが先へ進んだ実行はスキップし、最新リリースタグ以下の新規バージョンは拒否します。
+ルートとProtocolのpackage.jsonは同じ`MAJOR.MINOR.PATCH`に揃えて更新してください。現在のバージョンは`0.6.0`です。パッケージ版と公開APIの`API_VERSION`は別に管理します。mainへのpushで`Check`が成功すると、`Tag`がそのコミットのバージョンで注釈付きタグ`vX.Y.Z`を作成します。既存タグやmainが先へ進んだ実行はスキップし、最新リリースタグ以下の新規バージョンは拒否します。
 
 ## NodeCGへの配置
 
@@ -75,5 +76,9 @@ watchRaceは初回HTTP成功後に非nullのRaceとwatchIdを返します。初�
 fetchRaceはURLからRaceTimeを1回だけHTTP取得し、その参加者をwatchRaceと同じPlayer解決処理で解決して `{race, participants, resolution}` を返します。watchId・WebSocket・監視セッションは生成せず、既存の監視状態を変更しません。Player Managerの取得に失敗してもレース情報は返し、参加者はunavailableになります。
 
 Player Manager v3の公開listでDirectoryを取得し、Primary/Secondaryを問わずRaceTime AccountをRaceTime IDで照合して表示名などを含むSnapshotを提供します。directoryChanged通知で監視中のレースを自動再解決します。レース状態とPlayer解決のRevisionおよびpending/ready/errorも公開します。Race.resultsは放送で使用する結果ステータスに正規化済みです。
+
+Raceには作成・開始・終了・中止日時、カウントダウン・制限時間、説明、記録対象設定（ranked）・記録可能状態（recordable）・記録済み状態（recorded）、API提供の参加者総数・完走人数・DNF/DQ人数、制限時間到達時の処理を含みます。参加者の `finishedAt` は完走日時で、経過時間の `finishTime` / `RaceResult.time` とは異なります。Overviewは単発取得・監視の両方でこれらを表示します。日時は利用環境のローカルタイムゾーン、期間は経過時間形式、null日時は「未設定」、説明は通常のテキストで表示します。
+
+時間情報はすべての公開インターフェース（直接API・NodeCGメッセージ・Replicant）でISO 8601文字列です。絶対日時はUTC（例 `2026-01-01T01:02:18.123456789Z`）、期間はDuration（例 `PT1H2M3.45S`）、SRC記録日は日付のみ（例 `2026-01-01`）。Protocolの共通関数で内部の `Temporal.Instant` / `Temporal.Duration` / `Temporal.PlainDate` に変換できます。タイムゾーンなしの日時、不正な日付、負または年・月・週を含む期間は拒否し、nullは保持します。公開モデルにTemporalインスタンスは含みません。API_VERSION=4、メッセージ名 `racetime.v4.*`、RacesState.schemaVersion=1は維持します。
 
 実装範囲・検証状況は[implementation.md](docs/implementation.md)に記載しています。

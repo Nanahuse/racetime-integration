@@ -1,8 +1,10 @@
 import {
 	parseRaceDuration,
+	type RaceInstant,
 	type ResolvedCategoryMapping,
 	type SpeedrunPersonalBestRun,
 	type SpeedrunPlayerBest,
+	serializeRaceInstant,
 	Temporal,
 } from "@nanahuse/racetime-protocol";
 import {IntegrationError} from "./errors";
@@ -20,7 +22,7 @@ type Resolution =
 	| {status: "unregistered"}
 	| {status: "inconsistent"; message: string};
 type RecordCacheEntry = {
-	expiresAt: number;
+	expiresAt: RaceInstant;
 	value: unknown;
 	accountIds?: readonly string[];
 };
@@ -52,14 +54,20 @@ export class SpeedrunRecordService {
 		load: () => Promise<T>,
 	): Promise<{value: T; stale: boolean}> {
 		const previous = this.cache.get(key);
-		if (!refresh && previous && previous.expiresAt > Date.now())
+		if (
+			!refresh &&
+			previous &&
+			Temporal.Instant.compare(previous.expiresAt, Temporal.Now.instant()) > 0
+		)
 			return {value: previous.value as T, stale: false};
 		const active = this.pending.get(key);
 		if (active) return active as Promise<{value: T; stale: boolean}>;
 		const request = load()
 			.then((value) => {
 				this.cache.set(key, {
-					expiresAt: Date.now() + RECORD_CACHE_TTL_MS,
+					expiresAt: Temporal.Now.instant().add({
+						milliseconds: RECORD_CACHE_TTL_MS,
+					}),
 					value,
 				});
 				return {value, stale: false};
@@ -142,7 +150,10 @@ export class SpeedrunRecordService {
 						throw new Error(
 							"Speedrun.com returned multiple Personal Bests for the same PB-defining Variables",
 						);
-					return {run: matches[0] ?? null, fetchedAt: new Date().toISOString()};
+					return {
+						run: matches[0] ?? null,
+						fetchedAt: serializeRaceInstant(Temporal.Now.instant()),
+					};
 				},
 			);
 			const run = result.value.run;
@@ -162,7 +173,7 @@ export class SpeedrunRecordService {
 				state: "error",
 				run: null,
 				place: null,
-				fetchedAt: new Date().toISOString(),
+				fetchedAt: serializeRaceInstant(Temporal.Now.instant()),
 				stale: false,
 				message: error instanceof Error ? error.message : String(error),
 			};
@@ -175,7 +186,9 @@ export class SpeedrunRecordService {
 		accountIds: readonly string[],
 	): void {
 		this.cache.set(key, {
-			expiresAt: Date.now() + RECORD_CACHE_TTL_MS,
+			expiresAt: Temporal.Now.instant().add({
+				milliseconds: RECORD_CACHE_TTL_MS,
+			}),
 			value,
 			accountIds: [...accountIds].sort(),
 		});
@@ -216,7 +229,7 @@ export class SpeedrunRecordService {
 						value: {
 							mapping,
 							top,
-							fetchedAt: new Date().toISOString(),
+							fetchedAt: serializeRaceInstant(Temporal.Now.instant()),
 							state: "error" as const,
 							entries: [],
 							stale: false,
@@ -293,7 +306,7 @@ export class SpeedrunRecordService {
 			mappings: resolution.mappings,
 			leaderboards,
 			top,
-			fetchedAt: new Date().toISOString(),
+			fetchedAt: serializeRaceInstant(Temporal.Now.instant()),
 			stale: leaderboards.some((leaderboard) => leaderboard.stale),
 		};
 	}
@@ -325,7 +338,7 @@ export class SpeedrunRecordService {
 								state: "error",
 								run: null,
 								place: null,
-								fetchedAt: new Date().toISOString(),
+								fetchedAt: serializeRaceInstant(Temporal.Now.instant()),
 								stale: false,
 								message: accountError,
 							};
@@ -337,7 +350,7 @@ export class SpeedrunRecordService {
 								state: accountMap.has(playerId) ? "unlinked" : "error",
 								run: null,
 								place: null,
-								fetchedAt: new Date().toISOString(),
+								fetchedAt: serializeRaceInstant(Temporal.Now.instant()),
 								stale: false,
 								...(accountMap.has(playerId)
 									? {}
@@ -372,7 +385,7 @@ export class SpeedrunRecordService {
 										state: "error",
 										run: null,
 										place: null,
-										fetchedAt: new Date().toISOString(),
+										fetchedAt: serializeRaceInstant(Temporal.Now.instant()),
 										stale: false,
 										message:
 											"At least one linked Speedrun.com account could not be checked",
@@ -384,7 +397,7 @@ export class SpeedrunRecordService {
 								state: best ? "found" : "not_found",
 								run: best?.run ?? null,
 								place: best?.run.place ?? null,
-								fetchedAt: new Date().toISOString(),
+								fetchedAt: serializeRaceInstant(Temporal.Now.instant()),
 								stale: candidates.some((candidate) => candidate.stale),
 							};
 							this.savePlayerBest(playerCacheKey, resolved, accounts);
@@ -397,7 +410,7 @@ export class SpeedrunRecordService {
 									state: "error",
 									run: null,
 									place: null,
-									fetchedAt: new Date().toISOString(),
+									fetchedAt: serializeRaceInstant(Temporal.Now.instant()),
 									stale: false,
 									message:
 										error instanceof Error ? error.message : String(error),
@@ -413,7 +426,7 @@ export class SpeedrunRecordService {
 			status: "resolved" as const,
 			mappings: resolution.mappings,
 			results,
-			fetchedAt: new Date().toISOString(),
+			fetchedAt: serializeRaceInstant(Temporal.Now.instant()),
 			stale: results.some((result) =>
 				result.players.some((player) => player.stale),
 			),

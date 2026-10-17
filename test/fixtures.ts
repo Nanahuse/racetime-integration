@@ -13,6 +13,23 @@ export const payload = (
 	name: `game/${race}`,
 	slug: race,
 	status: {value: status},
+	opened_at: "2026-01-01T00:00:00Z",
+	started_at: status === "open" ? null : "2026-01-01T00:00:15Z",
+	ended_at:
+		status === "finished" || status === "cancelled"
+			? "2026-01-01T02:00:00Z"
+			: null,
+	cancelled_at: status === "cancelled" ? "2026-01-01T02:00:00Z" : null,
+	start_delay: "PT15S",
+	time_limit: "P1D",
+	info: "Race information",
+	ranked: true,
+	recordable: status === "finished",
+	recorded: false,
+	time_limit_auto_complete: false,
+	entrants_count: 5,
+	entrants_count_finished: status === "open" ? 0 : 1,
+	entrants_count_inactive: 2,
 	url: `/game/${race}`,
 	data_url: `/game/${race}/data`,
 	websocket_url: `/ws/race/${race}`,
@@ -21,9 +38,10 @@ export const payload = (
 	entrants: [
 		{
 			user: {id: "user1", name: "Runner", twitch_name: "runner"},
-			status: {value: "done"},
-			finish_time: "PT1H2M3.45S",
-			place: 1,
+			status: {value: status === "open" ? "not_ready" : "done"},
+			finish_time: status === "open" ? null : "PT1H2M3.45S",
+			finished_at: status === "open" ? null : "2026-01-01T01:02:18.45Z",
+			place: status === "open" ? null : 1,
 		},
 	],
 });

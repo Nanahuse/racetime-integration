@@ -36,6 +36,130 @@ it("normalizes result status and preserves canonical race identity, rank and tim
 	expect(typeof race.results[0]?.time).toBe("string");
 });
 describe("HTTP boundary", () => {
+	it.each(["open", "in_progress", "finished", "cancelled"])(
+		"preserves the time and detail fields of a %s race",
+		async (status) => {
+			const raw = {
+				...payload(1, "race", status),
+				opened_at: "2026-01-01T09:00:00.123456789+09:00",
+				info: "<b>Plain text</b>",
+			};
+			const client = new HttpRaceTimeClient({
+				fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(Response.json(raw)),
+			});
+			const race = mapRace(
+				await client.fetchRaceDetail(canonicalizeRaceUrl(url)),
+				url,
+			);
+			expect(race).toMatchObject({
+				openedAt: "2026-01-01T00:00:00.123456789Z",
+				startedAt: raw.started_at,
+				endedAt: raw.ended_at,
+				cancelledAt: raw.cancelled_at,
+				startDelay: "PT15S",
+				timeLimit: "P1D",
+				info: raw.info,
+				ranked: true,
+				recordable: status === "finished",
+				recorded: false,
+				timeLimitAutoComplete: false,
+				entrantsCount: 5,
+				entrantsCountFinished: raw.entrants_count_finished,
+				entrantsCountInactive: 2,
+			});
+			expect(race.entrantsCount).not.toBe(race.entrants.length);
+			expect(race.entrants[0]?.finishTime).toBe(raw.entrants[0]?.finish_time);
+			expect(race.entrants[0]?.finishedAt).toBe(raw.entrants[0]?.finished_at);
+			expect(race.results[0]?.time).toBe(race.entrants[0]?.finishTime);
+			expect(race.results[0]?.finishedAt).toBe(race.entrants[0]?.finishedAt);
+			expect(race).toEqual(JSON.parse(JSON.stringify(race)));
+		},
+	);
+
+	it.each([
+		...[
+			"opened_at",
+			"started_at",
+			"ended_at",
+			"cancelled_at",
+			"start_delay",
+			"time_limit",
+			"info",
+			"ranked",
+			"recordable",
+			"recorded",
+			"time_limit_auto_complete",
+			"entrants_count",
+			"entrants_count_finished",
+			"entrants_count_inactive",
+		].map((key): [string, undefined] => [key, undefined]),
+		["opened_at", null],
+		["opened_at", 123],
+		["opened_at", "bad"],
+		["started_at", "2026-01-01T00:00:00"],
+		["ended_at", "2026-02-30T00:00:00Z"],
+		["cancelled_at", false],
+		["start_delay", null],
+		["start_delay", "-PT1S"],
+		["start_delay", "PT1.1234567890S"],
+		["time_limit", "P1M"],
+		["time_limit", "P1W"],
+		["time_limit", 24],
+		["info", null],
+		["ranked", 1],
+		["recordable", "true"],
+		["recorded", null],
+		["time_limit_auto_complete", 0],
+		["entrants_count", -1],
+		["entrants_count_finished", 1.5],
+		["entrants_count_inactive", Number.MAX_SAFE_INTEGER + 1],
+		["entrants_count", "5"],
+	])(
+		"rejects invalid race field %s=%s as invalid_payload",
+		async (key, value) => {
+			const client = new HttpRaceTimeClient({
+				fetchImpl: vi
+					.fn<typeof fetch>()
+					.mockResolvedValue(
+						Response.json({...payload(), [key as string]: value}),
+					),
+			});
+			await expect(
+				client.fetchRaceDetail(canonicalizeRaceUrl(url)),
+			).rejects.toMatchObject({code: "invalid_payload"});
+		},
+	);
+
+	it.each([undefined, 1, "bad", "2026-01-01T00:00:00"])(
+		"rejects invalid entrant finished_at %s",
+		async (value) => {
+			const client = new HttpRaceTimeClient({
+				fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(
+					Response.json({
+						...payload(),
+						entrants: [{...payload().entrants[0], finished_at: value}],
+					}),
+				),
+			});
+			await expect(
+				client.fetchRaceDetail(canonicalizeRaceUrl(url)),
+			).rejects.toMatchObject({code: "invalid_payload"});
+		},
+	);
+
+	it("does not infer start or end timestamps for a race cancelled before starting", () => {
+		const race = mapRace(
+			parseRaceDetail({
+				...payload(1, "race", "cancelled"),
+				started_at: null,
+				ended_at: null,
+			}),
+			url,
+		);
+		expect(race.startedAt).toBeNull();
+		expect(race.endedAt).toBeNull();
+		expect(race.cancelledAt).toBe("2026-01-01T02:00:00Z");
+	});
 	it("fetches the canonical data URL and maps the provider payload", async () => {
 		const fetchImpl = vi
 			.fn<typeof fetch>()
@@ -183,6 +307,8 @@ describe("WebSocket monitoring", () => {
 		await flush();
 		sockets[0]!.open();
 		await flush();
+		expect(client.fetchRaceDetail).toHaveBeenCalledTimes(2);
+		await vi.advanceTimersByTimeAsync(5000);
 		expect(client.fetchRaceDetail).toHaveBeenCalledTimes(2);
 		sockets[0]!.message("{");
 		sockets[0]!.message('{"type":"chat.message"}');

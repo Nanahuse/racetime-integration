@@ -1,8 +1,8 @@
 # @nanahuse/racetime-protocol
 
-RaceTime Integration v4の公開型・定数・メッセージ名。ESM/CommonJSの両方に型宣言を含み、実行時依存は期間処理に使う `@js-temporal/polyfill` のみです（NodeCG・Google SDK・Player Managerへの実行時依存はありません）。
+RaceTime Integration v4の公開型・定数・メッセージ名。ESM/CommonJSの両方に型宣言を含み、実行時依存は日時・期間・日付処理に使う `@js-temporal/polyfill` のみです（NodeCG・Google SDK・Player Managerへの実行時依存はありません）。
 
-利用バンドルのmanifestに `"bundleDependencies": {"racetime-integration": "^0.5.0"}` を指定してください。
+利用バンドルのmanifestに `"bundleDependencies": {"racetime-integration": "^0.6.0"}` を指定してください。
 
 ```ts
 import {BUNDLE_NAME, type RaceTimeAPI} from "@nanahuse/racetime-protocol";
@@ -63,7 +63,42 @@ if (watched.ok) {
 
 `Race.raceId` はcategorySlug/raceSlugです。`Race.results` はdone→finished、dnf→dnf、dq→dq、その他→otherに正規化済みです。順位も提供します。
 
-## 完走時間（期間）
+## レース詳細と時間情報
+
+`fetchRace`、`watchRace`、`getRace`、`getWatch`、`listRaces` と `racetime-races` Replicantは同じ `Race` モデルを使用します。直接 `RaceTimeAPI.request()` を呼んだ場合も、NodeCGメッセージと同じISO 8601文字列を返し、Temporalインスタンスを公開しません。パッケージ版は0.6.0、API_VERSION=4、`racetime.v4.*`、`RacesState.schemaVersion=1` は維持します。
+
+| Raceフィールド | 意味・公開形式 |
+| --- | --- |
+| `openedAt` | 作成日時。ISO 8601 UTC文字列 |
+| `startedAt` | 開始日時。開始前はnull |
+| `endedAt` | 終了日時。未終了はnull |
+| `cancelledAt` | 中止日時。未中止はnull |
+| `startDelay` | カウントダウン期間。ISO 8601 Duration文字列 |
+| `timeLimit` | 開始後の制限時間。ISO 8601 Duration文字列 |
+| `info` | レース説明。HTMLとして解釈しない通常テキスト |
+| `ranked` | 終了時に記録対象となる設定（boolean） |
+| `recordable` | 現在記録可能な状態（boolean） |
+| `recorded` | 記録済みの状態（boolean） |
+| `timeLimitAutoComplete` | true: 制限時間で完了、false: 中止（boolean） |
+| `entrantsCount` | APIが返した参加者総数（DNF/DQを含む） |
+| `entrantsCountFinished` | APIが返した完走人数（DNF/DQを除く） |
+| `entrantsCountInactive` | APIが返したDNF/DQ人数 |
+
+日時はすべてUTCのISO 8601文字列（例 `2026-01-01T01:02:18.123456789Z`）です。nullの日時は他項目から推測・補完しません。人数は0以上の安全な整数であり、参加者配列から再計算しません。`ranked` / `recordable` / `recorded` は独立した状態です。
+
+`Entrant.finishedAt` と対応する `RaceResult.finishedAt` は同じ完走日時（UTC文字列、未完走時null）です。経過時間の `finishTime` / `time` と区別してください。
+
+| 共通関数 | 解析・シリアライズの型 |
+| --- | --- |
+| `parseRaceInstant` / `serializeRaceInstant` | ISO日時 ↔ `RaceInstant`（`Temporal.Instant`）、UTCへ正規化 |
+| `parseRaceDate` / `serializeRaceDate` | ISO日付 ↔ `RaceDate`（`Temporal.PlainDate`）、時刻なし |
+| `parseRaceDuration` / `serializeRaceDuration` | ISO期間 ↔ `RaceDuration`（`Temporal.Duration`） |
+
+全関数はnullを保持し、不正値は例外にします。日時の解析には明示的なUTCオフセット（Zまたは±HH:MM）が必要です。日付の解析は `YYYY-MM-DD`（ISO拡張年も可）のみを受け付け、日時から日付を暗黙抽出しません。日時・期間のシリアライズはナノ秒までの小数秒を丸めません。
+
+`SpeedrunRun.time`（Leaderboard・PB）は同じDuration形式、`SpeedrunRun.date` は検証済みの日付文字列またはnull、各種 `fetchedAt` はUTC日時文字列（型が許可する場合はnull）です。PBの公式Primary Timeと順位、複数アカウントの最速選択、キャッシュ・stale判定の意味は変わりません。
+
+### 完走時間（期間）
 
 完走時間はISO 8601期間文字列（例 `PT1H2M3.45S`）で公開します。`Entrant.finishTime` と `RaceResult.time` は同じ参加者の同じ期間を表し、記録の無い参加者は `null` です。内部では標準の `Temporal.Duration` として扱い、公開Protocolの共通関数で相互変換します。
 

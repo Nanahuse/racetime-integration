@@ -4,6 +4,18 @@
 
 ## 責務と公開契約
 
+0.6.0ではRaceTimeの作成・開始・終了・中止日時、カウントダウン・制限時間、説明、ranked・recordable・recorded、制限時間での完了／中止設定、API提供の参加者総数・完走人数・DNF/DQ人数、参加者の完走日時を追加した。公開フィールドの意味と型は[Protocol](../packages/racetime-protocol/README.md#レース詳細と時間情報)を参照。API_VERSION=4、`racetime.v4.*`、`RacesState.schemaVersion=1`、CIのタグ発行方式は維持する。
+
+Protocolの `datetime.ts` に `parseRaceInstant` / `serializeRaceInstant` と `parseRaceDate` / `serializeRaceDate` を追加し、既存のDuration関数と同じnull保持・不正値拒否を適用する。タイムゾーンのない日時をUTCと推測せず、日付から時刻を暗黙除去しない。日時は `Temporal.Instant`、期間は `Temporal.Duration`、SRC記録日は `Temporal.PlainDate` で検証する。ナノ秒までの精度と意味を保ってISO 8601へ戻す。
+
+RaceTime DTOの日時・期間はTemporal値で保持し、`mapRace` でUTC日時／Duration文字列へ変換する。新しい必須項目の欠落、型不一致、不正日時・期間、負数・安全な整数でない人数は `invalid_payload`。nullを許す日時もキーは必須とし、開始・終了・中止・完走日時の推測補完は行わない。`Entrant.finishedAt` と `RaceResult.finishedAt` は同じ日時、`finishTime` / `time` は同じ経過時間を表す。ranked・recordable・recordedは独立して保持し、人数は配列から再計算しない。
+
+SRC時間は取得境界でDurationとして検証・シリアライズし、PB比較は既存どおり `Temporal.Duration.compare` を使用する。SRC記録日は共通のPlainDate解析で検証する。Leaderboard/PBの `fetchedAt` は `Temporal.Now.instant()` を共通関数で文字列化し、5分キャッシュの期限もInstantで保持・比較する。公開文字列を返す既存のSpeedrunClientインターフェースは維持し、サービスごとの重複DTOは追加しない。PB照合、アカウント集約、公式順位、同時要求共有、refresh・staleの扱いは維持する。
+
+単発取得・監視は同じ `mapRace` を使う。直接API・NodeCGメッセージ・Replicantはいずれも同じISO文字列のモデルを公開するため、監視状態の比較・structuredCloneにTemporal値は入らない。WebSocketのrace.dataによる再取得、version処理、バックオフ、監視共有、古い応答の破棄、最終正常スナップショット保持、Player解決は変更しない。毎秒のHTTP取得・Replicant更新は追加しない。
+
+Overviewの `RaceFields` を単発取得・監視で共有し、新しい詳細とAPI提供の人数を表示する。参加者の完走日時も結果欄に追加した。日時は `formatRaceInstant` が利用環境のローカルタイムゾーンで表示し、nullは「未設定」、Durationは既存の経過時間表示、infoはReactの通常テキストとして扱う。Rankingsの最終取得日時も共通の日時表示を使う。PB表示・参加者操作・マッピング編集・レース切り替えは維持する。
+
 - RaceTime: HTTP取得、WebSocket通知での再取得、再接続、レースIDと結果の正規化。`finish_time` は共通の `parseRaceDuration` で `Temporal.Duration` に解析し、未検証の期間文字列を取得境界より内側へ渡さない。
 - RaceService: 単発取得のHTTP取得・Player解決、URLごとの共有監視、初回成功後の購読成立、失敗時の解放、Revision管理。
 - Player Manager: 公開 `list` でDirectoryを取得し、Playerに属するRaceTime Account（`service === "racetime"`、`identity.userId`）をPrimary/Secondaryの区別なく検索する。`find` は使わない。RaceTime側でPlayerを作成・更新せず、公開 `resolveDisplayName` で表示名を確定し、`player-manager.v3.directoryChanged` で再解決する。
@@ -66,7 +78,11 @@ Player Manager v3のPlayerは複数Accountを持ち、各Accountは `service` �
 
 境界テストはHTTP・WebSocket、初回購読失敗、複数利用者、単発取得でのPlayer解決（完走済み・進行中・Primary/Secondary・未登録・障害時フォールバック・RaceTime失敗・監視を開始しない・HTTP取得の重複なし・監視との解決結果一致）、単発取得失敗時の未保存マッピング編集保持、保存リロード中の取得失敗でのWorkspace維持、保存中に到着した取得結果の破棄と通知、表示対象変更時の登録URL・登録エラーのクリア、表示対象が変わらない取得失敗での登録結果維持、監視レースの外部更新による未保存編集の保護（対象変更・削除・通常更新の反映・保存中の外部更新保護）と監視対象削除時の登録要求・登録結果の無効化（成功・失敗・編集継続・表示解除）と一時的な `race === null` 時の表示・Draft維持、タブ切り替え確認時の保存中遷移禁止、Player Manager v3のPrimary/Secondary解決・Account移動・削除・不正Directory・v3以外、Revision非依存のdirectoryChanged、結果正規化、SRCカテゴリ所属ゲームの `links` 解決（`rel: "game"` の抽出・不正URI・リンク欠落の拒否）と保存時の所属ゲーム整合性、Game/Category MappingのCRUD、親子整合性、Revision競合、2シートの読込・保存・列順変更・追加カラム保持、設定切替の整合性、Category VariableのAny（具体値のみ＝1件・追加SRC通信なし、Any1つ＝全候補、複数Any＝直積、固定値との混在、未指定との混在、各結果のValue ID、安定keyとlabel、結果にAnyが残らない、SRC選択肢変更の反映、SRC通信失敗時に部分成功しない、対象外Variable・未知Variable・不正Value・不正オブジェクトの拒否、保存済みAnyとSRC定義の不整合、保存・再読込・UI選択）、Any展開の上限（初期値20、19・20件成功、21件超過、設定30で21件成功、部分結果を返さない、直積生成前の判定、極端に大きい直積の安全な拒否、Anyなしの解決に無影響）、Settings（旧設定への20補完と他項目維持、上限の保存・再読込、変更が次の解決へ反映、不正値の拒否、競合検出、Settings画面の未保存変更検出）、削除・変更されたVariable（有効なAnyの編集、Any対象外Variableの不整合表示と具体値への修正、削除されたVariableの検出・Draftからの除去・解消までの保存禁止・Revert、OverviewとMappingsの一致）、SRC検索・選択情報、Spreadsheet初期化（数式・範囲外・空白の保護、再実行、途中失敗）、起動時Settings復旧、Overviewからのマッピング状態表示・初回読込完了前の編集禁止・Game/Category登録・既存編集・競合表示・読込失敗時の詳細保持と再読込・レース切り替え確認・同一対象の編集維持・監視更新でのDraft維持・保存中の切り替え禁止、finish_timeの期間解析（時・分・秒・0秒・日・24時間以上・ナノ秒精度・`null`・不正文字列・負の期間・年/月/週の拒否・parse/serialize/再parseの等価性、HTTP境界での `invalid_payload`、`mapRace` での公開文字列化と `Temporal` 非混入、fetchRaceとwatchRaceの一致、完走していない参加者の `null` 維持、Dashboardの経過時間表示と小数秒精度）、Dashboardと公開APIの通信・編集ロック・競合復旧・単発取得表示・登録操作の競合、ビルド済みCommonJS拡張、ProtocolのESM/CommonJSを対象にする。
 
-`pnpm test` は14ファイル232件が成功する。typecheck / lint / buildも成功する。
+0.6.0の追加境界テストは、TimestampのUTC正規化・オフセット・null・ナノ秒精度・再解析の等価性、不正日付・タイムゾーンなし日時・不正Durationの拒否、開始前／進行中／終了／中止レース、新フィールドの必須性・型・人数の検証、完走経過時間と完走日時の区別、直接API／メッセージ／Replicantの一致、監視更新と不正応答時の正常スナップショット保持、Temporal非混入、SRCのLeaderboard／PBの時間・日付境界、複数アカウントPBのナノ秒比較・日単位の比較、5分キャッシュと期限切れ失敗時のstale、Dashboardのローカル日時・期間・null・説明のテキスト表示を対象にする。
+
+`pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm lint`、`pnpm test`（17ファイル349件）、`pnpm build` はすべて成功。依存関係の追加はなく、0.6.0へのpackage.json更新によるlockfileの変更も不要。
+
+2026-10-17にRaceTimeの公開API `races/data` と `/kh2fmr/powerful-knuckles-9844/data` を読み取り、開始前レースの新フィールドを確認した。opened_atはUTC日時、started_at／ended_at／cancelled_at／finished_atはnull、start_delayは `P0DT00H00M15S`、time_limitは `P1DT00H00M00S`、記録関連と制限時間処理はboolean、人数は整数だった。実APIの進行中・終了・中止状態は未確認であり、状態別の取得はfixtureによる境界テストで検証した。
 
 未実施: 実NodeCG 2.8環境でのDashboard起動と公開APIとの実通信、実ADCによる対象Spreadsheetの読書き・初期化、実Speedrun.com API・実Player Manager v3を含む運用NodeCGでの通し確認、npmレジストリへのpublish。
 

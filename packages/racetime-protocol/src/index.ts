@@ -27,6 +27,14 @@ export type {
 	VariableSelection,
 } from "./category.js";
 export {
+	parseRaceDate,
+	parseRaceInstant,
+	type RaceDate,
+	type RaceInstant,
+	serializeRaceDate,
+	serializeRaceInstant,
+} from "./datetime.js";
+export {
 	parseRaceDuration,
 	type RaceDuration,
 	serializeRaceDuration,
@@ -72,6 +80,8 @@ export type RaceResult = {
 	 * a `Temporal.Duration`.
 	 */
 	time: string | null;
+	/** Absolute finish timestamp in UTC, distinct from the elapsed time. */
+	finishedAt: string | null;
 	status: "finished" | "dnf" | "dq" | "other";
 };
 export type Entrant = {
@@ -85,6 +95,8 @@ export type Entrant = {
 	 * matching `RaceResult.time`; use `parseRaceDuration` to restore it.
 	 */
 	finishTime: string | null;
+	/** Same UTC timestamp as the matching RaceResult.finishedAt. */
+	finishedAt: string | null;
 	place: number | null;
 };
 export type Race = {
@@ -93,6 +105,23 @@ export type Race = {
 	version: number;
 	name: string;
 	status: string;
+	/** Absolute timestamps serialized as ISO 8601 UTC strings. */
+	openedAt: string;
+	startedAt: string | null;
+	endedAt: string | null;
+	cancelledAt: string | null;
+	/** Countdown and maximum elapsed race time as ISO 8601 durations. */
+	startDelay: string;
+	timeLimit: string;
+	info: string;
+	ranked: boolean;
+	recordable: boolean;
+	recorded: boolean;
+	timeLimitAutoComplete: boolean;
+	/** Provider counts, including entrants omitted from the entrant list. */
+	entrantsCount: number;
+	entrantsCountFinished: number;
+	entrantsCountInactive: number;
 	category: {slug: string; name: string; goal: string};
 	entrants: Entrant[];
 	results: RaceResult[];
@@ -194,7 +223,9 @@ export type SpeedrunPlayer =
 export type SpeedrunRun = {
 	runId: string;
 	url: string;
+	/** Validated elapsed time as an ISO 8601 duration. */
 	time: string;
+	/** Validated ISO 8601 date without a time or timezone. */
 	date: string | null;
 	players: SpeedrunPlayer[];
 };

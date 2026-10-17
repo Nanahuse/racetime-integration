@@ -12,7 +12,7 @@ import {useCallback, useEffect, useRef, useState} from "react";
 import {errorMessage, request} from "../api/client";
 import {beginRegistration, playerEditUrl} from "../api/player-manager";
 import type {EditorState} from "../model/editor";
-import {formatRaceTime} from "../model/race-time";
+import {formatRaceInstant, formatRaceTime} from "../model/race-time";
 import {Callout} from "./common";
 import {
 	MappingWorkspace,
@@ -74,8 +74,31 @@ function RaceFields({race}: {race: Race}) {
 			</div>
 			<div>
 				<dt>Entrants</dt>
-				<dd>{race.entrants.length}</dd>
+				<dd>{race.entrantsCount}</dd>
 			</div>
+			{[
+				["作成日時", formatRaceInstant(race.openedAt)],
+				["開始日時", formatRaceInstant(race.startedAt)],
+				["終了日時", formatRaceInstant(race.endedAt)],
+				["中止日時", formatRaceInstant(race.cancelledAt)],
+				["カウントダウン", formatRaceTime(race.startDelay)],
+				["制限時間", formatRaceTime(race.timeLimit)],
+				["レース説明", race.info],
+				["記録対象設定", race.ranked ? "有効" : "無効"],
+				["記録可能状態", race.recordable ? "可能" : "不可"],
+				["記録済み状態", race.recorded ? "記録済み" : "未記録"],
+				["完走人数", race.entrantsCountFinished],
+				["DNF / DQ人数", race.entrantsCountInactive],
+				[
+					"制限時間到達時",
+					race.timeLimitAutoComplete ? "レースを完了" : "レースを中止",
+				],
+			].map(([label, value]) => (
+				<div key={label}>
+					<dt>{label}</dt>
+					<dd>{value}</dd>
+				</div>
+			))}
 		</dl>
 	);
 }
@@ -303,6 +326,9 @@ function Participants({
 												{result.place === null ? "—" : `${result.place}位`}
 											</div>
 											<div>{formatRaceTime(result.time)}</div>
+											<div>
+												完走日時: {formatRaceInstant(result.finishedAt)}
+											</div>
 											<small>{result.status}</small>
 										</>
 									) : (

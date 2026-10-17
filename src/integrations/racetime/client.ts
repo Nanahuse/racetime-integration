@@ -1,7 +1,9 @@
 // Adapted and modified from Nanahuse/nodecg-race-layouts (Apache-2.0).
 import {
 	parseRaceDuration,
+	parseRaceInstant,
 	type RaceDuration,
+	type RaceInstant,
 } from "@nanahuse/racetime-protocol";
 import {
 	RaceNotFoundError,
@@ -101,6 +103,65 @@ function requireNumber(
 	return value;
 }
 
+function requireBoolean(record: Record<string, unknown>, key: string): boolean {
+	const value = record[key];
+	if (typeof value !== "boolean") {
+		throw new RaceTimePayloadError(`race.${key} must be a boolean.`);
+	}
+	return value;
+}
+
+function requireCount(record: Record<string, unknown>, key: string): number {
+	const value = requireNumber(record, key, `race.${key}`);
+	if (!Number.isSafeInteger(value) || value < 0) {
+		throw new RaceTimePayloadError(
+			`race.${key} must be a non-negative safe integer.`,
+		);
+	}
+	return value;
+}
+
+function requireDuration(
+	record: Record<string, unknown>,
+	key: string,
+): RaceDuration {
+	const value = requireString(record, key, `race.${key}`);
+	try {
+		return parseRaceDuration(value)!;
+	} catch (cause) {
+		throw new RaceTimePayloadError(
+			`race.${key} must be a valid ISO 8601 duration.`,
+			{cause},
+		);
+	}
+}
+
+function nullableInstant(
+	record: Record<string, unknown>,
+	key: string,
+	path: string,
+): RaceInstant | null {
+	const value = record[key];
+	if (value === null) return null;
+	return requireInstant(record, key, path);
+}
+
+function requireInstant(
+	record: Record<string, unknown>,
+	key: string,
+	path: string,
+): RaceInstant {
+	const value = requireString(record, key, path);
+	try {
+		return parseRaceInstant(value);
+	} catch (cause) {
+		throw new RaceTimePayloadError(
+			`${path} must be a valid ISO 8601 timestamp with a timezone.`,
+			{cause},
+		);
+	}
+}
+
 function optionalNumber(
 	record: Record<string, unknown>,
 	key: string,
@@ -132,6 +193,7 @@ function parseEntrant(value: unknown, index: number): RaceTimeEntrantDto {
 		),
 		status: requireString(status, "value", `${path}.status.value`),
 		finishTime: optionalDuration(entrant, "finish_time", `${path}.finish_time`),
+		finishedAt: nullableInstant(entrant, "finished_at", `${path}.finished_at`),
 		place: optionalNumber(entrant, "place", `${path}.place`),
 	};
 }
@@ -156,6 +218,20 @@ export function parseRaceDetail(payload: unknown): RaceTimeRaceDto {
 		name: requireString(root, "name", "race.name"),
 		slug: requireString(root, "slug", "race.slug"),
 		status: requireString(status, "value", "race.status.value"),
+		openedAt: requireInstant(root, "opened_at", "race.opened_at"),
+		startedAt: nullableInstant(root, "started_at", "race.started_at"),
+		endedAt: nullableInstant(root, "ended_at", "race.ended_at"),
+		cancelledAt: nullableInstant(root, "cancelled_at", "race.cancelled_at"),
+		startDelay: requireDuration(root, "start_delay"),
+		timeLimit: requireDuration(root, "time_limit"),
+		info: requireString(root, "info", "race.info"),
+		ranked: requireBoolean(root, "ranked"),
+		recordable: requireBoolean(root, "recordable"),
+		recorded: requireBoolean(root, "recorded"),
+		timeLimitAutoComplete: requireBoolean(root, "time_limit_auto_complete"),
+		entrantsCount: requireCount(root, "entrants_count"),
+		entrantsCountFinished: requireCount(root, "entrants_count_finished"),
+		entrantsCountInactive: requireCount(root, "entrants_count_inactive"),
 		url: requireString(root, "url", "race.url"),
 		dataUrl: requireString(root, "data_url", "race.data_url"),
 		websocketUrl: requireString(root, "websocket_url", "race.websocket_url"),
