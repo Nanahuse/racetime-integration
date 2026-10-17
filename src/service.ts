@@ -15,6 +15,7 @@ import {
 	type Socket,
 	type TransportState,
 } from "./integrations/racetime/watcher";
+import {detectRaceEvents, type RaceChangeEvent} from "./race-events";
 
 type Session = {
 	watcher: RaceWatcher;
@@ -26,6 +27,7 @@ type Session = {
 	requested: boolean;
 	resolving: Promise<void> | null;
 	controller: AbortController | null;
+	hasStarted: boolean | null;
 };
 export class RaceService {
 	private readonly sessions = new Map<string, Session>();
@@ -36,6 +38,7 @@ export class RaceService {
 		private readonly socketFactory: (url: string) => Socket,
 		private readonly players: ParticipantResolver,
 		private readonly publish: (state: RacesState) => void,
+		private readonly notify: (event: RaceChangeEvent) => void = () => {},
 	) {}
 
 	snapshot(): RacesState {
@@ -105,6 +108,7 @@ export class RaceService {
 				requested: false,
 				resolving: null,
 				controller: null,
+				hasStarted: null,
 			};
 			this.sessions.set(canonical.canonicalUrl, session);
 		}
@@ -223,6 +227,16 @@ export class RaceService {
 		if (!session || session.watcher !== watcher) return;
 		const changed =
 			JSON.stringify(state.race) !== JSON.stringify(session.state.race);
+		let events: RaceChangeEvent[] = [];
+		if (changed && state.race) {
+			const detected = detectRaceEvents(
+				session.state.race,
+				state.race,
+				session.hasStarted,
+			);
+			session.hasStarted = detected.hasStarted;
+			events = detected.events;
+		}
 		const identityKey = JSON.stringify(
 			state.race?.entrants.map(({userId}) => userId).sort() ?? [],
 		);
@@ -242,5 +256,6 @@ export class RaceService {
 			session.state.resolution.raceRevision = session.state.raceRevision;
 		}
 		this.emit(session);
+		for (const event of events) this.notify(event);
 	}
 }

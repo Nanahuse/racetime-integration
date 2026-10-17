@@ -84,6 +84,47 @@ export type RaceResult = {
 	finishedAt: string | null;
 	status: "finished" | "dnf" | "dq" | "other";
 };
+export type FinishedRaceResult = RaceResult & {
+	status: "finished";
+	time: string;
+	finishedAt: string;
+};
+export type RaceTimeEvents = {
+	raceStartScheduled: {
+		raceId: string;
+		url: string;
+		raceVersion: number;
+		startedAt: string;
+		previousStartedAt: string | null;
+	};
+	raceStarted: {
+		raceId: string;
+		url: string;
+		raceVersion: number;
+		startedAt: string;
+	};
+	entrantFinished: {
+		raceId: string;
+		url: string;
+		raceVersion: number;
+		result: FinishedRaceResult;
+	};
+	entrantFinishUndone: {
+		raceId: string;
+		url: string;
+		raceVersion: number;
+		userId: string;
+	};
+	raceCancelled: {
+		raceId: string;
+		url: string;
+		raceVersion: number;
+		cancelledAt: string;
+	};
+};
+export const eventMessageName = <K extends keyof RaceTimeEvents>(
+	event: K,
+): `racetime.v4.${K}` => `${MESSAGE_PREFIX}.${event}`;
 export type Entrant = {
 	userId: string;
 	name: string;
