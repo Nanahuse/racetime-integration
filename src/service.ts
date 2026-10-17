@@ -39,6 +39,10 @@ export class RaceService {
 		private readonly players: ParticipantResolver,
 		private readonly publish: (state: RacesState) => void,
 		private readonly notify: (event: RaceChangeEvent) => void = () => {},
+		private readonly onNotifyError: (
+			error: unknown,
+			event: RaceChangeEvent,
+		) => void = () => {},
 	) {}
 
 	snapshot(): RacesState {
@@ -256,6 +260,16 @@ export class RaceService {
 			session.state.resolution.raceRevision = session.state.raceRevision;
 		}
 		this.emit(session);
-		for (const event of events) this.notify(event);
+		for (const event of events) {
+			try {
+				this.notify(event);
+			} catch (error) {
+				try {
+					this.onNotifyError(error, event);
+				} catch {
+					// Error reporting must not affect race monitoring.
+				}
+			}
+		}
 	}
 }

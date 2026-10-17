@@ -62,6 +62,9 @@ export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 				report(error);
 			}
 		},
+		(error, event) => {
+			nodecg.log.warn(`Race event notification failed: ${event.type}`, error);
+		},
 	);
 	const defaultSettings: SettingsState = {
 		revision: 0,

@@ -44,6 +44,9 @@ async function setup(initial = payload(1, "race", "open")) {
 		state: ReturnType<RaceService["get"]>;
 		published: ReturnType<RaceService["snapshot"]>;
 	}> = [];
+	const notify = vi.fn<(event: RaceChangeEvent) => void>();
+	const onNotifyError =
+		vi.fn<(error: unknown, event: RaceChangeEvent) => void>();
 	const service = new RaceService(
 		new HttpRaceTimeClient({fetchImpl}),
 		() => {
@@ -53,13 +56,16 @@ async function setup(initial = payload(1, "race", "open")) {
 		},
 		new ParticipantResolver(() => undefined),
 		publish,
-		(event) =>
-			notifications.push({
-				event,
-				state: service.get(url),
-				published: publish.mock.lastCall![0],
-			}),
+		notify,
+		onNotifyError,
 	);
+	notify.mockImplementation((event) => {
+		notifications.push({
+			event,
+			state: service.get(url),
+			published: publish.mock.lastCall![0],
+		});
+	});
 	services.push(service);
 	const watch = await service.watch(url);
 	sockets[0]!.open();
@@ -77,10 +83,92 @@ async function setup(initial = payload(1, "race", "open")) {
 		sockets,
 		publish,
 		notifications,
+		notify,
+		onNotifyError,
 		change,
 		events: () => notifications.map(({event}) => event),
 	};
 }
+
+it.each([false, true])(
+	"isolates a synchronous notification failure and continues monitoring (error reporter throws: %s)",
+	async (reporterThrows) => {
+		const {
+			service,
+			watch,
+			change,
+			events,
+			notify,
+			onNotifyError,
+			publish,
+			sockets,
+			fetchImpl,
+		} = await setup();
+		const error = new Error("notification callback failed");
+		notify.mockImplementationOnce(() => {
+			throw error;
+		});
+		if (reporterThrows) {
+			onNotifyError.mockImplementation(() => {
+				throw new Error("error reporter failed");
+			});
+		}
+		await change({
+			status: {value: "in_progress"},
+			started_at: "2026-01-01T00:00:15Z",
+			entrants: [finished()],
+		});
+		const failedEvent: RaceChangeEvent = {
+			type: "raceStartScheduled",
+			payload: {
+				raceId: "game/race",
+				url,
+				raceVersion: 2,
+				startedAt: "2026-01-01T00:00:15Z",
+				previousStartedAt: null,
+			},
+		};
+		expect(notify.mock.calls.map(([event]) => event.type)).toEqual([
+			"raceStartScheduled",
+			"raceStarted",
+			"entrantFinished",
+		]);
+		expect(onNotifyError).toHaveBeenCalledExactlyOnceWith(error, failedEvent);
+		expect(events().map(({type}) => type)).toEqual([
+			"raceStarted",
+			"entrantFinished",
+		]);
+		expect(service.getWatch(watch.watchId)).toMatchObject({
+			connection: "connected",
+			error: null,
+			race: {
+				version: 2,
+				status: "in_progress",
+				results: [{status: "finished", time: "PT1.123456789S"}],
+			},
+		});
+		expect(publish.mock.lastCall?.[0]).toEqual(service.snapshot());
+		const fetched = fetchImpl.mock.calls.length;
+		await vi.advanceTimersByTimeAsync(1000);
+		expect(fetchImpl).toHaveBeenCalledTimes(fetched);
+		expect(sockets).toHaveLength(1);
+		expect(sockets[0]!.close).not.toHaveBeenCalled();
+		expect(notify).toHaveBeenCalledTimes(3);
+		await change({entrants: [unfinished()]});
+		expect(events().at(-1)).toEqual({
+			type: "entrantFinishUndone",
+			payload: {raceId: "game/race", url, raceVersion: 3, userId: "user1"},
+		});
+		expect(service.get(url)).toMatchObject({
+			connection: "connected",
+			error: null,
+			race: {version: 3},
+		});
+		expect(publish.mock.lastCall?.[0]).toEqual(service.snapshot());
+		expect(onNotifyError).toHaveBeenCalledTimes(1);
+		expect(sockets).toHaveLength(1);
+	},
+);
 
 it.each(["open", "pending", "in_progress", "finished", "cancelled"])(
 	"uses the first %s snapshot as a baseline without events",
