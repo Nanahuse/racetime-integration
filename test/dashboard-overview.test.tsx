@@ -900,20 +900,20 @@ it("shows a registration error for the current race", async () => {
 it("renders an unset place as a dash instead of 位", () => {
 	render(<Overview races={races} />);
 	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
-	expect(screen.getByText("1位")).toBeTruthy();
+	expect(screen.getByText("1位 / 1:02:03.0")).toBeTruthy();
 	expect(screen.queryByText("—位")).toBeNull();
 });
 
 it("shows participant actions by resolution status and RaceTime names from entrants", () => {
 	render(<Overview races={races} />);
 	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
-	expect(screen.getByText("Runner Two")).toBeTruthy();
-	expect(screen.getByText("Runner Three")).toBeTruthy();
+	expect(screen.getByRole("link", {name: "Runner Two ↗"})).toBeTruthy();
+	expect(screen.getByRole("link", {name: "Runner Three ↗"})).toBeTruthy();
 	const edit = screen.getByRole("link", {name: /編集/});
 	expect(edit.getAttribute("href")).toContain("PlayerMapping.html");
 	expect(edit.getAttribute("href")).toContain("playerId=p1");
 	expect(screen.getAllByRole("button", {name: "登録・紐付け"})).toHaveLength(1);
-	expect(screen.getByText("Player Manager timed out")).toBeTruthy();
+	expect(screen.queryByText("Player Manager timed out")).toBeNull();
 });
 
 const gameRecord: GameMappingRecord = {
@@ -2120,8 +2120,8 @@ it("shows a loading hint while profile URLs are being resolved", async () => {
 	expect(await screen.findAllByText(/リンク取得中/)).toHaveLength(2);
 	expect(screen.getByText("src-one")).toBeTruthy();
 	expect(screen.getByText("twitch-one")).toBeTruthy();
-	expect(screen.queryByRole("link", {name: "src-one"})).toBeNull();
-	expect(screen.queryByRole("link", {name: "twitch-one"})).toBeNull();
+	expect(screen.queryByRole("link", {name: "src-one ↗"})).toBeNull();
+	expect(screen.queryByRole("link", {name: "twitch-one ↗"})).toBeNull();
 
 	await act(async () => {
 		src.resolve({
@@ -2133,11 +2133,11 @@ it("shows a loading hint while profile URLs are being resolved", async () => {
 	});
 
 	expect(screen.queryByText(/リンク取得中/)).toBeNull();
-	expect(screen.getByRole("link", {name: "src-one"}).getAttribute("href")).toBe(
-		"https://www.speedrun.com/user/src-one",
-	);
 	expect(
-		screen.getByRole("link", {name: "twitch-one"}).getAttribute("href"),
+		screen.getByRole("link", {name: "src-one ↗"}).getAttribute("href"),
+	).toBe("https://www.speedrun.com/user/src-one");
+	expect(
+		screen.getByRole("link", {name: "twitch-one ↗"}).getAttribute("href"),
 	).toBe("https://www.twitch.tv/twitch-one");
 });
 
@@ -2149,7 +2149,7 @@ it("replaces the loading hint with an error and retry when lookup fails", async 
 	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
 
 	expect(await screen.findAllByText(/リンク取得中/)).toHaveLength(2);
-	expect(screen.queryByRole("link", {name: "src-one"})).toBeNull();
+	expect(screen.queryByRole("link", {name: "src-one ↗"})).toBeNull();
 
 	await act(async () => {
 		pending.resolve({
@@ -2181,7 +2181,7 @@ it("does not request or show loading when an account ID is missing", async () =>
 	expect(await screen.findByText("src-one")).toBeTruthy();
 	expect(screen.getByText("twitch-one")).toBeTruthy();
 	expect(screen.queryByText(/リンク取得中/)).toBeNull();
-	expect(screen.queryByRole("link", {name: "src-one"})).toBeNull();
+	expect(screen.queryByRole("link", {name: "src-one ↗"})).toBeNull();
 	expect(sendMessageToBundle).not.toHaveBeenCalled();
 });
 
@@ -2199,13 +2199,13 @@ it("links resolved SRC and Twitch profiles through Player Manager without refetc
 		<Overview races={racesWithParticipant(linkedParticipant)} />,
 	);
 	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
-	const src = await screen.findByRole("link", {name: "src-one"});
+	const src = await screen.findByRole("link", {name: "src-one ↗"});
 	expect(src.getAttribute("href")).toBe(
 		"https://www.speedrun.com/user/src-one",
 	);
 	expect(src.getAttribute("rel")).toBe("noopener noreferrer");
 	expect(src.getAttribute("target")).toBe("_blank");
-	const twitch = screen.getByRole("link", {name: "twitch-one"});
+	const twitch = screen.getByRole("link", {name: "twitch-one ↗"});
 	expect(twitch.getAttribute("href")).toBe("https://www.twitch.tv/twitch-one");
 	const profileCalls = () =>
 		sendMessageToBundle.mock.calls.filter(
@@ -2244,9 +2244,9 @@ it("keeps an account name unlinked until its profile URL resolves and allows ret
 	render(<Overview races={racesWithParticipant(participant)} />);
 	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
 	expect(await screen.findByText("src-one")).toBeTruthy();
-	expect(screen.queryByRole("link", {name: "src-one"})).toBeNull();
+	expect(screen.queryByRole("link", {name: "src-one ↗"})).toBeNull();
 	fireEvent.click(await screen.findByRole("button", {name: "再試行"}));
-	const link = await screen.findByRole("link", {name: "src-one"});
+	const link = await screen.findByRole("link", {name: "src-one ↗"});
 	expect(link.getAttribute("href")).toBe(
 		"https://www.speedrun.com/user/src-one",
 	);
@@ -2291,7 +2291,7 @@ it("shows a distinct profile error per account and clears it after a successful 
 	const srcRow = screen.getByText("src-one").parentElement!;
 	fireEvent.click(within(srcRow).getByRole("button", {name: "再試行"}));
 	expect(
-		await within(srcRow).findByRole("link", {name: "src-one"}),
+		await within(srcRow).findByRole("link", {name: "src-one ↗"}),
 	).toBeTruthy();
 	expect(
 		screen.queryByText(
@@ -2378,3 +2378,156 @@ it("keeps a successful Game Mapping save when the follow-up reload fails", async
 	).toBeTruthy();
 	expect(screen.queryByLabelText("SRC Category（必須）")).toBeNull();
 });
+
+it("shows five participant columns, row resolution and origin-aware account links", () => {
+	const local = {...race, url: "http://localhost:8000/game/race"};
+	render(
+		<Overview
+			races={{
+				...races,
+				races: [{...races.races[0]!, url: local.url, race: local}],
+			}}
+		/>,
+	);
+	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
+	const table = document.querySelector("table.participants")!;
+	expect(
+		Array.from(table.querySelectorAll("th"), (cell) => cell.textContent),
+	).toEqual(["Player", "アカウント", "PB", "結果", "操作"]);
+	expect(table.querySelector("tr.matched td")?.textContent).toBe("Player One");
+	expect(table.querySelector("tr.unresolved td")?.textContent).toBe("未解決");
+	expect(table.querySelector("tr.unavailable td")?.textContent).toBe("未解決");
+	expect(
+		screen.getByRole("link", {name: "RaceTimeで開く ↗"}).getAttribute("href"),
+	).toBe(local.url);
+	expect(
+		screen.getByRole("link", {name: "Runner Two ↗"}).getAttribute("href"),
+	).toBe("http://localhost:8000/user/user2");
+	expect(table.textContent).not.toContain("完走日時");
+	expect(table.textContent).not.toContain("finished");
+	expect(table.querySelector("small")?.textContent).not.toBe("p1");
+});
+it("counts bulk stop targets and requires confirmation before the API request", async () => {
+	sendMessage.mockImplementation(async () => ({
+		ok: true,
+		data: {releasedRaces: 1, releasedWatches: 2},
+	}));
+	const view = render(<Overview races={races} />);
+	expect(
+		(
+			screen.getByRole("button", {
+				name: "終了済みを一括停止（0件）",
+			}) as HTMLButtonElement
+		).disabled,
+	).toBe(true);
+	view.rerender(
+		<Overview
+			races={{
+				...races,
+				races: [
+					{
+						...races.races[0]!,
+						connection: "closed",
+						race: {...race, status: "finished"},
+					},
+					{
+						...races.races[0]!,
+						url: raceTwo.url,
+						connection: "reconnecting",
+						race: {...raceTwo, status: "finished"},
+					},
+				],
+			}}
+		/>,
+	);
+	fireEvent.click(
+		screen.getByRole("button", {name: "終了済みを一括停止（1件）"}),
+	);
+	expect(sendMessage).not.toHaveBeenCalled();
+	const dialog = screen.getByRole("dialog");
+	fireEvent.click(within(dialog).getByRole("button", {name: "監視を停止"}));
+	await waitFor(() =>
+		expect(sendMessage).toHaveBeenCalledWith(
+			"racetime.v4.forceUnwatchClosedFinishedRaces",
+			undefined,
+		),
+	);
+});
+
+it.each([[], ["Hard"], ["Hard", "Normal"]])(
+	"shows only PB variable values %j with exact SRC time and place",
+	async (...values) => {
+		const variableValues = values as string[];
+		const handler = mappingHandler({games: [], categories: []});
+		sendMessage.mockImplementation((name, data) =>
+			name === "racetime.v4.getSpeedrunPlayerBests"
+				? Promise.resolve({
+						ok: true,
+						data: {
+							status: "resolved",
+							results: [
+								{
+									mapping: {
+										key: "pb",
+										label: "Any% (Difficulty: Hard, Mode: Normal)",
+									},
+									variableValues,
+									players: [
+										{
+											playerId: "p1",
+											state: "found",
+											place: 7,
+											stale: false,
+											run: {
+												time: "PT1H2M3.450S",
+												url: "https://www.speedrun.com/runs/pb",
+											},
+										},
+									],
+								},
+							],
+						},
+					})
+				: handler(name, data),
+		);
+		render(<Overview races={races} />);
+		fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
+		const link = await screen.findByRole("link", {name: "1:02:03.450 · 7位"});
+		expect(link.getAttribute("href")).toBe("https://www.speedrun.com/runs/pb");
+		const cell = link.closest("td")!;
+		expect(cell.textContent).not.toContain("Any%");
+		expect(cell.textContent).not.toContain("Difficulty");
+		expect(cell.textContent).not.toContain("Mode");
+		if (variableValues.length)
+			expect(cell.textContent).toContain(variableValues.join(" / "));
+		else expect(cell.querySelector("small")).toBeNull();
+	},
+);
+it.each(["dnf", "dq", "other"] as const)(
+	"displays result %s without finish timestamps",
+	(status) => {
+		render(
+			<Overview
+				races={{
+					...races,
+					races: [
+						{
+							...raceState,
+							race: {
+								...race,
+								results: [{...race.results[0]!, time: null, status}],
+							},
+						},
+					],
+				}}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
+		const cell = document
+			.querySelector("table.participants tr.matched")!
+			.querySelectorAll("td")[3]!;
+		expect(cell.textContent).toBe(
+			status === "other" ? "—" : status.toUpperCase(),
+		);
+	},
+);

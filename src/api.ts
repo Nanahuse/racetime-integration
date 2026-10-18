@@ -323,6 +323,9 @@ export function createAPI(
 				case "unwatchRace":
 					value = {released: races.unwatch(text(data.watchId))};
 					break;
+				case "forceUnwatchClosedFinishedRaces":
+					value = races.forceUnwatchClosedFinishedRaces();
+					break;
 				case "forceUnwatchRace":
 					value = races.forceUnwatch(text(data.url));
 					break;

@@ -445,3 +445,39 @@ it("keeps PB results independent when one Any mapping fails", async () => {
 		response.results?.map(({players: results}) => results[0]?.state),
 	).toEqual(["error", "found"]);
 });
+
+it("resolves PB value labels for fixed and Any variables without changing mapping labels", async () => {
+	const {service, mapping, speedrun} = setup();
+	await configureAny(mapping, speedrun);
+	const definitions = await speedrun.getCategoryVariables();
+	speedrun.getCategoryVariables.mockResolvedValue([
+		...definitions,
+		{
+			id: "difficulty",
+			name: "Difficulty",
+			mandatory: true,
+			userDefined: false,
+			obsoletes: false,
+			values: [{id: "hard", label: "Hard"}],
+		},
+	]);
+	mapping.resolveSource.mockResolvedValue({
+		...source,
+		category: {
+			...source.category,
+			variables: {difficulty: "hard", v1: {mode: "any"}},
+		},
+	} as never);
+	const response = await service.playerBests("game", "Any%", ["p1"]);
+	if (response.status !== "resolved") throw new Error("not resolved");
+	expect(response.results.map((result) => result.variableValues)).toEqual(
+		definitions[0]!.values.map((option) => ["Hard", option.label]),
+	);
+	expect(response.results[0]!.mapping.label).toContain("Any%");
+});
+it("omits PB labels when no variables are mapped", async () => {
+	const {service} = setup();
+	const response = await service.playerBests("game", "Any%", ["p1"]);
+	if (response.status !== "resolved") throw new Error("not resolved");
+	expect(response.results[0]?.variableValues).toEqual([]);
+});

@@ -21,6 +21,7 @@ import {
 	formatRaceClock,
 	formatRaceInstant,
 	formatRaceTime,
+	formatSpeedrunTime,
 } from "../model/race-time";
 import {Callout} from "./common";
 import {
@@ -209,7 +210,7 @@ function ParticipantActions({
 	if (participant.status === "matched" && participant.playerId)
 		return (
 			<a
-				className='link'
+				className='participant-action'
 				href={playerEditUrl(participant.playerId)}
 				target='_blank'
 				rel='noopener noreferrer'
@@ -221,6 +222,7 @@ function ParticipantActions({
 		return (
 			<button
 				type='button'
+				className='participant-action'
 				disabled={registerDisabled}
 				onClick={() => onRegister(participant)}
 			>
@@ -266,7 +268,7 @@ function AccountLink({
 					target='_blank'
 					rel='noopener noreferrer'
 				>
-					{name}
+					{name} ↗
 				</a>
 			</div>
 		);
@@ -312,7 +314,12 @@ function Participants({
 	race: Race | null;
 	onRegister: (participant: Participant) => void;
 	registerDisabled: boolean;
-	bests?: Array<{playerId: string; label: string; best: SpeedrunPlayerBest}>;
+	bests?: Array<{
+		playerId: string;
+		key: string;
+		label: string;
+		best: SpeedrunPlayerBest;
+	}>;
 	bestsLoading?: boolean;
 	bestsError?: string | null;
 	onRefreshBests?: () => void;
@@ -339,13 +346,11 @@ function Participants({
 			<table className='participants'>
 				<thead>
 					<tr>
-						<th>RaceTime</th>
 						<th>Player</th>
-						<th>SRC / Twitch</th>
+						<th>アカウント</th>
 						<th>PB</th>
 						<th>結果</th>
-						<th>状態</th>
-						<th />
+						<th>操作</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -357,24 +362,34 @@ function Participants({
 								className={participant.status}
 							>
 								<td>
+									{participant.status === "matched"
+										? (participant.player?.displayName ?? "未解決")
+										: "未解決"}
+								</td>
+								<td>
 									<div>
-										{names.get(participant.racetimeUserId) ??
-											participant.player?.racetime?.name ??
-											"—"}
+										RaceTime:{" "}
+										{race ? (
+											<a
+												className='link'
+												href={
+													new URL(
+														`/user/${encodeURIComponent(participant.racetimeUserId)}`,
+														race.url,
+													).href
+												}
+												target='_blank'
+												rel='noopener noreferrer'
+											>
+												{names.get(participant.racetimeUserId) ??
+													participant.player?.racetime?.name ??
+													"—"}{" "}
+												↗
+											</a>
+										) : (
+											"—"
+										)}
 									</div>
-									<small>{participant.racetimeUserId}</small>
-								</td>
-								<td>
-									{participant.player ? (
-										<>
-											<div>{participant.player.displayName}</div>
-											<small>{participant.playerId}</small>
-										</>
-									) : (
-										<span className='muted'>—</span>
-									)}
-								</td>
-								<td>
 									<AccountLink
 										label='SRC'
 										name={participant.player?.speedrunCom?.name ?? null}
@@ -408,8 +423,8 @@ function Participants({
 													(item) => item.playerId === participant.playerId,
 												)
 												.map((item) => (
-													<div key={item.label}>
-														<small>{item.label}: </small>
+													<div key={item.key}>
+														{item.label && <small>{item.label}: </small>}
 														{item.best.state === "found" && item.best.run ? (
 															<a
 																className='link'
@@ -417,7 +432,7 @@ function Participants({
 																target='_blank'
 																rel='noopener noreferrer'
 															>
-																{formatRaceTime(item.best.run.time)}
+																{formatSpeedrunTime(item.best.run.time)}
 																{item.best.place !== null &&
 																	` · ${item.best.place}位`}
 															</a>
@@ -439,34 +454,22 @@ function Participants({
 											<span className='muted'>取得待ち</span>
 										)
 									) : (
-										<span className='muted'>
-											{participant.status === "unresolved"
-												? "Player未解決"
-												: "SRC未連携"}
-										</span>
-									)}
-								</td>
-								<td>
-									{result ? (
-										<>
-											<div>
-												{result.place === null ? "—" : `${result.place}位`}
-											</div>
-											<div>{formatFinishTime(result.time)}</div>
-											<div>
-												完走日時: {formatRaceInstant(result.finishedAt)}
-											</div>
-											<small>{result.status}</small>
-										</>
-									) : (
 										<span className='muted'>—</span>
 									)}
 								</td>
 								<td>
-									<span className={`badge ${participant.status}`}>
-										{participant.status}
-									</span>
-									{participant.message && <small>{participant.message}</small>}
+									{result?.status === "dnf" ? (
+										"DNF"
+									) : result?.status === "dq" ? (
+										"DQ"
+									) : result?.time ? (
+										<>
+											{result.place !== null && `${result.place}位 / `}
+											{formatFinishTime(result.time)}
+										</>
+									) : (
+										"—"
+									)}
 								</td>
 								<td>
 									<ParticipantActions
@@ -509,6 +512,7 @@ export function Overview({
 		url: string;
 		label: string;
 	} | null>(null);
+	const [bulkConfirm, setBulkConfirm] = useState(false);
 	const [forceReleasing, setForceReleasing] = useState(false);
 	const [forceError, setForceError] = useState<string | null>(null);
 	const forceInFlight = useRef(false);
@@ -612,6 +616,10 @@ export function Overview({
 	}, []);
 
 	const list = races?.races ?? [];
+	const closedFinishedCount = list.filter(
+		(state) =>
+			state.race?.status === "finished" && state.connection === "closed",
+	).length;
 	const liveMonitored =
 		selectedUrl === null
 			? null
@@ -645,7 +653,12 @@ export function Overview({
 	const targetCategorySlug = target?.categorySlug ?? null;
 	const targetGoal = target?.goal ?? null;
 	const [participantBests, setParticipantBests] = useState<
-		Array<{playerId: string; label: string; best: SpeedrunPlayerBest}>
+		Array<{
+			playerId: string;
+			key: string;
+			label: string;
+			best: SpeedrunPlayerBest;
+		}>
 	>([]);
 	const [bestsLoading, setBestsLoading] = useState(false);
 	const [bestsError, setBestsError] = useState<string | null>(null);
@@ -688,10 +701,11 @@ export function Overview({
 					return;
 				}
 				setParticipantBests(
-					response.results?.flatMap(({mapping, players}) =>
+					response.results?.flatMap(({mapping, variableValues, players}) =>
 						players.map((best) => ({
 							playerId: best.playerId ?? "",
-							label: mapping.label,
+							key: mapping.key,
+							label: (variableValues ?? []).join(" / "),
 							best,
 						})),
 					) ?? [],
@@ -960,14 +974,18 @@ export function Overview({
 	};
 
 	const forceUnwatch = async () => {
-		if (!forceTarget || forceInFlight.current) return;
+		if ((!forceTarget && !bulkConfirm) || forceInFlight.current) return;
 		selectionGeneration.current += 1;
 		setPendingSelection(null);
 		forceInFlight.current = true;
 		setForceReleasing(true);
 		setForceError(null);
 		try {
-			await request("forceUnwatchRace", {url: forceTarget.url});
+			if (bulkConfirm)
+				await request("forceUnwatchClosedFinishedRaces", undefined);
+			else if (forceTarget)
+				await request("forceUnwatchRace", {url: forceTarget.url});
+			setBulkConfirm(false);
 			setForceTarget(null);
 		} catch (cause) {
 			setForceError(errorMessage(cause));
@@ -1009,6 +1027,16 @@ export function Overview({
 		<div className='overview layout-two'>
 			<aside className='panel'>
 				<h2>監視中のレース</h2>
+				<button
+					type='button'
+					disabled={closedFinishedCount === 0 || forceReleasing}
+					onClick={() => {
+						setForceError(null);
+						setBulkConfirm(true);
+					}}
+				>
+					終了済みを一括停止（{closedFinishedCount}件）
+				</button>
 				{list.length === 0 && (
 					<p className='muted'>監視中のレースはありません。</p>
 				)}
@@ -1043,6 +1071,16 @@ export function Overview({
 			<section className='panel'>
 				<div className='toolbar'>
 					<h2>レース詳細</h2>
+					{monitoredDisplay?.race && (
+						<a
+							className='link'
+							href={monitoredDisplay.race.url}
+							target='_blank'
+							rel='noopener noreferrer'
+						>
+							RaceTimeで開く ↗
+						</a>
+					)}
 					{liveMonitored && (
 						<button
 							type='button'
@@ -1149,7 +1187,7 @@ export function Overview({
 					<p className='muted'>レースを選択してください。</p>
 				)}
 			</section>
-			{forceTarget && (
+			{(forceTarget || bulkConfirm) && (
 				<div className='dialog-backdrop'>
 					<div
 						className='dialog'
@@ -1158,8 +1196,17 @@ export function Overview({
 						aria-label='監視を停止しますか？'
 					>
 						<h3>監視を停止しますか？</h3>
-						<p>対象：{forceTarget.label}</p>
-						<p>このレースの監視をすべて停止します。</p>
+						<p>
+							対象：
+							{bulkConfirm
+								? `終了済みのレース ${closedFinishedCount}件`
+								: forceTarget?.label}
+						</p>
+						<p>
+							{bulkConfirm
+								? "finishedかつclosedのレースの監視をすべて停止します。"
+								: "このレースの監視をすべて停止します。"}
+						</p>
 						<p>他のバンドルが保持しているwatchIdも無効になります。</p>
 						<p>RaceTime上のレース自体は変更されません。</p>
 						{forceError && <Callout tone='error'>{forceError}</Callout>}
@@ -1167,7 +1214,10 @@ export function Overview({
 							<button
 								type='button'
 								disabled={forceReleasing}
-								onClick={() => setForceTarget(null)}
+								onClick={() => {
+									setForceTarget(null);
+									setBulkConfirm(false);
+								}}
 							>
 								キャンセル
 							</button>

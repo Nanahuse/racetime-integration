@@ -4,6 +4,7 @@ import {
 	type ResolvedCategoryMapping,
 	type SpeedrunPersonalBestRun,
 	type SpeedrunPlayerBest,
+	type SpeedrunVariableOption,
 	serializeRaceInstant,
 	Temporal,
 } from "@nanahuse/racetime-protocol";
@@ -18,6 +19,7 @@ type Resolution =
 			status: "resolved";
 			mappings: ResolvedCategoryMapping[];
 			obsoletesVariableIds: string[];
+			definitions: SpeedrunVariableOption[];
 	  }
 	| {status: "unregistered"}
 	| {status: "inconsistent"; message: string};
@@ -102,7 +104,12 @@ export class SpeedrunRecordService {
 		if (!expanded.ok && expanded.status === "limit_exceeded")
 			throw new IntegrationError("expansion_limit_exceeded", expanded.message);
 		return expanded.ok
-			? {status: "resolved", mappings: expanded.mappings, obsoletesVariableIds}
+			? {
+					status: "resolved",
+					mappings: expanded.mappings,
+					obsoletesVariableIds,
+					definitions,
+				}
 			: {status: "inconsistent", message: expanded.message};
 	}
 
@@ -383,7 +390,16 @@ export class SpeedrunRecordService {
 						}
 					}),
 				);
-				return {mapping, players};
+				return {
+					mapping,
+					variableValues: Object.entries(mapping.category.variables).map(
+						([id, value]) =>
+							resolution.definitions
+								.find((definition) => definition.id === id)
+								?.values.find((option) => option.id === value)?.label ?? value,
+					),
+					players,
+				};
 			}),
 		);
 		return {

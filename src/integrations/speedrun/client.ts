@@ -19,10 +19,8 @@ import type {
 import {
 	parseRaceDate,
 	parseRaceDuration,
-	type RaceDuration,
 	type RaceInstant,
 	serializeRaceDate,
-	serializeRaceDuration,
 	serializeRaceInstant,
 	Temporal,
 } from "@nanahuse/racetime-protocol";
@@ -95,14 +93,19 @@ function requireBoolean(
 	return value;
 }
 
-function requireDuration(value: unknown, path: string): RaceDuration {
+function requireDuration(value: unknown, path: string): string {
 	if (typeof value !== "string")
 		throw new SpeedrunError(
 			"invalid_payload",
 			`${path} must be an ISO 8601 duration.`,
 		);
 	try {
-		return parseRaceDuration(value)!;
+		parseRaceDuration(value);
+		return value.replace(
+			/([.,])(\d+)(?=S$)/i,
+			(_, separator: string, digits: string) =>
+				`${separator}${digits.padEnd(3, "0")}`,
+		);
 	} catch (cause) {
 		throw new SpeedrunError(
 			"invalid_payload",
@@ -112,7 +115,7 @@ function requireDuration(value: unknown, path: string): RaceDuration {
 	}
 }
 
-function optionalDuration(value: unknown, path: string): RaceDuration | null {
+function optionalDuration(value: unknown, path: string): string | null {
 	if (value === undefined || value === null) return null;
 	if (typeof value !== "string")
 		throw new SpeedrunError("invalid_payload", `${path} is not a duration.`);
@@ -657,7 +660,7 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 									typeof run.weblink === "string"
 										? run.weblink
 										: `https://www.speedrun.com/runs/${encodeURIComponent(id)}`,
-								time: serializeRaceDuration(duration)!,
+								time: duration,
 								date: optionalDate(run.date, `run ${id}.date`),
 								players,
 							},
@@ -810,7 +813,7 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 					return {
 						runId: id,
 						url: requireString(run, "weblink", `run ${id}`),
-						time: serializeRaceDuration(time)!,
+						time: time,
 						date: optionalDate(run.date, `run ${id}.date`),
 						players: [
 							{

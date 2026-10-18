@@ -157,7 +157,8 @@ select {
 	color: inherit;
 }
 
-button {
+button,
+a.participant-action {
 	padding: 8px 12px;
 	border-radius: 8px;
 	border: 1px solid var(--border);
@@ -336,10 +337,10 @@ table.participants td {
 	vertical-align: top;
 }
 table.participants tr.unresolved {
-	background: #2d26152a;
+	background: #e3b34120;
 }
 table.participants tr.unavailable {
-	background: #321a1a2a;
+	background: #f8514920;
 }
 
 .race-leaderboard {
@@ -519,4 +520,10 @@ input[readonly] {
 	.layout-two {
 		grid-template-columns: 1fr;
 	}
+}
+
+.participant-action {
+	display: inline-block;
+	text-decoration: none;
+	font: inherit;
 }
