@@ -1,6 +1,6 @@
 # 導入と初期設定
 
-このページではracetime-integrationをNodeCGに配置して動かすまでの手順を説明します。Google SheetsとSpeedrun.com連携は任意です。使用しない場合でもレースの監視と参加者の解決は利用できます。
+このページではracetime-integrationをNodeCGに配置してレースの監視を始めるまでの手順を説明します。導入はGoogle Sheetsを必要としない基本セットアップと、Speedrun.comの記録を扱う場合だけ行う追加セットアップに分かれます。
 
 ## 前提
 
@@ -9,7 +9,9 @@
 - pnpm 12.9.1
 - Player Manager 3.xを同じNodeCGに配置
 
-## 配置とビルド
+## 基本セットアップ
+
+Google Sheetsを設定しなくても、レースの監視と参加者の解決は利用できます。
 
 1. このリポジトリをNodeCGの`bundles/racetime-integration`に配置します。
 2. バンドルのディレクトリで依存関係をインストールします。
@@ -24,17 +26,28 @@
    pnpm build
    ```
 
-4. Player Manager（`player-manager`）を同じNodeCGの`bundles`に配置します。`racetime-integration`は`bundleDependencies`でPlayer Managerの読込み順を指定しています。
-
+4. Player Manager（`player-manager`）を同じNodeCGの`bundles`に配置します。racetime-integrationは`bundleDependencies`でPlayer Managerの読込み順を指定しています。
 5. NodeCG本体のディレクトリへ移動して起動します。`pnpm install`と`pnpm build`はバンドルのディレクトリで実行しますが、`nodecg start`はNodeCG本体のディレクトリで実行します。
 
    ```sh
    nodecg start
    ```
 
-Dashboardを開くと、`RaceTime Integration`パネルが表示されます。
+6. Dashboardを開き、`RaceTime Integration`パネルを表示します。
 
-## 初期設定の考え方
+### 動作確認
+
+1. `Overview`タブの「URLで監視を追加」にRaceTimeのレースURLを入力し、「監視を追加」を押します。
+2. 監視一覧にレースが追加され、レース詳細とタイマーが表示されることを確認します。
+3. 画面上部のPlayer Managerバッジが`Ready`になっていることを確認します。
+
+### うまくいかないとき
+
+- Player Managerバッジが`Unavailable`や`Error`: Player Managerが`bundles`に配置されているか、対応バージョン（3.x）かを確認してください。racetime-integrationは起動していても、Player Managerが無いと参加者を解決できません。
+- 「監視を追加」でエラーになる: 接続先が許可されていない可能性があります。`allowedRaceOrigins`（後述）にそのOriginを追加してください。標準では`https://racetime.gg`だけが許可されています。
+- `nodecg start`が見つからない、または何も起きない: `nodecg start`はNodeCG本体のディレクトリで実行してください。バンドルのディレクトリで実行しても起動しません。
+
+## 設定の保存場所
 
 設定は2か所に分かれます。役割を混同しないようにしてください。
 
@@ -64,36 +77,45 @@ Dashboardを開くと、`RaceTime Integration`パネルが表示されます。
 - Originにはパス、クエリ、フラグメント、認証情報を指定できません。
 - `localhost`はブラウザーではなく、NodeCG Extensionが動作している環境を指します。
 
-## Google Sheets（任意）
+## 追加セットアップ: Speedrun.com連携
 
-マッピングを保存する場合は、次の順に準備します。
+Speedrun.comのLeaderboardや参加者のPBを取得する場合だけ、次の設定を行います。レースの監視だけを使う場合は不要です。
 
-1. Google CloudでGoogle Sheets APIを有効にします。
-2. Application Default Credentials（ADC）で使うアカウントに、対象Spreadsheetの編集権限を付与します。
-3. 認証は[Application Default Credentials](https://docs.cloud.google.com/docs/authentication/application-default-credentials)を使います。スコープは`https://www.googleapis.com/auth/spreadsheets`です。資格情報ファイルを指定する設定はありません。
+### 1. Google Sheets APIを有効にする
 
-### 初期化と保存の違い
+Google CloudのプロジェクトでGoogle Sheets APIを有効にします。
 
-DashboardのSettings画面では、「Spreadsheetを初期化」と「保存」は別の操作です。
+### 2. 認証情報を用意する
 
-- **Spreadsheetを初期化**: 入力中のSpreadsheetへ`GameMappings`と`CategoryMappings`のワークシートを準備します。不足シートは作成し、空のシートにはヘッダーを書き込みます。設定は保存せず、`settingsRevision`も変更しません。
-- **保存**: 入力内容を永続設定へ保存します。Spreadsheetの接続先を変更した場合は、保存時に両シートを読み込んで検証できた場合だけ切り替えます。
+racetime-integrationはApplication Default Credentials（ADC）でGoogleへ認証します。スコープは`https://www.googleapis.com/auth/spreadsheets`です。資格情報ファイルを指定する専用の設定はありません。次のどちらかで用意します。
 
-新しいSpreadsheetを使い始めるときは、次を順に行います。
+- サービスアカウント: サービスアカウントを作成してJSON鍵をダウンロードし、`GOOGLE_APPLICATION_CREDENTIALS`にそのJSONのパスを設定します。サービスアカウントのメールアドレスに、対象Spreadsheetの編集権限を付与してください。
+- ユーザーアカウント: `gcloud auth application-default login`を実行し、利用するアカウントでログインします。
 
-1. Settings画面でSpreadsheet URLまたはID、両シート名を入力します。
-2. 「Spreadsheetを初期化」でシートを準備します。
-3. 「保存」で接続を確定します。
+`GOOGLE_APPLICATION_CREDENTIALS`は、NodeCGを起動するプロセスから見える必要があります。NodeCGをサービスや別ユーザーで起動している場合は、その環境に合わせて設定してください。
 
-Spreadsheetを設定しない（`spreadsheetId`を空にする）と、マッピング機能は無効になります。Sheets未設定でもレース機能は利用できます。
+詳細は[Application Default Credentials](https://docs.cloud.google.com/docs/authentication/application-default-credentials)を参照してください。
 
-シートの列構成とマッピングの詳細は[マッピング](mappings.md)を参照してください。
+### 3. Spreadsheetを準備する
 
-## 動作確認
+DashboardのSettings画面で、Spreadsheet URLまたはIDと両シート名を入力し、次の順に操作します。
 
-1. Dashboardの`Overview`タブを開きます。
-2. 「URLで監視を追加」にRaceTimeのレースURLを入力し、「監視を追加」を押します。
-3. 監視一覧にレースが表示され、レース詳細とタイマーが表示されることを確認します。
-4. 画面上部のPlayer Managerバッジが`Ready`になっていることを確認します。`Unavailable`や`Error`の場合はPlayer Managerの配置と起動を確認してください。
+1. 「Spreadsheetを初期化」で、`GameMappings`と`CategoryMappings`のワークシートを準備します。不足シートは作成し、空のシートにはヘッダーを書き込みます。この操作は設定を保存しません。
+2. 「保存」で接続を確定します。接続先を変更した場合は、保存時に両シートを読み込んで検証できた場合だけ切り替わります。
 
-Google Sheetsを設定した場合は、Settingsタブの接続状態が「利用可能」になっていることも確認します。
+### 4. マッピングを登録する
+
+RaceTimeのカテゴリ・GoalとSpeedrun.comのゲーム・カテゴリを対応付けます。手順と具体例は[マッピング](mappings.md)を参照してください。
+
+### うまくいかないとき
+
+- 保存時に接続できない（`spreadsheet_unavailable`）: Google Sheets APIが有効か、`GOOGLE_APPLICATION_CREDENTIALS`がNodeCGプロセスに渡っているか、対象Spreadsheetへの編集権限があるかを確認してください。
+- シート形式が不正（`invalid_sheet`）: 既存シートに想定と異なる内容があると初期化が中止されます。シートを空にするか、想定どおりのヘッダーにそろえてから、もう一度初期化してください。
+- LeaderboardやPBが取得できない: マッピングが未登録の場合はLeaderboardとPBを取得できません。まずマッピングを登録してください。
+
+シートの列構成は[マッピング](mappings.md)を参照してください。
+
+## 次の手順
+
+- 監視や設定の操作は[Dashboardの使い方](dashboard.md)を参照してください。
+- ほかのバンドルからの利用は[公開API](../packages/racetime-protocol/README.md)を参照してください。

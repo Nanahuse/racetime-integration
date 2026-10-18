@@ -1,37 +1,119 @@
 # @nanahuse/racetime-protocol
 
-RaceTime Integration v4の公開型・定数・メッセージ名です。ESMとCommonJSの両方に型宣言を含み、実行時の依存は日時・期間・日付処理に使う`@js-temporal/polyfill`だけです（NodeCG・Google SDK・Player Managerへの実行時依存はありません）。
+RaceTime Integration v4の公開型・定数・メッセージ名です。ほかのNodeCGバンドルがracetime-integrationのレース監視・参加者解決・イベント通知を利用するために使います。ESMとCommonJSの両方に型宣言を含み、実行時の依存は日時・期間・日付処理に使う`@js-temporal/polyfill`だけです（NodeCG・Google SDK・Player Managerへの実行時依存はありません）。
 
 APIバージョンは4で、旧バージョンとの互換実装は提供しません（v3との互換レイヤーはありません）。
 
 ## セットアップ
 
-利用するバンドルのmanifestに、`bundleDependencies`で`racetime-integration`への依存を宣言してください。
+利用するバンドルでは2種類の依存を設定します。
 
-```json
-{
-  "bundleDependencies": {
-    "racetime-integration": "^0.7.0"
-  }
-}
-```
+1. **NodeCGのバンドル依存**: manifestに`bundleDependencies`を書き、racetime-integrationより後に読み込まれるようにします。racetime-integrationのExtensionが起動している必要があります。
 
-Extensionからは`BUNDLE_NAME`で拡張を取得して`request()`を呼びます。すべての応答は`Response<T>`です。
+   ```json
+   {
+     "bundleDependencies": {
+       "racetime-integration": "^0.7.0"
+     }
+   }
+   ```
+
+2. **Protocolパッケージの依存**: 型・定数・メッセージ名をimportするために、`@nanahuse/racetime-protocol`を依存に加えます。
+
+Extensionでは`BUNDLE_NAME`でracetime-integrationの拡張を取得し、`RaceTimeAPI.request()`を呼びます。すべての応答は`Response<T>`です。
 
 ```ts
 import {BUNDLE_NAME, type RaceTimeAPI} from "@nanahuse/racetime-protocol";
 
-const api = nodecg.extensions[BUNDLE_NAME] as RaceTimeAPI;
-const watched = await api.request("watchRace", {url: "https://racetime.gg/ootr/your-race"});
-if (watched.ok) {
-  // Initial HTTP load has succeeded; the race is non-null.
-  const race = watched.data.state.race;
-  console.log(race.raceId);
-  await api.request("unwatchRace", {watchId: watched.data.watchId});
+const api = nodecg.extensions[BUNDLE_NAME] as RaceTimeAPI | undefined;
+if (!api) throw new Error("racetime-integration is not loaded");
+```
+
+ブラウザ（DashboardやGraphic）からは、`nodecg.extensions`を参照できないため、NodeCGメッセージを使います。`operationMessageName(operation)`をメッセージ名に、`BUNDLE_NAME`を送信先の名前空間に指定してください。
+
+## 使い方
+
+### レース情報を1回取得する
+
+`fetchRace`は、URLからレースを1回だけHTTP取得し、参加者を解決して返します。監視は開始しません。
+
+```ts
+const response = await api.request("fetchRace", {
+  url: "https://racetime.gg/ootr/your-race",
+});
+if (response.ok) {
+  const {race, participants, resolution} = response.data;
+  console.log(race.raceId, race.status, participants.length, resolution.state);
+} else {
+  console.error(response.error.code, response.error.message);
 }
 ```
 
-ブラウザからは`operationMessageName(operation)`をメッセージ名、`BUNDLE_NAME`を送信先として使用します。
+### レースを継続監視する
+
+`watchRace`で監視を開始し、`racetime-races` Replicantで最新状態を受け取り、終了時に`unwatchRace`で解放します。Replicantは非永続なので、NodeCGの再起動後は再購読してください。
+
+```ts
+import {
+  BUNDLE_NAME,
+  RACES_REPLICANT,
+  type RaceState,
+  type RaceTimeAPI,
+} from "@nanahuse/racetime-protocol";
+
+const api = nodecg.extensions[BUNDLE_NAME] as RaceTimeAPI;
+const url = "https://racetime.gg/ootr/your-race";
+
+const started = await api.request("watchRace", {url});
+if (!started.ok) throw new Error(started.error.message);
+const {watchId} = started.data;
+
+const races = nodecg.Replicant(RACES_REPLICANT, BUNDLE_NAME, {
+  defaultValue: {schemaVersion: 1, races: []},
+});
+const onRacesChanged = (state: {races: RaceState[]} | undefined) => {
+  // urlは正規化済みの値です。watchRaceへ渡したURLと表記が異なる場合があります。
+  const entry = state?.races.find((race) => race.url === url);
+  if (entry?.race) console.log(entry.race.status, entry.connection);
+};
+races.on("change", onRacesChanged);
+
+// 終了時
+races.removeListener("change", onRacesChanged);
+await api.request("unwatchRace", {watchId});
+```
+
+監視を開始してすぐ解除すると、状態を観測する前に監視が終了します。情報が必要な間は`watchId`を保持してください。
+
+### イベントを受信する
+
+レース状態の変化は`eventMessageName(event)`で購読します。購読先の名前空間は`BUNDLE_NAME`です。
+
+```ts
+import {
+  BUNDLE_NAME,
+  eventMessageName,
+  type RaceTimeEvents,
+} from "@nanahuse/racetime-protocol";
+
+const onEntrantFinished = (event: RaceTimeEvents["entrantFinished"]) => {
+  console.log(event.raceId, event.result.userId, event.result.time);
+};
+nodecg.listenFor(
+  eventMessageName("entrantFinished"),
+  BUNDLE_NAME,
+  onEntrantFinished,
+);
+
+// 終了時
+nodecg.unlisten(
+  eventMessageName("entrantFinished"),
+  BUNDLE_NAME,
+  onEntrantFinished,
+);
+```
+
+イベントは現在状態の完全なスナップショットではありません。接続時の初期状態には`watchRace`の戻り値、`getRace` / `getWatch` / `listRaces`、または`racetime-races` Replicantを併用してください。
 
 ## 操作一覧
 
@@ -160,29 +242,6 @@ if (time) {
 
 `FinishedRaceResult`は`RaceResult & {status: "finished"; time: string; finishedAt: string}`です。`entrantFinished.result`は今回の`Race.results`の対応する結果で、順位・時間・完走日時は正式なスナップショットの値を使用します。既にdoneの参加者の順位・時間の修正、新たに一覧に現れた完走済み参加者、一覧からの参加者削除では完走／取り消しを通知しません。一度取り消された参加者が再完走すると新しい完走通知を送ります。同じ更新で複数人が完走した場合は各1件を送ります。
 
-他のNodeCGバンドルからは送信元の名前空間`BUNDLE_NAME`を指定して購読します。
-
-```ts
-import {
-  BUNDLE_NAME,
-  eventMessageName,
-  type RaceTimeEvents,
-} from "@nanahuse/racetime-protocol";
-
-nodecg.listenFor(
-  eventMessageName("entrantFinished"),
-  BUNDLE_NAME,
-  (event: RaceTimeEvents["entrantFinished"]) => {
-    console.log(
-      event.raceId,
-      event.result.userId,
-      event.result.time,
-      event.result.finishedAt,
-    );
-  },
-);
-```
-
 日時は既存APIと同じUTCのISO 8601文字列、完走経過時間はISO 8601 Duration文字列です。演算には`parseRaceInstant` / `parseRaceDuration`を使用してください。イベント受信時刻を開始時刻や完走時刻として使用しないでください。ペイロードはJSON互換データのみです。
 
 初回取得ではpending・in_progress・finished・cancelledでも通知せず、比較基準のみを確立します。初回のin_progress / finishedは開始済みと判定します。一度開始したセッションはfinished→in_progressによる再開やpendingへの戻りがあっても開始済み判定を保持し、raceStartedを再通知しません。
@@ -192,8 +251,6 @@ nodecg.listenFor(
 同じURLの複数watchIdは1つのセッションを共有し、イベントをwatchIdごとに重複生成しません。最後のwatchIdを解除すると基準スナップショットと開始済み判定を破棄し、再監視は初回取得からやり直します。
 
 レース状態を公開した後にイベントを送信します。同期送信エラーとPromise拒否はNodeCG loggerに記録し、レースの採用・公開・監視を失敗させません。送信完了を待たず、失敗によるHTTP再取得・再接続・自動再送は行いません。イベント履歴・永続キュー・配信保証はありません。観測の間に発生して元に戻った変化は検出できない場合があり、全変更履歴を再現するものではありません。
-
-利用側はイベント購読と現在状態の取得を組み合わせてください。接続時の初期状態や完全なレース情報には、watchRaceの戻り値、getRace / getWatch / listRaces、またはracetime-races Replicantを使用します。
 
 ## 単発取得
 
@@ -252,6 +309,28 @@ nodecg.listenFor(
 LeaderboardとPBは条件別にキャッシュし、TTLは5分です。同時要求は共有し、HTTPの並行数は4に制限します。`refresh: true`は該当条件だけを再取得します。再取得に失敗して直前の正常値がある場合は`stale: true`を付けて返し、キャッシュなしのLeaderboard失敗はMappingの`state: "error"`、PB失敗はPlayerの`state: "error"`です。アカウント構成が変わった場合は、異なる構成で保存した集約PBをstale結果として再利用しません。通信失敗は正常値としてキャッシュしません。レース監視の更新はSRC取得を開始しません。
 
 Sheetsの同時操作・設定変更はプロセス内で直列化します。外部アプリや別プロセスが読み書きの間に変更することを排他する契約ではありません。
+
+## エラーコード
+
+`Response<T>`の`ok: false`では、`error.code`が次のいずれかになります。
+
+| コード | 意味 |
+| --- | --- |
+| `invalid_input` | リクエストや設定項目の値が不正 |
+| `invalid_url` | RaceTimeのURL形式、または接続先が許可されていない |
+| `not_found` | 対象が見つからない |
+| `http_error` / `timeout` / `network_error` | 外部との通信に失敗 |
+| `aborted` | 監視の解除などで処理が中断された |
+| `invalid_payload` | RaceTimeの応答が想定した形式でない |
+| `websocket_error` | WebSocket接続に失敗 |
+| `player_manager_unavailable` | Player Managerを利用できない |
+| `spreadsheet_unavailable` / `invalid_sheet` | Spreadsheetへ接続できない、シート形式が不正 |
+| `mapping_conflict` / `game_mapping_conflict` / `game_mapping_missing` / `category_not_in_game` | マッピングの競合や整合性違反 |
+| `speedrun_unavailable` | Speedrun.comを利用できない |
+| `expansion_limit_exceeded` | `Any`の展開件数が上限を超えた |
+| `settings_changed` | 保存先の設定が変更された |
+| `unsupported_operation` | そのExtensionでは提供されない操作 |
+| `internal_error` | 上記以外の内部エラー |
 
 ## 配布
 

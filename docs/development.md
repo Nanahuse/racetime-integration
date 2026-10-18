@@ -1,6 +1,6 @@
 # 開発
 
-開発環境の構築、コマンド、CI、バージョン管理について説明します。
+開発環境の構築、ソース構成、コマンド、テスト、CIについて説明します。
 
 ## 環境
 
@@ -32,9 +32,36 @@ pnpm build
 
 `pnpm dev`はExtensionを再ビルドしますが、NodeCGの再起動は行いません。反映にはNodeCGの再起動が必要です。Dashboardの出力は`dashboard/`、Extensionの出力は`extension/index.js`です。
 
+## ソース構成
+
+| 場所 | 内容 |
+| --- | --- |
+| `src/extension/index.ts` | 各サービスを組み立て、NodeCGのIPCを配線する |
+| `src/api.ts` | 公開操作の入口とリクエストの検証 |
+| `src/service.ts` | 監視セッションと`RacesState`の管理 |
+| `src/race-events.ts` | レース状態変化イベントの検出 |
+| `src/mappings.ts`、`src/resolve.ts` | マッピングの管理と`Any`の展開 |
+| `src/speedrun-records.ts` | LeaderboardとPBの取得・キャッシュ |
+| `src/integrations/` | RaceTime・Player Manager・Spreadsheet・Speedrun.comとの接続 |
+| `packages/racetime-protocol/` | 公開型・定数・メッセージ名 |
+| `ui/dashboard/` | Dashboard（Vite + React + TypeScript） |
+| `test/` | 境界と表示のテスト |
+
 ## テスト
 
-`pnpm test`は`pnpm build:extension`を実行してから`vitest run --dir test`を実行します。テストファイルは`test/`にあり、HTTP・WebSocketの境界、Player Managerの解決、マッピングとSpreadsheet、Speedrun.comのLeaderboardとPB、日時・期間の解析、Dashboardの表示と操作などを対象にします。
+`pnpm test`は`pnpm build:extension`を実行してから`vitest run --dir test`を実行します。テストファイルは`test/`にあります。変更した場所に応じて、次のテストを確認してください。
+
+| 変更対象 | 主なテスト |
+| --- | --- |
+| RaceTimeの取得・監視・Player解決 | `test/racetime.test.ts`、`test/service.test.ts` |
+| レース状態変化イベント | `test/race-events.test.ts`、`test/nodecg-race-events.test.ts` |
+| 日時・期間の解析 | `test/datetime.test.ts`、`test/duration.test.ts` |
+| マッピングとSpreadsheet | `test/mappings.test.ts`、`test/sheets.test.ts` |
+| Speedrun.comのLeaderboardとPB | `test/speedrun.test.ts`、`test/speedrun-records.test.ts` |
+| 公開APIとメッセージ | `test/nodecg.test.ts`、`test/racetime.test.ts` |
+| Dashboard | `test/dashboard-*.test.tsx` |
+
+テストはHTTPやWebSocketの境界、Player Managerの解決、マッピング、Speedrun.com、日時・期間、Dashboardの表示と操作を対象にします。
 
 ## CI
 
