@@ -702,7 +702,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 
 	const saveGame = async () => {
 		if (mutating || !gameSession || gameSession.status !== "normal") return;
-		const closeOnSuccess = mode === "race" && !categoryDirty;
+		const closeOnSuccess = !categoryDirty;
 		setMutating(true);
 		setBusy(true);
 		setError(null);

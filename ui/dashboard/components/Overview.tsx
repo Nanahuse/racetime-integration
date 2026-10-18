@@ -230,6 +230,21 @@ function ParticipantActions({
 	return null;
 }
 
+const ACCOUNT_PROFILE_ERROR_LABELS: Record<string, string> = {
+	lookup_failed: "プロフィールURLを取得できませんでした。",
+	rate_limited:
+		"外部サービスのレート制限中です。時間をおいて再試行してください。",
+	account_not_found: "対象のアカウントが見つかりません。",
+	communication: "Player Managerとの通信に失敗しました。",
+};
+
+function accountProfileErrorLabel(code: string | null): string {
+	return (
+		(code ? ACCOUNT_PROFILE_ERROR_LABELS[code] : undefined) ??
+		"プロフィールURLを取得できませんでした。"
+	);
+}
+
 function AccountLink({
 	label,
 	name,
@@ -259,14 +274,22 @@ function AccountLink({
 		<div>
 			{label}: <span>{name}</span>
 			{state?.state === "error" && (
-				<button
-					type='button'
-					className='retry-link'
-					title={state.error ?? undefined}
-					onClick={retry}
-				>
-					再試行
-				</button>
+				<>
+					<button
+						type='button'
+						className='retry-link'
+						title={state.error ?? undefined}
+						onClick={retry}
+					>
+						再試行
+					</button>
+					<small
+						className='muted'
+						title={state.error ?? undefined}
+					>
+						{accountProfileErrorLabel(state.errorCode)}
+					</small>
+				</>
 			)}
 		</div>
 	);

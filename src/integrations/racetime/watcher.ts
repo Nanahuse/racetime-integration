@@ -112,11 +112,11 @@ export class RaceWatcher {
 	}
 
 	private observeRace(): void {
-		if (
-			this.state.race?.status === "finished" &&
-			this.finishObservedAt === null
-		)
-			this.finishObservedAt = this.now();
+		if (this.state.race?.status === "finished") {
+			if (this.finishObservedAt === null) this.finishObservedAt = this.now();
+		} else {
+			this.finishObservedAt = null;
+		}
 		this.scheduleFinishClose();
 	}
 

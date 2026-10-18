@@ -720,4 +720,42 @@ it("keeps edits when a save fails", async () => {
 	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
 	expect(await screen.findByText(/boom|Operation failed/)).toBeTruthy();
 	expect(screen.getByDisplayValue("Edited")).toBeTruthy();
+	expect(screen.getByRole("button", {name: /Game Mappingを保存/})).toBeTruthy();
+});
+
+it("closes the Game Mapping editor after a successful save in the manage view", async () => {
+	games = [gameRecord];
+	render(<Mappings />);
+	await selectFirstGame();
+	fireEvent.change(screen.getByDisplayValue("Game One"), {
+		target: {value: "Edited"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	expect(await screen.findByText(/Game Mappingを保存しました/)).toBeTruthy();
+	await waitFor(() =>
+		expect(
+			screen.queryByRole("button", {name: /Game Mappingを保存/}),
+		).toBeNull(),
+	);
+	expect(screen.getByText(/Game Mappingを選択するか/)).toBeTruthy();
+});
+
+it("keeps the Game Mapping editor open while Category changes are unsaved", async () => {
+	games = [gameRecord];
+	render(<Mappings />);
+	await selectFirstGame();
+	await openNewCategory();
+	await act(async () => {
+		fireEvent.change(screen.getByLabelText("SRC Category（必須）"), {
+			target: {value: "c1"},
+		});
+	});
+	await screen.findByText("このカテゴリにVariablesはありません。");
+
+	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	expect(await screen.findByText(/Game Mappingを保存しました/)).toBeTruthy();
+	expect(screen.getByLabelText("SRC Category（必須）")).toBeTruthy();
+	expect(
+		screen.getByRole("button", {name: /Category Mappingを保存/}),
+	).toBeTruthy();
 });

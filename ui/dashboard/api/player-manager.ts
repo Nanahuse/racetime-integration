@@ -19,6 +19,17 @@ type Envelope<T> =
 	| {ok: true; data: T}
 	| {ok: false; error: {code: string; message: string}};
 
+/** Player Manager returned a coded failure for a profile URL lookup. */
+export class AccountProfileError extends Error {
+	constructor(
+		readonly code: string,
+		message: string,
+	) {
+		super(message);
+		this.name = "AccountProfileError";
+	}
+}
+
 /**
  * Uses player-manager's public registration API to obtain a one-time,
  * server-generated registration URL for an unmatched RaceTime account.
@@ -46,7 +57,7 @@ export async function accountProfileUrl(accountId: string): Promise<string> {
 		Envelope<{url: string}>
 	>(operationMessageName("getAccountProfileUrl"), BUNDLE_NAME, {accountId});
 	if (!response.ok)
-		throw new Error(`${response.error.code}: ${response.error.message}`);
+		throw new AccountProfileError(response.error.code, response.error.message);
 	return response.data.url;
 }
 

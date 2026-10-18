@@ -379,6 +379,61 @@ describe("HTTP boundary", () => {
 			expect(vi.getTimerCount()).toBe(0);
 			watcher.stop();
 		});
+		it("clears the pending close and resets the finish time when a finished race resumes", async () => {
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date("2026-01-01T02:00:00Z"));
+			const {watcher, sockets} = watcherFor(dto(1, "race", "in_progress"));
+			await watcher.start();
+			await flush();
+			sockets[0]!.open();
+			await flush();
+			sockets[0]!.raceData({...payload(2, "race", "finished"), ended_at: null});
+			await flush();
+			expect(watcher.snapshot().race?.status).toBe("finished");
+			await vi.advanceTimersByTimeAsync(60_000);
+			expect(watcher.snapshot().connection).toBe("connected");
+
+			sockets[0]!.raceData({
+				...payload(3, "race", "in_progress"),
+				ended_at: null,
+			});
+			await flush();
+			expect(watcher.snapshot().race?.status).toBe("in_progress");
+			await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+			expect(watcher.snapshot().connection).toBe("connected");
+			expect(sockets[0]!.close).not.toHaveBeenCalled();
+
+			sockets[0]!.raceData({...payload(4, "race", "finished"), ended_at: null});
+			await flush();
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000 - 1);
+			expect(watcher.snapshot().connection).toBe("connected");
+			await vi.advanceTimersByTimeAsync(1);
+			expect(watcher.snapshot().connection).toBe("closed");
+			expect(sockets[0]!.close).toHaveBeenCalledOnce();
+			watcher.stop();
+		});
+		it("prefers endedAt over the first observed finish time", async () => {
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date("2026-01-01T02:00:00Z"));
+			const {watcher, sockets} = watcherFor(dto(1, "race", "in_progress"));
+			await watcher.start();
+			await flush();
+			sockets[0]!.open();
+			await flush();
+			sockets[0]!.raceData({
+				...payload(2, "race", "finished"),
+				ended_at: "2026-01-01T02:10:00Z",
+			});
+			await flush();
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+			expect(watcher.snapshot().connection).toBe("connected");
+			await vi.advanceTimersByTimeAsync(9 * 60 * 1000);
+			expect(watcher.snapshot().connection).toBe("connected");
+			await vi.advanceTimersByTimeAsync(60 * 1000);
+			expect(watcher.snapshot().connection).toBe("closed");
+			expect(sockets[0]!.close).toHaveBeenCalledOnce();
+			watcher.stop();
+		});
 		it("cancels a pending reconnect when the grace period elapses", async () => {
 			vi.useFakeTimers();
 			vi.setSystemTime(new Date("2026-01-01T02:00:00Z"));

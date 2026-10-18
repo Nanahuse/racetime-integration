@@ -2172,6 +2172,59 @@ it("keeps an account name unlinked until its profile URL resolves and allows ret
 	);
 });
 
+it("shows a distinct profile error per account and clears it after a successful retry", async () => {
+	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));
+	let srcAttempts = 0;
+	sendMessageToBundle.mockImplementation((_name, _bundle, data?: unknown) => {
+		const accountId = (data as {accountId: string}).accountId;
+		if (accountId === "acct-src") {
+			srcAttempts += 1;
+			if (srcAttempts === 1)
+				return Promise.resolve({
+					ok: false,
+					error: {code: "rate_limited", message: "slow down"},
+				});
+			return Promise.resolve({
+				ok: true,
+				data: {url: "https://www.speedrun.com/user/src-one"},
+			});
+		}
+		return Promise.resolve({
+			ok: false,
+			error: {code: "lookup_failed", message: "lookup failed"},
+		});
+	});
+	render(<Overview races={racesWithParticipant(linkedParticipant)} />);
+	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
+
+	expect(
+		await screen.findByText(
+			"外部サービスのレート制限中です。時間をおいて再試行してください。",
+		),
+	).toBeTruthy();
+	expect(
+		screen.getByText("プロフィールURLを取得できませんでした。"),
+	).toBeTruthy();
+	expect(screen.getByText("src-one")).toBeTruthy();
+	expect(screen.getByText("twitch-one")).toBeTruthy();
+
+	const srcRow = screen.getByText("src-one").parentElement!;
+	fireEvent.click(within(srcRow).getByRole("button", {name: "再試行"}));
+	expect(
+		await within(srcRow).findByRole("link", {name: "src-one"}),
+	).toBeTruthy();
+	expect(
+		screen.queryByText(
+			"外部サービスのレート制限中です。時間をおいて再試行してください。",
+		),
+	).toBeNull();
+	// The unrelated account keeps its own failure and retry.
+	expect(
+		screen.getByText("プロフィールURLを取得できませんでした。"),
+	).toBeTruthy();
+	expect(screen.getByRole("button", {name: "再試行"})).toBeTruthy();
+});
+
 it("closes the Game Mapping editor after a successful save", async () => {
 	const games: GameMappingRecord[] = [];
 	sendMessage.mockImplementation(
