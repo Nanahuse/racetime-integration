@@ -56,7 +56,9 @@ export class MappingService {
 		private readonly createRepository: (
 			settings: Settings,
 		) => MappingsRepository | null,
-		private readonly onSettingsChanged: (state: SettingsState) => void = () => {},
+		private readonly onSettingsChanged: (
+			state: SettingsState,
+		) => void = () => {},
 	) {
 		this.state = structuredClone(initial);
 		this.repository = createRepository(this.state.settings);

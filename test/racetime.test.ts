@@ -198,10 +198,11 @@ describe("HTTP boundary", () => {
 			canonicalUrl: "http://localhost:8000/smw/dazzling-geralt-2972",
 			categorySlug: "smw",
 			raceSlug: "dazzling-geralt-2972",
-			dataUrl:
-				"http://localhost:8000/smw/dazzling-geralt-2972/data",
+			dataUrl: "http://localhost:8000/smw/dazzling-geralt-2972/data",
 		});
-		expect(() => canonicalizeRaceUrl("http://localhost:8000/game/race")).toThrow();
+		expect(() =>
+			canonicalizeRaceUrl("http://localhost:8000/game/race"),
+		).toThrow();
 		expect(() =>
 			canonicalizeRaceUrl("http://localhost:8001/game/race", origins),
 		).toThrow();
@@ -231,9 +232,9 @@ describe("HTTP boundary", () => {
 		expect(resolveWebSocketUrl("/ws/race/test", local)).toBe(
 			"ws://localhost:8000/ws/race/test",
 		);
-		expect(
-			resolveWebSocketUrl("ws://localhost:8000/ws/race/test", local),
-		).toBe("ws://localhost:8000/ws/race/test");
+		expect(resolveWebSocketUrl("ws://localhost:8000/ws/race/test", local)).toBe(
+			"ws://localhost:8000/ws/race/test",
+		);
 		for (const input of [
 			"ws://localhost:8001/ws/race/test",
 			"ws://evil.test/ws/race/test",

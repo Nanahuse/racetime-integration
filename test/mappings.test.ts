@@ -552,16 +552,15 @@ it("saves non-spreadsheet settings without recreating or validating sheets", asy
 	const next = await service.update(
 		{
 			...initial.settings,
-			allowedRaceOrigins: [
-				"https://racetime.gg",
-				"http://localhost:8000",
-			],
+			allowedRaceOrigins: ["https://racetime.gg", "http://localhost:8000"],
 		},
 		5,
 	);
 	expect(next).toMatchObject({
 		revision: 6,
-		settings: {allowedRaceOrigins: ["https://racetime.gg", "http://localhost:8000"]},
+		settings: {
+			allowedRaceOrigins: ["https://racetime.gg", "http://localhost:8000"],
+		},
 	});
 	expect(createRepository).not.toHaveBeenCalled();
 	expect(listGames).not.toHaveBeenCalled();

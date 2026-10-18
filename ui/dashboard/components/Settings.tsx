@@ -236,8 +236,7 @@ export function Settings({
 			const spreadsheetChanged =
 				baseline.settings.spreadsheetId !== input.spreadsheetId ||
 				baseline.settings.gameMappingsSheet !== input.gameMappingsSheet ||
-				baseline.settings.categoryMappingsSheet !==
-					input.categoryMappingsSheet;
+				baseline.settings.categoryMappingsSheet !== input.categoryMappingsSheet;
 			if (!spreadsheetChanged) {
 				setValidation((current) => (current === "ok" ? "ok" : "unknown"));
 				setMessage("保存しました。Spreadsheet接続の確認は行っていません。");

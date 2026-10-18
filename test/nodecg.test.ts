@@ -583,7 +583,10 @@ it("rejects invalid allowed origins without updating Settings", async () => {
 		});
 		expect(await api.request("getSettings", undefined)).toMatchObject({
 			ok: true,
-			data: {revision: 0, settings: {allowedRaceOrigins: ["https://racetime.gg"]}},
+			data: {
+				revision: 0,
+				settings: {allowedRaceOrigins: ["https://racetime.gg"]},
+			},
 		});
 	}
 	const [api] = loadExtension();
@@ -599,13 +602,23 @@ it("rejects invalid allowed origins without updating Settings", async () => {
 			},
 			expectedRevision: 0,
 		}),
-	).toMatchObject({ok: true, data: {revision: 1, settings: {allowedRaceOrigins: []}}});
+	).toMatchObject({
+		ok: true,
+		data: {revision: 1, settings: {allowedRaceOrigins: []}},
+	});
 });
 
 it("uses the current allowlist for get, fetch, watch and force-unwatch requests", async () => {
 	const [api] = loadExtension();
-	for (const operation of ["getRace", "fetchRace", "watchRace", "forceUnwatchRace"] as const) {
-		expect(await api.request(operation, {url: "http://localhost:8000/game/race"})).toMatchObject({
+	for (const operation of [
+		"getRace",
+		"fetchRace",
+		"watchRace",
+		"forceUnwatchRace",
+	] as const) {
+		expect(
+			await api.request(operation, {url: "http://localhost:8000/game/race"}),
+		).toMatchObject({
 			ok: false,
 			error: {code: "invalid_url"},
 		});

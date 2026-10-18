@@ -35,7 +35,9 @@ export function canonicalizeRaceUrl(
 		origins = normalizeAllowedRaceOrigins(allowedOrigins);
 	} catch (cause) {
 		throw new InvalidRaceUrlError(
-			cause instanceof Error ? cause.message : "Invalid allowed RaceTime origins.",
+			cause instanceof Error
+				? cause.message
+				: "Invalid allowed RaceTime origins.",
 		);
 	}
 	if (!origins.includes(parsed.origin))
@@ -69,7 +71,10 @@ export function canonicalizeRaceUrl(
 }
 
 /** Resolve the server-provided WebSocket URL and bind it to the race origin. */
-export function resolveWebSocketUrl(raw: string, raceUrl = RACETIME_ORIGIN): string {
+export function resolveWebSocketUrl(
+	raw: string,
+	raceUrl = RACETIME_ORIGIN,
+): string {
 	let base: URL;
 	let parsed: URL;
 	try {
@@ -79,7 +84,9 @@ export function resolveWebSocketUrl(raw: string, raceUrl = RACETIME_ORIGIN): str
 		throw new RaceTimeWebSocketError(`"${raw}" is not a valid WebSocket URL.`);
 	}
 	if (parsed.username || parsed.password)
-		throw new RaceTimeWebSocketError("WebSocket URL cannot contain credentials.");
+		throw new RaceTimeWebSocketError(
+			"WebSocket URL cannot contain credentials.",
+		);
 	if (parsed.hostname !== base.hostname || parsed.port !== base.port)
 		throw new RaceTimeWebSocketError(
 			"WebSocket URL must use the race's host and port.",

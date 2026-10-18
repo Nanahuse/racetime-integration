@@ -8,13 +8,13 @@ import {
 	DEFAULT_LEADERBOARD_TOP,
 	DEFAULT_MAX_RESOLVED_MAPPINGS,
 	eventMessageName,
+	normalizeAllowedRaceOrigins,
 	OPERATIONS,
 	operationMessageName,
 	RACES_REPLICANT,
 	type RacesState,
 	type RaceTimeAPI,
 	SETTINGS_REPLICANT,
-	normalizeAllowedRaceOrigins,
 	type SettingsState,
 } from "@nanahuse/racetime-protocol";
 import type NodeCG from "@nodecg/types";
@@ -95,10 +95,7 @@ export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 			typeof settings.value.settings === "object"
 				? settings.value.settings
 				: null;
-		if (
-			storedSettings &&
-			Object.hasOwn(storedSettings, "allowedRaceOrigins")
-		) {
+		if (storedSettings && Object.hasOwn(storedSettings, "allowedRaceOrigins")) {
 			try {
 				normalizeAllowedRaceOrigins(storedSettings.allowedRaceOrigins);
 			} catch {

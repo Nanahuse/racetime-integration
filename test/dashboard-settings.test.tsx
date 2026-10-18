@@ -98,10 +98,7 @@ it("adds and saves a normalized RaceTime origin without checking the spreadsheet
 		revision: 1,
 		settings: {
 			...initial.settings,
-			allowedRaceOrigins: [
-				"https://racetime.gg",
-				"http://localhost:8000",
-			],
+			allowedRaceOrigins: ["https://racetime.gg", "http://localhost:8000"],
 		},
 	};
 	updateResult = () => ({ok: true, data: next});
@@ -119,16 +116,15 @@ it("adds and saves a normalized RaceTime origin without checking the spreadsheet
 	);
 	fireEvent.click(screen.getByRole("button", {name: "保存"}));
 	expect(
-		await screen.findByText("保存しました。Spreadsheet接続の確認は行っていません。"),
+		await screen.findByText(
+			"保存しました。Spreadsheet接続の確認は行っていません。",
+		),
 	).toBeTruthy();
 	expect(sendMessage).toHaveBeenCalledWith(
 		"racetime.v4.updateSettings",
 		expect.objectContaining({
 			settings: expect.objectContaining({
-				allowedRaceOrigins: [
-					"https://racetime.gg",
-					"http://localhost:8000",
-				],
+				allowedRaceOrigins: ["https://racetime.gg", "http://localhost:8000"],
 			}),
 		}),
 	);
@@ -153,7 +149,9 @@ it("allows deleting the default origin and saving an empty allowlist", async () 
 	);
 	fireEvent.click(screen.getByRole("button", {name: "保存"}));
 	expect(
-		await screen.findByText("保存しました。Spreadsheet接続の確認は行っていません。"),
+		await screen.findByText(
+			"保存しました。Spreadsheet接続の確認は行っていません。",
+		),
 	).toBeTruthy();
 	expect(sendMessage).toHaveBeenCalledWith(
 		"racetime.v4.updateSettings",
@@ -194,7 +192,9 @@ it("keeps the edited origins when saving fails", async () => {
 	fireEvent.click(screen.getByRole("button", {name: "追加"}));
 	fireEvent.click(screen.getByRole("button", {name: "保存"}));
 	expect(await screen.findByText("http://localhost:8000")).toBeTruthy();
-	expect(await screen.findByRole("button", {name: "最新設定を採用"})).toBeTruthy();
+	expect(
+		await screen.findByRole("button", {name: "最新設定を採用"}),
+	).toBeTruthy();
 });
 
 it("shows 利用可能 only after a validated save and reverts to 未確認 when edited", async () => {
@@ -229,7 +229,9 @@ it("does not claim validation when the spreadsheet is disabled", async () => {
 	render(<Settings />);
 	await screen.findByText("未設定");
 	fireEvent.click(screen.getByRole("button", {name: "保存"}));
-	expect(await screen.findByText(/Spreadsheet接続の確認は行っていません/)).toBeTruthy();
+	expect(
+		await screen.findByText(/Spreadsheet接続の確認は行っていません/),
+	).toBeTruthy();
 	expect(screen.getByText("未設定")).toBeTruthy();
 	expect(screen.queryByText(/両シートを確認しました/)).toBeNull();
 });

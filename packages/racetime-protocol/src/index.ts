@@ -90,7 +90,9 @@ export function normalizeAllowedRaceOrigin(value: unknown): string {
 		parsed.protocol === "http:" &&
 		!new Set(["localhost", "127.0.0.1", "[::1]"]).has(parsed.hostname)
 	)
-		throw new TypeError("HTTPを許可できるのはlocalhostまたはループバックIPだけです。");
+		throw new TypeError(
+			"HTTPを許可できるのはlocalhostまたはループバックIPだけです。",
+		);
 	return parsed.origin;
 }
 

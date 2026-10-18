@@ -5,6 +5,7 @@ import {
 	DEFAULT_LEADERBOARD_TOP,
 	DEFAULT_MAX_RESOLVED_MAPPINGS,
 	type GameMapping,
+	normalizeAllowedRaceOrigins,
 	type Operations,
 	type RaceTimeAPI,
 	type Response,
@@ -15,7 +16,6 @@ import {
 	supportsAnySelection,
 	type TimingMethod,
 	type VariableSelection,
-	normalizeAllowedRaceOrigins,
 } from "@nanahuse/racetime-protocol";
 import {IntegrationError} from "./errors";
 import {RaceTimeError} from "./integrations/racetime/errors";
