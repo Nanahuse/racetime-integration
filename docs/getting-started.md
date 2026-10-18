@@ -7,7 +7,7 @@
 - NodeCG 2.8
 - Node.js 24
 - pnpm 12.9.1
-- Player Manager 3.0.0以上を同じNodeCGに配置
+- Player Manager 3.xを同じNodeCGに配置
 
 ## 配置とビルド
 
@@ -26,7 +26,7 @@
 
 4. Player Manager（`player-manager`）を同じNodeCGの`bundles`に配置します。`racetime-integration`は`bundleDependencies`でPlayer Managerの読込み順を指定しています。
 
-5. NodeCGを起動します。
+5. NodeCG本体のディレクトリへ移動して起動します。`pnpm install`と`pnpm build`はバンドルのディレクトリで実行しますが、`nodecg start`はNodeCG本体のディレクトリで実行します。
 
    ```sh
    nodecg start

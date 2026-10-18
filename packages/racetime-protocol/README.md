@@ -235,7 +235,7 @@ nodecg.listenFor(
 
 `initializeSpreadsheet`は指定されたSpreadsheetへ`GameMappings`と`CategoryMappings`のワークシートを準備します。不足シートは作成（`created`）、空シートにはヘッダーを設定（`initialized`）し、正常な既存シートは変更しません（`unchanged`）。不正な既存データがある場合は変更せずエラーを返します。初期化はSettingsを永続化せず、`settingsRevision`も変更しません。保存前に利用者が明示的に接続先を確定してください。
 
-設定は`{spreadsheetId: string | null, gameMappingsSheet: string, categoryMappingsSheet: string, maxResolvedMappings: number, leaderboardTop: number}`です。spreadsheetIdがnullなら無効化します。`maxResolvedMappings`と`leaderboardTop`は1以上の安全な整数（初期値20）で、0以下・小数・負数・NaN・Infinity・数値以外・安全な整数範囲外は拒否します。どちらかを持たない既存の永続化済み設定は、他の値とrevisionを変更せずに20を補完して読み込みます。updateSettingsは両シートを読込み・検証してから切替え、失敗時は旧設定を保持します。`SETTINGS_REPLICANT`（racetime-settings）へ永続化されます。`allowedRaceOrigins`はRaceTime URLの接続許可先で、初期値は`["https://racetime.gg"]`です。設定ReplicantとレースReplicantは参照専用として扱い、変更にはAPIを使ってください。
+設定は`{spreadsheetId: string | null, gameMappingsSheet: string, categoryMappingsSheet: string, allowedRaceOrigins: string[], maxResolvedMappings: number, leaderboardTop: number}`です。spreadsheetIdがnullなら無効化します。`maxResolvedMappings`と`leaderboardTop`は1以上の安全な整数（初期値20）で、0以下・小数・負数・NaN・Infinity・数値以外・安全な整数範囲外は拒否します。どちらかを持たない既存の永続化済み設定は、他の値とrevisionを変更せずに20を補完して読み込みます。updateSettingsは両シートを読込み・検証してから切替え、失敗時は旧設定を保持します。`SETTINGS_REPLICANT`（racetime-settings）へ永続化されます。`allowedRaceOrigins`はRaceTime URLの接続許可先で、初期値は`["https://racetime.gg"]`です。設定ReplicantとレースReplicantは参照専用として扱い、変更にはAPIを使ってください。
 
 ## Speedrun.com検索
 

@@ -71,9 +71,17 @@ Extension（`src/extension/index.ts`）が、外部との接続を持つ各サ�
 
 ## Settingsの復旧
 
-保存済みの`racetime-settings`が不正な場合は、Extensionはマウントを失敗させず、既定設定（`revision: 0`、`spreadsheetId: null`、`gameMappingsSheet: "GameMappings"`、`categoryMappingsSheet: "CategoryMappings"`、`maxResolvedMappings: 20`、`leaderboardTop: 20`、`allowedRaceOrigins: ["https://racetime.gg"]`）へ初期化して永続化し、警告を記録して起動を続けます。
+保存済みの`racetime-settings`が設定検証に失敗した場合は、次のように扱います。
 
-`maxResolvedMappings`、`leaderboardTop`、`allowedRaceOrigins`を持たない既存設定は、他の項目とrevisionを変更せずに初期値を補完して読み込みます。項目は存在するが値が不正な場合は、通常の設定検証で拒否します。この復旧はSpreadsheetの内容を変更しません。
+- 保存済みの`allowedRaceOrigins`が存在し、その値が不正なときは復旧せず、起動エラーになります。
+- それ以外の検証エラー（`invalid_input`）では、既定設定へ初期化して永続化し、警告を記録して起動を続けます。
+- 検証エラー以外の例外はそのまま送出し、マウントは失敗します。
+
+復旧に使う既定設定は`cfg/racetime-integration.json`を反映します。`spreadsheetId`は`cfg`の値、または未指定なら`null`、`gameMappingsSheet`と`categoryMappingsSheet`は`cfg`の値、または`GameMappings`と`CategoryMappings`です。`allowedRaceOrigins`は`["https://racetime.gg"]`、`maxResolvedMappings`と`leaderboardTop`は20、`revision`は0です。このため、復旧後の`spreadsheetId`が必ず`null`になるとは限りません。
+
+保存済み設定が有効でも、`maxResolvedMappings`、`leaderboardTop`、`allowedRaceOrigins`のいずれかが欠落している場合は、他の値とrevisionを保ったまま既定値で補完します。
+
+この復旧はSpreadsheetの内容を変更しません。
 
 ## 既知の制約
 

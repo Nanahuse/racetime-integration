@@ -17,7 +17,7 @@ NodeCG向けのRaceTime連携バンドルです。RaceTimeのレース情報をN
 - NodeCG 2.8
 - Node.js 24
 - pnpm 12.9.1
-- Player Manager 3.0.0以上（同じNodeCGに配置）
+- Player Manager 3.x（同じNodeCGに配置）
 
 ## 導入
 
