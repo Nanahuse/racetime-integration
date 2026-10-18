@@ -6,6 +6,8 @@ export type BrowserReplicant<T> = {
 
 export type DashboardNodeCG = {
 	Replicant<T>(name: string): BrowserReplicant<T>;
+	listenFor<T>(name: string, bundle: string, handler: (data: T) => void): void;
+	unlisten<T>(name: string, bundle: string, handler: (data: T) => void): void;
 	sendMessage<T>(name: string, data?: unknown): Promise<T>;
 	sendMessageToBundle<T>(
 		name: string,
