@@ -131,17 +131,15 @@ export function useAccountProfileUrl(accountId: string | null): {
 		() => (accountId ? (states.get(accountId) ?? null) : null),
 	);
 	const stateKind = state?.state;
-	const fetchedAt = state?.fetchedAt ?? null;
 	useEffect(() => {
 		if (!accountId) return;
-		const current = states.get(accountId);
-		if (!current) {
+		if (state === null) {
 			requestAccountProfileUrl(accountId);
 			return;
 		}
-		if (current.state !== "ready" || current.fetchedAt === null) return;
+		if (stateKind !== "ready" || state.fetchedAt === null) return;
 		const remaining =
-			ACCOUNT_PROFILE_URL_TTL_MS - (Date.now() - current.fetchedAt);
+			ACCOUNT_PROFILE_URL_TTL_MS - (Date.now() - state.fetchedAt);
 		if (remaining <= 0) {
 			requestAccountProfileUrl(accountId);
 			return;
@@ -151,7 +149,7 @@ export function useAccountProfileUrl(accountId: string | null): {
 			remaining,
 		);
 		return () => clearTimeout(timer);
-	}, [accountId, stateKind, fetchedAt]);
+	}, [accountId, stateKind, state]);
 	const retry = useCallback(() => {
 		if (!accountId) return;
 		states.delete(accountId);
