@@ -3,6 +3,7 @@ import {createRequire} from "node:module";
 import {
 	OPERATIONS,
 	operationMessageName,
+	type RacesState,
 	type RaceTimeAPI,
 	SETTINGS_REPLICANT,
 	type SettingsState,
@@ -39,7 +40,13 @@ class FakeReplicant {
 
 function loadExtension(
 	stored?: SettingsState,
-): [RaceTimeAPI, Map<string, FakeReplicant>, ReturnType<typeof vi.fn>] {
+): [
+	RaceTimeAPI,
+	Map<string, FakeReplicant>,
+	ReturnType<typeof vi.fn>,
+	Map<string, Handler>,
+	() => void,
+] {
 	const handlers = new Map<string, Handler>();
 	const events = new Map<string, () => void>();
 	const replicants = new Map<string, FakeReplicant>();
@@ -76,10 +83,243 @@ function loadExtension(
 	const extension = createRequire(import.meta.url)("../extension/index.js") as (
 		nodecg: unknown,
 	) => RaceTimeAPI;
-	return [extension(nodecg), replicants, warn];
+	return [
+		extension(nodecg),
+		replicants,
+		warn,
+		handlers,
+		() => events.get("serverStopping")!(),
+	];
 }
 
 afterEach(() => vi.unstubAllGlobals());
+
+it("force-releases all watches through the NodeCG message API and publishes the remaining list", async () => {
+	const sockets: FakeSocket[] = [];
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async () => Response.json(payload())),
+	);
+	vi.stubGlobal(
+		"WebSocket",
+		class extends FakeSocket {
+			constructor() {
+				super();
+				sockets.push(this);
+			}
+		},
+	);
+	const [api, replicants, , handlers, stop] = loadExtension();
+	const message = (input: unknown) =>
+		new Promise((resolve) =>
+			handlers.get(operationMessageName("forceUnwatchRace"))!(
+				input,
+				(_error, result) => resolve(result),
+			),
+		);
+	try {
+		const first = await api.request("watchRace", {url});
+		const second = await api.request("watchRace", {url});
+		if (!first.ok || !second.ok) throw new Error("Initial watch failed");
+		for (const input of [
+			{url: 42},
+			{url: ""},
+			{url: null},
+			{url: "x".repeat(2049)},
+			{},
+		]) {
+			expect(await message(input)).toMatchObject({
+				ok: false,
+				error: {code: "invalid_input"},
+			});
+		}
+		expect(await message({url: "https://example.com/game/race"})).toMatchObject(
+			{ok: false, error: {code: "invalid_url"}},
+		);
+		expect(await message({url: `  ${url}/?x=1#chat  `})).toEqual({
+			ok: true,
+			data: {released: true, releasedWatches: 2},
+		});
+		expect(replicants.get("racetime-races")!.stored()).toEqual({
+			schemaVersion: 1,
+			races: [],
+		});
+		expect(await api.request("getRace", {url})).toEqual({ok: true, data: null});
+		for (const watch of [first.data, second.data]) {
+			expect(await api.request("getWatch", {watchId: watch.watchId})).toEqual({
+				ok: true,
+				data: null,
+			});
+			expect(
+				await api.request("unwatchRace", {watchId: watch.watchId}),
+			).toEqual({ok: true, data: {released: false}});
+		}
+		expect(await api.request("listRaces", undefined)).toEqual({
+			ok: true,
+			data: {schemaVersion: 1, races: []},
+		});
+		expect(await message({url})).toEqual({
+			ok: true,
+			data: {released: false, releasedWatches: 0},
+		});
+		expect(sockets[0]!.close).toHaveBeenCalledOnce();
+		expect(await api.request("watchRace", {url})).toMatchObject({
+			ok: true,
+			data: {state: {race: {raceId: "game/race"}}},
+		});
+	} finally {
+		stop();
+	}
+});
+
+it("publishes identical ISO race models through direct requests, messages and Replicants, including watch updates and failures", async () => {
+	const sockets: FakeSocket[] = [];
+	const fetchImpl = vi
+		.fn<typeof fetch>()
+		.mockImplementation(async () => Response.json(payload()));
+	vi.stubGlobal("fetch", fetchImpl);
+	vi.stubGlobal(
+		"WebSocket",
+		class extends FakeSocket {
+			constructor() {
+				super();
+				sockets.push(this);
+			}
+		},
+	);
+	const handlers = new Map<string, Handler>();
+	const events = new Map<string, () => void>();
+	const replicants = new Map<string, FakeReplicant>();
+	const extension = createRequire(import.meta.url)("../extension/index.js") as (
+		nodecg: unknown,
+	) => RaceTimeAPI;
+	const api = extension({
+		bundleConfig: {},
+		extensions: {},
+		log: {warn: vi.fn(), info: vi.fn(), error: vi.fn()},
+		once: (name: string, callback: () => void) => events.set(name, callback),
+		unlisten: vi.fn(),
+		Replicant: (name: string, options: {defaultValue: unknown}) => {
+			const replicant = new FakeReplicant(options.defaultValue);
+			replicants.set(name, replicant);
+			return replicant;
+		},
+		listenFor: (
+			name: string,
+			bundleOrHandler: string | Handler,
+			handler?: Handler,
+		) => {
+			handlers.set(
+				name,
+				typeof bundleOrHandler === "function" ? bundleOrHandler : handler!,
+			);
+		},
+	});
+	try {
+		const fetched = await api.request("fetchRace", {url});
+		const watched = await api.request("watchRace", {url});
+		if (!fetched.ok || !watched.ok) throw new Error("Race fetch failed");
+		await flush();
+		const initial = fetched.data.race;
+		expect(watched.data.state.race).toEqual(initial);
+		const assertPublished = async (race: typeof initial) => {
+			expect(await api.request("getRace", {url})).toMatchObject({
+				ok: true,
+				data: {race},
+			});
+			expect(
+				await api.request("getWatch", {watchId: watched.data.watchId}),
+			).toMatchObject({ok: true, data: {race}});
+			expect(await api.request("listRaces", undefined)).toMatchObject({
+				ok: true,
+				data: {schemaVersion: 1, races: [{race}]},
+			});
+			const message = await new Promise((resolve) =>
+				handlers.get(operationMessageName("getRace"))!(
+					{url},
+					(_error, response) => resolve(response),
+				),
+			);
+			expect(message).toEqual(await api.request("getRace", {url}));
+			const stored = replicants.get("racetime-races")!.stored() as RacesState;
+			expect(stored.races[0]?.race).toEqual(race);
+			expect(stored).toEqual(JSON.parse(JSON.stringify(stored)));
+		};
+		await assertPublished(initial);
+		const fetchMessage = await new Promise((resolve) =>
+			handlers.get(operationMessageName("fetchRace"))!(
+				{url},
+				(_error, response) => resolve(response),
+			),
+		);
+		expect(fetchMessage).toMatchObject({ok: true, data: {race: initial}});
+		sockets[0]!.open();
+		await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(4));
+		await flush();
+		const updatedPayload = {
+			...payload(2, "race", "finished"),
+			info: "Updated details",
+			recorded: true,
+			recordable: true,
+			time_limit_auto_complete: true,
+			entrants: [
+				{
+					...payload().entrants[0],
+					finish_time: "PT1.123456789S",
+					finished_at: "2026-01-01T10:00:00.123456789+09:00",
+				},
+			],
+		};
+		fetchImpl.mockImplementation(async () => Response.json(updatedPayload));
+		sockets[0]!.message('{"type":"race.data"}');
+		await vi.waitFor(async () =>
+			expect(await api.request("getRace", {url})).toMatchObject({
+				ok: true,
+				data: {race: {version: 2}},
+			}),
+		);
+		const updated = await api.request("getRace", {url});
+		if (!updated.ok || !updated.data?.race)
+			throw new Error("Missing updated race");
+		const race = updated.data.race;
+		expect(race).toMatchObject({
+			info: "Updated details",
+			endedAt: "2026-01-01T02:00:00Z",
+			recorded: true,
+			recordable: true,
+			timeLimitAutoComplete: true,
+			entrants: [
+				{
+					finishTime: "PT1.123456789S",
+					finishedAt: "2026-01-01T01:00:00.123456789Z",
+				},
+			],
+			results: [
+				{time: "PT1.123456789S", finishedAt: "2026-01-01T01:00:00.123456789Z"},
+			],
+		});
+		await assertPublished(race);
+		fetchImpl.mockImplementation(async () =>
+			Response.json({...updatedPayload, opened_at: "invalid"}),
+		);
+		sockets[0]!.message('{"type":"race.data"}');
+		await vi.waitFor(async () =>
+			expect(await api.request("getRace", {url})).toMatchObject({
+				ok: true,
+				data: {connection: "reconnecting"},
+			}),
+		);
+		await assertPublished(race);
+		expect(await api.request("fetchRace", {url})).toMatchObject({
+			ok: false,
+			error: {code: "invalid_payload"},
+		});
+		await assertPublished(race);
+	} finally {
+		events.get("serverStopping")!();
+	}
+});
+
 it("loads the built extension, subscribes to the v3 event, and refreshes its public Player snapshot", async () => {
 	const extension = createRequire(import.meta.url)("../extension/index.js") as (
 		nodecg: unknown,
@@ -245,7 +485,8 @@ it("exports the protocol from ESM and CommonJS without server dependencies", () 
     import {createRequire} from 'node:module'; import * as esm from '@nanahuse/racetime-protocol';
     const cjs = createRequire(import.meta.url)('@nanahuse/racetime-protocol');
     assert.deepEqual(Object.keys(esm).sort(), Object.keys(cjs).sort()); assert.equal(esm.API_VERSION, cjs.API_VERSION);
-    assert.equal(cjs.operationMessageName('watchRace'), 'racetime.v4.watchRace');`,
+    assert.equal(cjs.operationMessageName('watchRace'), 'racetime.v4.watchRace');
+    assert.equal(cjs.eventMessageName('entrantFinished'), 'racetime.v4.entrantFinished');`,
 		],
 		{cwd: process.cwd()},
 	);

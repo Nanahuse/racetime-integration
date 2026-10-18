@@ -1,5 +1,17 @@
 import {expect, it} from "vitest";
-import {formatRaceTime} from "../ui/dashboard/model/race-time";
+import {
+	formatRaceInstant,
+	formatRaceTime,
+} from "../ui/dashboard/model/race-time";
+
+it("formats an offset timestamp in the environment's local timezone", () => {
+	const expected = new Intl.DateTimeFormat(undefined, {
+		dateStyle: "medium",
+		timeStyle: "long",
+	}).format(Date.UTC(2026, 0, 1, 18, 4, 5));
+	expect(formatRaceInstant("2026-01-02T03:04:05+09:00")).toBe(expected);
+	expect(formatRaceInstant(null)).toBe("未設定");
+});
 
 it.each([
 	["PT1H2M3.45S", "1:02:03.45"],

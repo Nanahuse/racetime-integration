@@ -27,6 +27,14 @@ export type {
 	VariableSelection,
 } from "./category.js";
 export {
+	parseRaceDate,
+	parseRaceInstant,
+	type RaceDate,
+	type RaceInstant,
+	serializeRaceDate,
+	serializeRaceInstant,
+} from "./datetime.js";
+export {
 	parseRaceDuration,
 	type RaceDuration,
 	serializeRaceDuration,
@@ -72,8 +80,51 @@ export type RaceResult = {
 	 * a `Temporal.Duration`.
 	 */
 	time: string | null;
+	/** Absolute finish timestamp in UTC, distinct from the elapsed time. */
+	finishedAt: string | null;
 	status: "finished" | "dnf" | "dq" | "other";
 };
+export type FinishedRaceResult = RaceResult & {
+	status: "finished";
+	time: string;
+	finishedAt: string;
+};
+export type RaceTimeEvents = {
+	raceStartScheduled: {
+		raceId: string;
+		url: string;
+		raceVersion: number;
+		startedAt: string;
+		previousStartedAt: string | null;
+	};
+	raceStarted: {
+		raceId: string;
+		url: string;
+		raceVersion: number;
+		startedAt: string;
+	};
+	entrantFinished: {
+		raceId: string;
+		url: string;
+		raceVersion: number;
+		result: FinishedRaceResult;
+	};
+	entrantFinishUndone: {
+		raceId: string;
+		url: string;
+		raceVersion: number;
+		userId: string;
+	};
+	raceCancelled: {
+		raceId: string;
+		url: string;
+		raceVersion: number;
+		cancelledAt: string;
+	};
+};
+export const eventMessageName = <K extends keyof RaceTimeEvents>(
+	event: K,
+): `racetime.v4.${K}` => `${MESSAGE_PREFIX}.${event}`;
 export type Entrant = {
 	userId: string;
 	name: string;
@@ -85,6 +136,8 @@ export type Entrant = {
 	 * matching `RaceResult.time`; use `parseRaceDuration` to restore it.
 	 */
 	finishTime: string | null;
+	/** Same UTC timestamp as the matching RaceResult.finishedAt. */
+	finishedAt: string | null;
 	place: number | null;
 };
 export type Race = {
@@ -93,6 +146,23 @@ export type Race = {
 	version: number;
 	name: string;
 	status: string;
+	/** Absolute timestamps serialized as ISO 8601 UTC strings. */
+	openedAt: string;
+	startedAt: string | null;
+	endedAt: string | null;
+	cancelledAt: string | null;
+	/** Countdown and maximum elapsed race time as ISO 8601 durations. */
+	startDelay: string;
+	timeLimit: string;
+	info: string;
+	ranked: boolean;
+	recordable: boolean;
+	recorded: boolean;
+	timeLimitAutoComplete: boolean;
+	/** Provider counts, including entrants omitted from the entrant list. */
+	entrantsCount: number;
+	entrantsCountFinished: number;
+	entrantsCountInactive: number;
 	category: {slug: string; name: string; goal: string};
 	entrants: Entrant[];
 	results: RaceResult[];
@@ -194,7 +264,9 @@ export type SpeedrunPlayer =
 export type SpeedrunRun = {
 	runId: string;
 	url: string;
+	/** Validated elapsed time as an ISO 8601 duration. */
 	time: string;
+	/** Validated ISO 8601 date without a time or timezone. */
 	date: string | null;
 	players: SpeedrunPlayer[];
 };
@@ -243,6 +315,10 @@ export type Operations = {
 		response: {watchId: string; state: RaceState & {race: Race}};
 	};
 	unwatchRace: {request: {watchId: string}; response: {released: boolean}};
+	forceUnwatchRace: {
+		request: {url: string};
+		response: {released: boolean; releasedWatches: number};
+	};
 	getRace: {request: {url: string}; response: RaceState | null};
 	getWatch: {request: {watchId: string}; response: RaceState | null};
 	listRaces: {request: undefined; response: RacesState};
@@ -344,6 +420,7 @@ export const OPERATIONS = [
 	"fetchRace",
 	"watchRace",
 	"unwatchRace",
+	"forceUnwatchRace",
 	"getRace",
 	"getWatch",
 	"listRaces",

@@ -1,7 +1,18 @@
 import {
 	parseRaceDuration,
+	parseRaceInstant,
 	type RaceDuration,
 } from "@nanahuse/racetime-protocol";
+
+/** Displays absolute timestamps in the viewer's local timezone. */
+export function formatRaceInstant(value: string | null): string {
+	const instant = parseRaceInstant(value);
+	if (instant === null) return "未設定";
+	return new Intl.DateTimeFormat(undefined, {
+		dateStyle: "medium",
+		timeStyle: "long",
+	}).format(instant.epochMilliseconds);
+}
 
 function fraction(duration: RaceDuration): string {
 	const digits =

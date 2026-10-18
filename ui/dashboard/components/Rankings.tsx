@@ -4,7 +4,7 @@ import type {
 } from "@nanahuse/racetime-protocol";
 import {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import {errorMessage, request} from "../api/client";
-import {formatRaceTime} from "../model/race-time";
+import {formatRaceInstant, formatRaceTime} from "../model/race-time";
 import {Callout} from "./common";
 
 function mappingId(record: CategoryMappingRecord): string {
@@ -138,7 +138,7 @@ export function Rankings() {
 				<p className='muted'>
 					{selectedResult.state}
 					{selectedResult.boards[0]
-						? ` · 最終取得 ${new Date(selectedResult.boards[0].fetchedAt).toLocaleString()}`
+						? ` · 最終取得 ${formatRaceInstant(selectedResult.boards[0].fetchedAt)}`
 						: ""}
 				</p>
 			)}

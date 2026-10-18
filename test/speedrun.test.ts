@@ -473,6 +473,77 @@ function personalBest(
 	};
 }
 
+function timeBoundaryClient(time: unknown, date: unknown) {
+	const pb = personalBest("precise", 3);
+	const run = {
+		...pb.run,
+		times: {primary: time, realtime_noloads: time},
+		date,
+		players: [{rel: "guest", name: "Guest"}],
+	};
+	return clientWith({
+		"/api/v1/users/u1/personal-bests": {
+			data: [{...pb, run}],
+			pagination: {size: 1, offset: 0, max: 200},
+		},
+		"/api/v1/leaderboards/g1/level/l1/c1": {
+			data: {
+				game: "g1",
+				category: "c1",
+				level: "l1",
+				platform: "p1",
+				region: "r1",
+				emulators: false,
+				timing: "realtime_noloads",
+				values: {v1: "hard"},
+				players: [{rel: "guest", name: "Guest"}],
+				runs: [{place: 3, run}],
+			},
+		},
+	}).client;
+}
+
+it.each(["2024-02-29", null])(
+	"publishes exact durations and validated dates (%s) for both PBs and leaderboards",
+	async (date) => {
+		const client = timeBoundaryClient("PT0.123456789S", date);
+		const bests = await client.getUserPersonalBests("u1", "g1");
+		const leaderboard = await client.getLeaderboard(resolvedLookup, 20);
+		expect(bests[0]).toMatchObject({time: "PT0.123456789S", date});
+		expect(leaderboard.entries[0]?.run).toMatchObject({
+			time: "PT0.123456789S",
+			date,
+		});
+		expect(bests).toEqual(JSON.parse(JSON.stringify(bests)));
+		expect(leaderboard).toEqual(JSON.parse(JSON.stringify(leaderboard)));
+		expect(leaderboard.fetchedAt).toMatch(/Z$/);
+	},
+);
+
+it.each([
+	["-PT1S", "2026-01-01"],
+	["P1Y", "2026-01-01"],
+	["P1M", "2026-01-01"],
+	["P1W", "2026-01-01"],
+	["bad", null],
+	[10, null],
+	["PT1S", "2026-02-29"],
+	["PT1S", "2026-01-01T00:00:00Z"],
+	["PT1S", "bad"],
+	["PT1S", 2026],
+])(
+	"rejects invalid SRC time/date (%s, %s) at both fetch boundaries",
+	async (time, date) => {
+		const client = timeBoundaryClient(time, date);
+		await expect(client.getUserPersonalBests("u1", "g1")).rejects.toMatchObject(
+			{code: "invalid_payload"},
+		);
+		await expect(
+			client.getLeaderboard(resolvedLookup, 20),
+		).rejects.toMatchObject({code: "invalid_payload"});
+	},
+);
+
 it("normalizes official Personal Best entries and uses game without a top filter", async () => {
 	const {client, fetchImpl} = clientWith({
 		"/api/v1/users/u1/personal-bests": {

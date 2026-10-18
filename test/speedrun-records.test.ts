@@ -4,8 +4,10 @@ import type {
 	SpeedrunRun,
 	SpeedrunVariableOption,
 } from "@nanahuse/racetime-protocol";
-import {expect, it, vi} from "vitest";
+import {afterEach, expect, it, vi} from "vitest";
 import {SpeedrunRecordService} from "../src/speedrun-records";
+
+afterEach(() => vi.useRealTimers());
 
 const source = {
 	status: "found",
@@ -134,6 +136,50 @@ it("chooses the fastest official PB across linked SRC accounts and retains SRC p
 	expect(second.status).toBe("resolved");
 	expect(speedrun.getUserPersonalBests).toHaveBeenCalledTimes(2);
 	expect(players.speedrunAccounts).toHaveBeenCalledTimes(2);
+});
+
+it.each([
+	["PT1.000000002S", "PT1.000000001S"],
+	["PT1M", "PT59.999999999S"],
+	["PT25H", "P1D"],
+])(
+	"chooses the fastest PB by duration across accounts (%s versus %s)",
+	async (slower, faster) => {
+		const {service, speedrun} = setup();
+		speedrun.getUserPersonalBests.mockImplementation(async (userId) => [
+			personalBest(
+				userId,
+				userId === "u1" ? slower : faster,
+				userId === "u1" ? 1 : 8,
+				userId,
+			),
+		]);
+		const result = await service.playerBests("race-game", "Any%", ["p1"]);
+		expect(result).toMatchObject({
+			status: "resolved",
+			results: [{players: [{srcUserId: "u2", run: {time: faster}, place: 8}]}],
+		});
+	},
+);
+
+it("keeps the five-minute PB cache and marks the last good snapshot stale after expiry and a failed reload", async () => {
+	vi.useFakeTimers();
+	vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+	const {service, speedrun} = setup();
+	const initial = await service.playerBests("race-game", "Any%", ["p1"]);
+	vi.setSystemTime(new Date("2026-01-01T00:04:59Z"));
+	await service.playerBests("race-game", "Any%", ["p1"]);
+	expect(speedrun.getUserPersonalBests).toHaveBeenCalledTimes(2);
+	vi.setSystemTime(new Date("2026-01-01T00:05:01Z"));
+	speedrun.getUserPersonalBests.mockRejectedValue(new Error("offline"));
+	const expired = await service.playerBests("race-game", "Any%", ["p1"]);
+	expect(speedrun.getUserPersonalBests).toHaveBeenCalledTimes(4);
+	if (initial.status !== "resolved" || expired.status !== "resolved")
+		throw new Error("Unresolved mapping");
+	expect(expired.results[0]?.players[0]?.run).toEqual(
+		initial.results[0]?.players[0]?.run,
+	);
+	expect(expired.stale).toBe(true);
 });
 
 it("attaches player-manager names and PBs to leaderboard players without changing SRC place", async () => {
