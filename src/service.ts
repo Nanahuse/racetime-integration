@@ -187,6 +187,26 @@ export class RaceService {
 		return {released: true, releasedWatches};
 	}
 
+	forceUnwatchClosedFinishedRaces(): {
+		releasedRaces: number;
+		releasedWatches: number;
+	} {
+		let releasedRaces = 0;
+		let releasedWatches = 0;
+		for (const session of [...this.sessions.values()]) {
+			if (
+				session.state.race?.status !== "finished" ||
+				session.state.connection !== "closed"
+			)
+				continue;
+			releasedRaces++;
+			releasedWatches += session.watches.size;
+			this.releaseSession(session, false);
+		}
+		if (releasedRaces > 0) this.publish(this.snapshot());
+		return {releasedRaces, releasedWatches};
+	}
+
 	private releaseSession(session: Session, publish = true): void {
 		for (const watchId of session.watches) this.watches.delete(watchId);
 		session.watches.clear();

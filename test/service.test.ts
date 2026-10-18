@@ -902,3 +902,58 @@ it("leaves an existing monitored race and its sockets untouched during a single 
 	expect(service.snapshot()).toEqual(before);
 	service.dispose();
 });
+
+it("bulk releases every watch of closed finished races in one publication", async () => {
+	const {service, client, sockets, publish} = setup();
+	vi.setSystemTime(new Date("2026-01-01T02:06:00Z"));
+	try {
+		client.fetchRaceDetail.mockResolvedValueOnce(dto(1, "race", "finished"));
+		const first = await service.watch(url);
+		const duplicate = await service.watch(url);
+		client.fetchRaceDetail.mockResolvedValueOnce(dto(1, "other", "finished"));
+		const second = await service.watch("https://racetime.gg/game/other");
+		client.fetchRaceDetail.mockResolvedValueOnce(dto(1, "active"));
+		const active = await service.watch("https://racetime.gg/game/active");
+		sockets.at(-1)!.open();
+		await flush();
+		const before = service.getWatch(active.watchId);
+		publish.mockClear();
+		expect(service.forceUnwatchClosedFinishedRaces()).toEqual({
+			releasedRaces: 2,
+			releasedWatches: 3,
+		});
+		expect(publish).toHaveBeenCalledExactlyOnceWith(service.snapshot());
+		for (const watch of [first, duplicate, second]) {
+			expect(service.getWatch(watch.watchId)).toBeNull();
+			expect(service.unwatch(watch.watchId)).toBe(false);
+		}
+		expect(service.getWatch(active.watchId)).toEqual(before);
+		publish.mockClear();
+		expect(service.forceUnwatchClosedFinishedRaces()).toEqual({
+			releasedRaces: 0,
+			releasedWatches: 0,
+		});
+		expect(publish).not.toHaveBeenCalled();
+	} finally {
+		service.dispose();
+	}
+});
+it("preserves finished races until the connection has closed", async () => {
+	const {service, client, sockets, publish} = setup();
+	vi.setSystemTime(new Date("2026-01-01T02:00:00Z"));
+	try {
+		client.fetchRaceDetail.mockResolvedValueOnce(dto(1, "race", "finished"));
+		const watch = await service.watch(url);
+		sockets[0]!.open();
+		for (const connection of ["connected", "reconnecting"]) {
+			if (connection === "reconnecting") sockets[0]!.fail();
+			expect(service.getWatch(watch.watchId)?.connection).toBe(connection);
+			publish.mockClear();
+			expect(service.forceUnwatchClosedFinishedRaces().releasedRaces).toBe(0);
+			expect(publish).not.toHaveBeenCalled();
+			expect(service.getWatch(watch.watchId)).not.toBeNull();
+		}
+	} finally {
+		service.dispose();
+	}
+});

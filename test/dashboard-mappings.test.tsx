@@ -723,7 +723,7 @@ it("keeps edits when a save fails", async () => {
 	expect(screen.getByRole("button", {name: /Game Mappingを保存/})).toBeTruthy();
 });
 
-it("closes the Game Mapping editor after a successful save in the manage view", async () => {
+it("keeps the Game Mapping editor open after saving in the manage view", async () => {
 	games = [gameRecord];
 	render(<Mappings />);
 	await selectFirstGame();
@@ -732,12 +732,8 @@ it("closes the Game Mapping editor after a successful save in the manage view", 
 	});
 	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
 	expect(await screen.findByText(/Game Mappingを保存しました/)).toBeTruthy();
-	await waitFor(() =>
-		expect(
-			screen.queryByRole("button", {name: /Game Mappingを保存/}),
-		).toBeNull(),
-	);
-	expect(screen.getByText(/Game Mappingを選択するか/)).toBeTruthy();
+	expect(screen.getByRole("button", {name: /Game Mappingを保存/})).toBeTruthy();
+	expect(screen.getByRole("button", {name: /新規 Goal/})).toBeTruthy();
 });
 
 it("keeps the Game Mapping editor open while Category changes are unsaved", async () => {
@@ -759,3 +755,105 @@ it("keeps the Game Mapping editor open while Category changes are unsaved", asyn
 		screen.getByRole("button", {name: /Category Mappingを保存/}),
 	).toBeTruthy();
 });
+
+async function editNewCategory() {
+	await openNewCategory();
+	await act(async () => {
+		fireEvent.change(screen.getByLabelText("SRC Category（必須）"), {
+			target: {value: "c1"},
+		});
+	});
+	await screen.findByText("このカテゴリにVariablesはありません。");
+}
+
+it("keeps Category Mapping inputs and error visible when saving fails", async () => {
+	games = [gameRecord];
+	saveCategory = () => ({
+		ok: false,
+		error: {code: "internal_error", message: "category save failed"},
+	});
+	render(<Mappings />);
+	await selectFirstGame();
+	await editNewCategory();
+	fireEvent.change(screen.getByLabelText("RaceTime Goal"), {
+		target: {value: "Edited Goal"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: /Category Mappingを保存/}));
+	expect(await screen.findByText(/category save failed/)).toBeTruthy();
+	expect(
+		(screen.getByLabelText("RaceTime Goal") as HTMLInputElement).value,
+	).toBe("Edited Goal");
+	expect(
+		(screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement).value,
+	).toBe("c1");
+	expect(
+		(
+			screen.getByRole("button", {
+				name: /Category Mappingを保存/,
+			}) as HTMLButtonElement
+		).disabled,
+	).toBe(false);
+	expect(screen.queryByText(/Category Mappingを保存しました/)).toBeNull();
+});
+
+it.each([
+	{gameDirty: false, reloadFails: false},
+	{gameDirty: true, reloadFails: false},
+	{gameDirty: false, reloadFails: true},
+	{gameDirty: true, reloadFails: true},
+])(
+	"preserves Category save success with dirtyGame=$gameDirty and reloadFailure=$reloadFails",
+	async ({gameDirty, reloadFails}) => {
+		games = [gameRecord];
+		let saved = false;
+		const handler = sendMessage.getMockImplementation()!;
+		sendMessage.mockImplementation(async (name: string, data?: unknown) => {
+			if (saved && reloadFails && /list(Game|Category)Mappings$/.test(name))
+				return {
+					ok: false,
+					error: {code: "mapping_conflict", message: "reload failed"},
+				};
+			return handler(name, data);
+		});
+		saveCategory = () => {
+			saved = true;
+			categories = [childRecord];
+			return {
+				ok: true,
+				data: {record: childRecord, action: "created", settingsRevision: 0},
+			};
+		};
+		render(<Mappings />);
+		await selectFirstGame();
+		await editNewCategory();
+		if (gameDirty)
+			fireEvent.change(screen.getByDisplayValue("Game One"), {
+				target: {value: "Unsaved Game"},
+			});
+		fireEvent.click(
+			screen.getByRole("button", {name: /Category Mappingを保存/}),
+		);
+		expect(
+			await screen.findByText("Category Mappingを保存しました。"),
+		).toBeTruthy();
+		if (reloadFails)
+			expect(await screen.findByText(/reload failed/)).toBeTruthy();
+		if (gameDirty) {
+			expect(screen.getByDisplayValue("Unsaved Game")).toBeTruthy();
+			expect(screen.getByLabelText("SRC Category（必須）")).toBeTruthy();
+			expect(
+				(
+					screen.getByRole("button", {
+						name: /Game Mappingを保存/,
+					}) as HTMLButtonElement
+				).disabled,
+			).toBe(false);
+		} else {
+			await waitFor(() =>
+				expect(screen.queryByLabelText("SRC Category（必須）")).toBeNull(),
+			);
+			expect(screen.getByText(/Game Mappingを選択するか/)).toBeTruthy();
+		}
+		expect(screen.queryByText(/他の変更と競合しました/)).toBeNull();
+	},
+);

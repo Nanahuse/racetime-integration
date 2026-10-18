@@ -751,3 +751,25 @@ it("rejects malformed official PB records instead of treating them as found", as
 		code: "invalid_payload",
 	});
 });
+
+it.each([
+	["PT12S", "PT12S"],
+	["PT12.1S", "PT12.100S"],
+	["PT12.12S", "PT12.120S"],
+	["PT12.123S", "PT12.123S"],
+	["PT12.123456S", "PT12.123456S"],
+	["PT1H2M3.45S", "PT1H2M3.450S"],
+	["PT12.0000S", "PT12.0000S"],
+	["PT90S", "PT90S"],
+])(
+	"publishes SRC %s as the preserved string %s from both APIs",
+	async (time, expected) => {
+		const client = timeBoundaryClient(time, null);
+		expect((await client.getUserPersonalBests("u1", "g1"))[0]?.time).toBe(
+			expected,
+		);
+		expect(
+			(await client.getLeaderboard(resolvedLookup, 20)).entries[0]?.run.time,
+		).toBe(expected);
+	},
+);

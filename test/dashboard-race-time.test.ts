@@ -3,6 +3,7 @@ import {
 	formatFinishTime,
 	formatRaceInstant,
 	formatRaceTime,
+	formatSpeedrunTime,
 } from "../ui/dashboard/model/race-time";
 
 it("formats an offset timestamp in the environment's local timezone", () => {
@@ -45,4 +46,18 @@ it.each([
 it("does not change the generic race time format", () => {
 	expect(formatRaceTime("PT1H2M3.456S")).toBe("1:02:03.456");
 	expect(formatRaceTime(null)).toBe("—");
+});
+
+it.each([
+	["PT12S", "0:00:12"],
+	["PT12.100S", "0:00:12.100"],
+	["PT1M2.030S", "0:01:02.030"],
+	["PT1H2M3.450S", "1:02:03.450"],
+	["PT12H3M4.123456S", "12:03:04.123456"],
+	["PT59.999999999S", "0:00:59.999999999"],
+	["PT90S", "PT90S"],
+	["PT90M", "PT90M"],
+	["P1DT2H", "P1DT2H"],
+])("displays SRC %s as %s without normalizing", (time, expected) => {
+	expect(formatSpeedrunTime(time)).toBe(expected);
 });

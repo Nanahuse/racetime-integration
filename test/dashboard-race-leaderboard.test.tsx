@@ -258,3 +258,17 @@ it("shows empty boards and individual mapping errors", async () => {
 	expect(screen.getByText("failure Second")).toBeTruthy();
 	await screen.findByText("古いキャッシュを表示中");
 });
+
+it("preserves fractional digits in the leaderboard's SRC clock", async () => {
+	const result = response("Any%");
+	result.data.leaderboards[0]!.entries[0]!.run.time = "PT1M2.030S";
+	sendMessage.mockResolvedValue(result);
+	render(
+		<RaceLeaderboard
+			categorySlug='game'
+			goal='Any%'
+			mappingRevision={0}
+		/>,
+	);
+	expect(await screen.findByRole("link", {name: "0:01:02.030"})).toBeTruthy();
+});

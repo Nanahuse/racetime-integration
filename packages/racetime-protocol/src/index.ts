@@ -374,6 +374,10 @@ export type Operations = {
 		request: {url: string};
 		response: {released: boolean; releasedWatches: number};
 	};
+	forceUnwatchClosedFinishedRaces: {
+		request: undefined;
+		response: {releasedRaces: number; releasedWatches: number};
+	};
 	getRace: {request: {url: string}; response: RaceState | null};
 	getWatch: {request: {watchId: string}; response: RaceState | null};
 	listRaces: {request: undefined; response: RacesState};
@@ -443,6 +447,7 @@ export type Operations = {
 		response: ResolveCategoryMappingResult & {
 			results?: Array<{
 				mapping: ResolvedCategoryMapping;
+				variableValues: string[];
 				players: SpeedrunPlayerBest[];
 			}>;
 			fetchedAt?: string;
@@ -476,6 +481,7 @@ export const OPERATIONS = [
 	"watchRace",
 	"unwatchRace",
 	"forceUnwatchRace",
+	"forceUnwatchClosedFinishedRaces",
 	"getRace",
 	"getWatch",
 	"listRaces",

@@ -68,3 +68,14 @@ export function formatFinishTime(time: string | null): string {
 	const tenths = Math.floor(duration.milliseconds / 100);
 	return `${duration.hours}:${minutes}:${seconds}.${tenths}`;
 }
+
+export function formatSpeedrunTime(time: string): string {
+	const match = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)(?:[.,](\d+))?S)?$/i.exec(
+		time,
+	);
+	if (!match?.slice(1).some(Boolean)) return time;
+	const [, hours = "0", minutes = "0", seconds = "0", fraction] = match;
+	if (!/^0*[0-5]?\d$/.test(minutes) || !/^0*[0-5]?\d$/.test(seconds))
+		return time;
+	return `${hours}:${minutes.padStart(2, "0")}:${seconds.padStart(2, "0")}${fraction ? `.${fraction}` : ""}`;
+}

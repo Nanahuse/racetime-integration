@@ -577,7 +577,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		setConfirmDelete(null);
 	};
 
-	// Closes only the editing view so the saved Game Mapping notification and
+	// Closes only the editing view so the save notification and
 	// any reload error stay visible.
 	const closeEditorAfterSave = () => {
 		setExpanded(false);
@@ -702,7 +702,6 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 
 	const saveGame = async () => {
 		if (mutating || !gameSession || gameSession.status !== "normal") return;
-		const closeOnSuccess = !categoryDirty;
 		setMutating(true);
 		setBusy(true);
 		setError(null);
@@ -736,7 +735,6 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 			setListSettingsRevision(result.settingsRevision);
 			setMessage("Game Mappingを保存しました。");
 			onMappingChange?.();
-			if (closeOnSuccess) closeEditorAfterSave();
 			saved = true;
 		} catch (cause) {
 			await handleSaveFailure(cause);
@@ -783,10 +781,12 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 	const saveCategory = async () => {
 		if (mutating || !categorySession || categorySession.status !== "normal")
 			return;
+		const closeOnSuccess = !gameDirty;
 		setMutating(true);
 		setBusy(true);
 		setError(null);
 		setMessage(null);
+		let saved = false;
 		try {
 			const result = await request("saveCategoryMapping", {
 				mapping: categorySession.draft,
@@ -803,14 +803,32 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 				conflict: null,
 				comparison: null,
 			});
+			setCategories((current) => [
+				...current.filter(
+					(record) =>
+						record.mapping.racetime.categorySlug.trim() !==
+							result.record.mapping.racetime.categorySlug.trim() ||
+						record.mapping.racetime.goal.trim() !==
+							result.record.mapping.racetime.goal.trim(),
+				),
+				result.record,
+			]);
+			setListSettingsRevision(result.settingsRevision);
 			setMessage("Category Mappingを保存しました。");
 			onMappingChange?.();
-			await refreshLists();
+			if (closeOnSuccess) closeEditorAfterSave();
+			saved = true;
 		} catch (cause) {
 			await handleSaveFailure(cause);
 		} finally {
 			setBusy(false);
 			setMutating(false);
+		}
+		if (!saved) return;
+		try {
+			await refreshLists();
+		} catch (cause) {
+			setListsError(errorMessage(cause));
 		}
 	};
 

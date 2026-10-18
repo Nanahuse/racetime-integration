@@ -1,7 +1,7 @@
 import type {SpeedrunLeaderboard} from "@nanahuse/racetime-protocol";
 import {useEffect, useRef, useState} from "react";
 import {errorMessage, request} from "../api/client";
-import {formatRaceInstant, formatRaceTime} from "../model/race-time";
+import {formatRaceInstant, formatSpeedrunTime} from "../model/race-time";
 import {Callout} from "./common";
 
 type Result = {
@@ -183,7 +183,7 @@ export function RaceLeaderboard({
 													target='_blank'
 													rel='noopener noreferrer'
 												>
-													{formatRaceTime(run.time)}
+													{formatSpeedrunTime(run.time)}
 												</a>
 											</td>
 											<td>{run.date ?? "—"}</td>
