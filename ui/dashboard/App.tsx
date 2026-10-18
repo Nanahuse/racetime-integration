@@ -3,7 +3,6 @@ import {useState} from "react";
 import {Badge} from "./components/common";
 import {Mappings} from "./components/Mappings";
 import {Overview} from "./components/Overview";
-import {Rankings} from "./components/Rankings";
 import {Settings} from "./components/Settings";
 import {usePlayerManagerStatus} from "./hooks/use-player-manager-status";
 import {useReplicant} from "./hooks/use-replicant";
@@ -23,11 +22,10 @@ const PLAYER_MANAGER_TONES = {
 	error: "error",
 } as const;
 
-type Tab = "overview" | "rankings" | "mappings" | "settings";
+type Tab = "overview" | "mappings" | "settings";
 
 const TABS: ReadonlyArray<{id: Tab; label: string}> = [
 	{id: "overview", label: "Overview"},
-	{id: "rankings", label: "Rankings"},
 	{id: "mappings", label: "Mappings"},
 	{id: "settings", label: "Settings"},
 ];
@@ -123,7 +121,6 @@ export function App() {
 						onStateChange={setEditorState}
 					/>
 				)}
-				{tab === "rankings" && <Rankings />}
 				{tab === "mappings" && <Mappings onStateChange={setEditorState} />}
 				{tab === "settings" && <Settings onStateChange={setEditorState} />}
 			</main>

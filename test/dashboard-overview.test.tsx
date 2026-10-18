@@ -888,6 +888,8 @@ function mappingHandler(options: {
 				};
 			case "getSpeedrunCategoryVariables":
 				return {ok: true, data: {variables: []}};
+			case "getSpeedrunLeaderboards":
+				return {ok: true, data: {status: "unregistered", mappings: []}};
 			case "searchSpeedrunGames":
 				return {
 					ok: true,
@@ -952,8 +954,13 @@ async function openMappingEditor() {
 it("registers Game then Category mappings from Overview", async () => {
 	const savedGames: GameMappingRecord[] = [];
 	const savedCategories: CategoryMappingRecord[] = [];
+	let leaderboardRequests = 0;
 	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
 		const operation = name.replace("racetime.v4.", "");
+		if (operation === "getSpeedrunLeaderboards") {
+			leaderboardRequests += 1;
+			return {ok: true, data: {status: "unregistered", mappings: []}};
+		}
 		if (operation === "saveGameMapping") {
 			const mapping = (data as {mapping: GameMapping}).mapping;
 			const record: GameMappingRecord = {mapping, revision: "g-new"};
@@ -977,6 +984,7 @@ it("registers Game then Category mappings from Overview", async () => {
 		target: {value: race.url},
 	});
 	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	await waitFor(() => expect(leaderboardRequests).toBe(1));
 
 	expect(await screen.findByText("Speedrun.com マッピング")).toBeTruthy();
 	expect(await screen.findAllByText("未登録")).toHaveLength(2);
@@ -998,6 +1006,7 @@ it("registers Game then Category mappings from Overview", async () => {
 	fireEvent.click(await screen.findByRole("button", {name: /SRC Game/}));
 	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
 	expect(await screen.findByText("Game Mappingを保存しました。")).toBeTruthy();
+	await waitFor(() => expect(leaderboardRequests).toBe(2));
 
 	const categorySelect = (await screen.findByLabelText(
 		"SRC Category（必須）",
@@ -1018,6 +1027,7 @@ it("registers Game then Category mappings from Overview", async () => {
 	expect(
 		await screen.findByText("Category Mappingを保存しました。"),
 	).toBeTruthy();
+	await waitFor(() => expect(leaderboardRequests).toBe(3));
 	expect(screen.getByText("登録済み: SRC Game")).toBeTruthy();
 	expect(screen.getByText("登録済み: Any%")).toBeTruthy();
 });
@@ -1970,6 +1980,43 @@ async function selectFirstMonitored() {
 	const [firstRace] = screen.getAllByRole("button", {name: /game\/race/});
 	fireEvent.click(firstRace!);
 }
+
+it("loads Leaderboards only when a monitored or fetched race is displayed", async () => {
+	const leaderboardRequests: unknown[] = [];
+	const handler = mappingHandler({});
+	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
+		if (name.endsWith("getSpeedrunLeaderboards")) {
+			leaderboardRequests.push(data);
+			return {ok: true, data: {status: "unregistered", mappings: []}};
+		}
+		return handler(name, data);
+	});
+	const view = render(<Overview races={undefined} />);
+	expect(leaderboardRequests).toHaveLength(0);
+	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
+		target: {value: race.url},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "取得"}));
+	await screen.findByText("Speedrun.com Leaderboard");
+	await waitFor(() => expect(leaderboardRequests).toHaveLength(1));
+	expect(leaderboardRequests[0]).toEqual({
+		categorySlug: "game",
+		goal: "Any%",
+		refresh: false,
+	});
+
+	view.unmount();
+	leaderboardRequests.length = 0;
+	render(<Overview races={races} />);
+	await selectFirstMonitored();
+	await screen.findByText("Speedrun.com Leaderboard");
+	await waitFor(() => expect(leaderboardRequests).toHaveLength(1));
+	expect(leaderboardRequests[0]).toEqual({
+		categorySlug: "game",
+		goal: "Any%",
+		refresh: false,
+	});
+});
 
 it("protects unsaved mapping edits when the monitored race target changes", async () => {
 	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));

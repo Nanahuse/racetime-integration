@@ -19,6 +19,7 @@ import {
 	type RaceMappingTarget,
 	targetKeyOf,
 } from "./Mappings";
+import {RaceLeaderboard} from "./RaceLeaderboard";
 
 function counts(participants: readonly Participant[]) {
 	const matched = participants.filter((p) => p.status === "matched").length;
@@ -374,6 +375,7 @@ export function Overview({
 	const [fetchNotice, setFetchNotice] = useState<string | null>(null);
 	const [fetching, setFetching] = useState(false);
 	const [mappingBusy, setMappingBusy] = useState(false);
+	const [mappingRevision, setMappingRevision] = useState(0);
 	const [mappingDirty, setMappingDirty] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [forceTarget, setForceTarget] = useState<{
@@ -910,6 +912,7 @@ export function Overview({
 								mode='race'
 								target={target}
 								onStateChange={reportMapping}
+								onMappingChange={() => setMappingRevision((value) => value + 1)}
 							/>
 						)}
 						<h3>参加者</h3>
@@ -923,6 +926,13 @@ export function Overview({
 							bestsError={bestsError}
 							onRefreshBests={() => setBestsRefreshToken((value) => value + 1)}
 						/>
+						{target && (
+							<RaceLeaderboard
+								categorySlug={target.categorySlug}
+								goal={target.goal}
+								mappingRevision={mappingRevision}
+							/>
+						)}
 					</>
 				) : fetched ? (
 					<>
@@ -933,6 +943,7 @@ export function Overview({
 								mode='race'
 								target={target}
 								onStateChange={reportMapping}
+								onMappingChange={() => setMappingRevision((value) => value + 1)}
 							/>
 						)}
 						<h3>参加者</h3>
@@ -946,6 +957,13 @@ export function Overview({
 							bestsError={bestsError}
 							onRefreshBests={() => setBestsRefreshToken((value) => value + 1)}
 						/>
+						{target && (
+							<RaceLeaderboard
+								categorySlug={target.categorySlug}
+								goal={target.goal}
+								mappingRevision={mappingRevision}
+							/>
+						)}
 						<div className='formrow'>
 							<button
 								type='button'

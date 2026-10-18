@@ -298,6 +298,36 @@ table.participants tr.unavailable {
 	background: #321a1a2a;
 }
 
+.race-leaderboard {
+	margin-top: 18px;
+}
+
+.race-leaderboard .toolbar {
+	margin-bottom: 8px;
+}
+
+.race-leaderboard h4 {
+	margin: 0;
+	font-size: 14px;
+}
+
+.table-scroll {
+	overflow-x: auto;
+}
+
+table.leaderboard {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+table.leaderboard th,
+table.leaderboard td {
+	text-align: left;
+	padding: 8px;
+	border-bottom: 1px solid var(--border);
+	vertical-align: top;
+}
+
 .badge {
 	display: inline-block;
 	padding: 2px 8px;
