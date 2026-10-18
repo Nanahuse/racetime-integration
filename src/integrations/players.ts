@@ -62,6 +62,17 @@ function isDirectory(value: unknown): value is Directory {
 	);
 }
 
+function primaryAccountId(
+	player: Player,
+	service: "speedrunCom" | "twitch",
+): string | null {
+	return (
+		player.accounts?.find(
+			(account) => account.service === service && account.role === "primary",
+		)?.id ?? null
+	);
+}
+
 function toSnapshot(player: Player): PlayerSnapshot {
 	return {
 		playerId: player.playerId,
@@ -81,6 +92,10 @@ function toSnapshot(player: Player): PlayerSnapshot {
 				}
 			: null,
 		youtube: player.youtube,
+		primaryAccountIds: {
+			speedrunCom: primaryAccountId(player, "speedrunCom"),
+			twitch: primaryAccountId(player, "twitch"),
+		},
 	};
 }
 

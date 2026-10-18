@@ -11,6 +11,7 @@ const CONNECTION_NOTES: Partial<Record<RaceState["connection"], string>> = {
 		"RaceTimeへの接続が切断されています。最新の状態と同期されていない可能性があります。",
 	error:
 		"RaceTimeへの接続でエラーが発生しています。最新の状態と同期されていない可能性があります。",
+	closed: "レース終了後の監視通信を終了しました。",
 };
 
 export function RaceTimerPanel({

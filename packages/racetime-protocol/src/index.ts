@@ -112,6 +112,11 @@ export type PlayerSnapshot = {
 	speedrunCom: {userId: string; name: string} | null;
 	twitch: {userId: string | null; login: string; displayName?: string} | null;
 	youtube: string | null;
+	/** Account IDs for the Primary account shown in each service column. */
+	primaryAccountIds?: {
+		speedrunCom: string | null;
+		twitch: string | null;
+	};
 };
 export type RaceResult = {
 	userId: string;
@@ -241,7 +246,13 @@ export type RaceState = {
 	};
 	url: string;
 	race: Race | null;
-	connection: "loading" | "connecting" | "connected" | "reconnecting" | "error";
+	connection:
+		| "loading"
+		| "connecting"
+		| "connected"
+		| "reconnecting"
+		| "error"
+		| "closed";
 	error: string | null;
 	participants: Participant[];
 };

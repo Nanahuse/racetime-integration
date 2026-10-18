@@ -33,6 +33,7 @@ function unfinished(userId = "user1", status = "in_progress") {
 
 async function setup(initial = payload(1, "race", "open")) {
 	vi.useFakeTimers();
+	vi.setSystemTime(new Date("2026-01-01T01:00:00Z"));
 	let raw = initial;
 	const fetchImpl = vi
 		.fn<typeof fetch>()

@@ -1,5 +1,6 @@
 import {expect, it} from "vitest";
 import {
+	formatFinishTime,
 	formatRaceInstant,
 	formatRaceTime,
 } from "../ui/dashboard/model/race-time";
@@ -27,4 +28,21 @@ it.each([
 	[null, "—"],
 ])("formats %s as %s", (input, expected) => {
 	expect(formatRaceTime(input)).toBe(expected);
+});
+
+it.each([
+	["PT1H2M3.456S", "1:02:03.5"],
+	["PT1H2M3.449S", "1:02:03.4"],
+	["PT35M12S", "0:35:12.0"],
+	["PT59M59.999S", "1:00:00.0"],
+	["PT0S", "0:00:00.0"],
+	["P1DT2H", "26:00:00.0"],
+	[null, "—"],
+])("formats the finish time %s as %s", (input, expected) => {
+	expect(formatFinishTime(input)).toBe(expected);
+});
+
+it("does not change the generic race time format", () => {
+	expect(formatRaceTime("PT1H2M3.456S")).toBe("1:02:03.456");
+	expect(formatRaceTime(null)).toBe("—");
 });

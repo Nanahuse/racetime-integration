@@ -156,6 +156,40 @@ it("publishes v3-compatible snapshots with accounts and Twitch without a userId"
 	});
 });
 
+it("exposes the Primary account IDs used for profile links", async () => {
+	const {api, directory} = playerAPI();
+	directory.players = [
+		{
+			...player("Runner"),
+			speedrunCom: {userId: "src1", name: "SRC Name"},
+			twitch: {login: "runner"},
+			accounts: [
+				speedrunComAccount("primary", "primary"),
+				speedrunComAccount("secondary", "secondary"),
+				{
+					id: "tw-primary",
+					service: "twitch",
+					role: "primary",
+					identity: {login: "runner"},
+				},
+				{
+					id: "tw-secondary",
+					service: "twitch",
+					role: "secondary",
+					identity: {login: "runner-alt"},
+				},
+			],
+		},
+	];
+	const result = await new ParticipantResolver(() => api).resolve(
+		dto().entrants,
+	);
+	expect(result.participants[0]?.player?.primaryAccountIds).toEqual({
+		speedrunCom: "src-primary",
+		twitch: "tw-primary",
+	});
+});
+
 it("distinguishes unresolved accounts, incompatible APIs, invalid data, failures and timeout", async () => {
 	const {api, directory} = playerAPI();
 	directory.players = [];

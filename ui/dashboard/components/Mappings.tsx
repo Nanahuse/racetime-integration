@@ -577,6 +577,16 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		setConfirmDelete(null);
 	};
 
+	// Closes only the editing view so the saved Game Mapping notification and
+	// any reload error stay visible.
+	const closeEditorAfterSave = () => {
+		setExpanded(false);
+		setConfirmClose(false);
+		setGameSession(null);
+		setCategorySession(null);
+		setConfirmDelete(null);
+	};
+
 	const requestClose = () => {
 		if (gameDirty || categoryDirty) {
 			setConfirmClose(true);
@@ -692,10 +702,12 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 
 	const saveGame = async () => {
 		if (mutating || !gameSession || gameSession.status !== "normal") return;
+		const closeOnSuccess = mode === "race" && !categoryDirty;
 		setMutating(true);
 		setBusy(true);
 		setError(null);
 		setMessage(null);
+		let saved = false;
 		try {
 			const result = await request("saveGameMapping", {
 				mapping: gameSession.draft,
@@ -712,14 +724,31 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 				conflict: null,
 				comparison: null,
 			});
+			setGames((current) => {
+				const key = result.record.mapping.racetime.categorySlug.trim();
+				return [
+					...current.filter(
+						(record) => record.mapping.racetime.categorySlug.trim() !== key,
+					),
+					result.record,
+				];
+			});
+			setListSettingsRevision(result.settingsRevision);
 			setMessage("Game Mappingを保存しました。");
 			onMappingChange?.();
-			await refreshLists();
+			if (closeOnSuccess) closeEditorAfterSave();
+			saved = true;
 		} catch (cause) {
 			await handleSaveFailure(cause);
 		} finally {
 			setBusy(false);
 			setMutating(false);
+		}
+		if (!saved) return;
+		try {
+			await refreshLists();
+		} catch (cause) {
+			setListsError(errorMessage(cause));
 		}
 	};
 

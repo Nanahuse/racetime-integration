@@ -38,6 +38,19 @@ export async function beginRegistration(
 }
 
 /**
+ * Resolves a service profile URL through Player Manager's public API. The
+ * integration never builds or validates provider URLs itself.
+ */
+export async function accountProfileUrl(accountId: string): Promise<string> {
+	const response = await getNodeCG().sendMessageToBundle<
+		Envelope<{url: string}>
+	>(operationMessageName("getAccountProfileUrl"), BUNDLE_NAME, {accountId});
+	if (!response.ok)
+		throw new Error(`${response.error.code}: ${response.error.message}`);
+	return response.data.url;
+}
+
+/**
  * Reads the public Player Manager readiness through its `status` operation.
  * Never depends on player-manager internals; a missing bundle is "unavailable".
  */

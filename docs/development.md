@@ -7,7 +7,7 @@
 - Node.js 24（`.nvmrc`は`24`）
 - pnpm 12.9.1（`packageManager`で固定）
 
-Player ManagerのProtocolはGit依存として取得します。取得先は`@nanahuse/player-manager`のタグ`v3.0.0`に固定しています。異なる版へ自動で切り替えず、固定した依存のビルドだけを許可します（`pnpm-workspace.yaml`の`pmOnFail: error`と`allowBuilds`）。
+Player ManagerのProtocolはGit依存として取得します。取得先は`@nanahuse/player-manager`のタグ`v3.1.0`に固定しています。異なる版へ自動で切り替えず、固定した依存のビルドだけを許可します（`pnpm-workspace.yaml`の`pmOnFail: error`と`allowBuilds`）。
 
 ## コマンド
 
