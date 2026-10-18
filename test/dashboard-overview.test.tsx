@@ -263,6 +263,7 @@ it("subscribes to the five RaceTime events and renders them in receive order", (
 	expect(rows?.[2]?.textContent).toContain("entrantFinishUndone");
 	expect(rows?.[3]?.textContent).toContain("raceCancelled");
 	expect(rows?.[0]?.textContent).not.toContain("runner1");
+	expect(rows?.[0]?.textContent).not.toContain("other/race-002");
 	emit("racetime.v4.raceStarted", {
 		url: raceTwo.url,
 		raceId: "other/race-002",
@@ -281,6 +282,7 @@ it("subscribes to the five RaceTime events and renders them in receive order", (
 	expect(raceTwoRows?.[0]?.textContent).toContain("0:45:12");
 	expect(raceTwoRows?.[1]?.textContent).toContain("raceStarted");
 	expect(raceTwoRows?.[2]?.textContent).toContain("runner2");
+	expect(raceTwoRows?.[2]?.textContent).not.toContain("game/race-001");
 	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
 	expect(rowsFor()).toHaveLength(4);
 	expect(rowsFor()?.[0]?.textContent).toContain("raceStartScheduled");
