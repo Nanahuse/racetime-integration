@@ -473,81 +473,6 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 		return promise;
 	}
 
-	private async paginated<R>(
-		path: string,
-		query: Record<string, string | number>,
-		map: (value: unknown) => R | null,
-	): Promise<R[]> {
-		const results: R[] = [];
-		const seenPages = new Set<string>();
-		let offset = 0;
-		for (;;) {
-			if (!Number.isSafeInteger(offset))
-				throw new SpeedrunError(
-					"invalid_payload",
-					"Speedrun.com pagination offset exceeded the safe integer range.",
-				);
-			const envelope = requireRecord(
-				await this.request(path, {...query, max: PAGE_SIZE, offset}),
-				"response",
-			);
-			if (!Array.isArray(envelope.data))
-				throw new SpeedrunError(
-					"invalid_payload",
-					"response.data must be an array.",
-				);
-			const pagination = requireRecord(
-				envelope.pagination,
-				"response.pagination",
-			);
-			const size = pagination.size;
-			if (
-				typeof size !== "number" ||
-				!Number.isSafeInteger(size) ||
-				size < 0 ||
-				size > PAGE_SIZE ||
-				size !== envelope.data.length
-			)
-				throw new SpeedrunError(
-					"invalid_payload",
-					"Speedrun.com pagination size does not match response.data.",
-				);
-			if (pagination.offset !== undefined && pagination.offset !== offset)
-				throw new SpeedrunError(
-					"invalid_payload",
-					"Speedrun.com pagination offset did not advance as requested.",
-				);
-			if (pagination.max !== undefined && pagination.max !== PAGE_SIZE)
-				throw new SpeedrunError(
-					"invalid_payload",
-					"Speedrun.com pagination max changed during the search.",
-				);
-			const page = envelope.data.map(map);
-			results.push(...page.filter((value): value is R => value !== null));
-			if (size < PAGE_SIZE) return results;
-			const fingerprint = JSON.stringify(
-				envelope.data.map((item) => {
-					if (!isRecord(item)) return null;
-					if (isRecord(item.run)) return item.run.id ?? null;
-					return item.id ?? null;
-				}),
-			);
-			if (seenPages.has(fingerprint))
-				throw new SpeedrunError(
-					"invalid_payload",
-					"Speedrun.com repeated a full page without advancing pagination.",
-				);
-			seenPages.add(fingerprint);
-			const nextOffset = offset + size;
-			if (nextOffset <= offset)
-				throw new SpeedrunError(
-					"invalid_payload",
-					"Speedrun.com pagination did not make progress.",
-				);
-			offset = nextOffset;
-		}
-	}
-
 	getLeaderboard(
 		mapping: ResolvedCategoryMapping,
 		top: number,
@@ -825,8 +750,17 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 		const path = `/users/${encodeURIComponent(userId)}/personal-bests`;
 		return this.cached(
 			`pbs:${userId}:${gameId}`,
-			() =>
-				this.paginated(path, {game: gameId}, (raw) => {
+			async () => {
+				const envelope = requireRecord(
+					await this.request(path, {game: gameId}),
+					"response",
+				);
+				if (!Array.isArray(envelope.data))
+					throw new SpeedrunError(
+						"invalid_payload",
+						"response.data must be an array.",
+					);
+				return envelope.data.map((raw) => {
 					const entry = requireRecord(raw, "personal-bests entry");
 					const place = entry.place;
 					if (!Number.isSafeInteger(place) || (place as number) < 1)
@@ -891,7 +825,8 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 						levelId,
 						variables,
 					};
-				}),
+				});
+			},
 			refresh,
 		);
 	}

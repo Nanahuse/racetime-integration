@@ -124,3 +124,100 @@ it("keeps a refresh response attached to the mapping requested", async () => {
 	await waitFor(() => expect(screen.getByText("取得済み")).toBeTruthy());
 	expect(screen.queryByText("古いキャッシュを表示中")).toBeNull();
 });
+
+it("shows Personal Best error details for each leaderboard player", async () => {
+	sendMessage.mockImplementation(async (name: string) => {
+		const operation = name.replace("racetime.v4.", "");
+		if (operation === "listCategoryMappings")
+			return {ok: true, data: {records: [records[0]!], settingsRevision: 0}};
+		if (operation === "getSpeedrunLeaderboards")
+			return {
+				ok: true,
+				data: {
+					status: "resolved",
+					leaderboards: [
+						{
+							mapping: {
+								key: "game\u0000A",
+								label: "Any%",
+								game: {gameId: "g1", gameName: "Game"},
+								category: {
+									categoryId: "category-A",
+									categoryName: "Any%",
+									levelId: null,
+									variables: {},
+									platformId: null,
+									regionId: null,
+									emulator: null,
+									timingMethod: null,
+								},
+							},
+							top: 20,
+							fetchedAt: "2026-10-18T00:00:00Z",
+							state: "ready",
+							stale: false,
+							entries: [
+								{
+									place: 1,
+									run: {
+										runId: "run-1",
+										url: "https://www.speedrun.com/runs/run-1",
+										time: "PT1M",
+										date: "2026-10-18",
+										players: [
+											{
+												userId: "u1",
+												name: "Runner A",
+												url: "https://www.speedrun.com/users/u1",
+												personalBest: {
+													playerId: "p1",
+													srcUserId: "u1",
+													state: "error",
+													run: null,
+													place: null,
+													fetchedAt: "2026-10-18T00:00:00Z",
+													stale: false,
+													message: "Speedrun.com responded with 503.",
+												},
+											},
+											{
+												userId: "u2",
+												name: "Runner B",
+												url: "https://www.speedrun.com/users/u2",
+												personalBest: {
+													playerId: "p2",
+													srcUserId: "u2",
+													state: "error",
+													run: null,
+													place: null,
+													fetchedAt: "2026-10-18T00:00:00Z",
+													stale: false,
+													message: "response.data must be an array.",
+												},
+											},
+										],
+									},
+								},
+							],
+						},
+					],
+					stale: false,
+				},
+			};
+		throw new Error(`unexpected operation ${operation}`);
+	});
+
+	render(<Rankings />);
+	await waitFor(() =>
+		expect(
+			screen.getByTitle("Runner A: Speedrun.com responded with 503."),
+		).toBeTruthy(),
+	);
+	expect(
+		screen.getByTitle("Runner B: response.data must be an array."),
+	).toBeTruthy();
+	expect(screen.getByText("Runner A", {exact: false})).toBeTruthy();
+	expect(screen.getByText("Runner B", {exact: false})).toBeTruthy();
+	expect(screen.getByRole("link")).toBeTruthy();
+	expect(screen.getAllByText(/PB .*取得失敗/)).toHaveLength(2);
+});

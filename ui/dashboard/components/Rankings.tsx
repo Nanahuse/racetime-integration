@@ -181,7 +181,14 @@ export function Rankings() {
 												>
 													{player.displayName ?? player.name}
 													{player.personalBest && (
-														<small className='muted'>
+														<small
+															className='muted'
+															title={
+																player.personalBest.state === "error"
+																	? `${player.displayName ?? player.name}: ${player.personalBest.message ?? "Personal Bestの取得に失敗しました。"}`
+																	: undefined
+															}
+														>
 															{` · PB ${player.personalBest.state === "found" && player.personalBest.run ? `${formatRaceTime(player.personalBest.run.time)}${player.personalBest.place === null ? "" : ` · ${player.personalBest.place}位`}` : player.personalBest.state === "not_found" ? "記録なし" : player.personalBest.state === "error" ? "取得失敗" : "未連携"}`}
 															{player.personalBest.stale ? " · 古いデータ" : ""}
 														</small>
