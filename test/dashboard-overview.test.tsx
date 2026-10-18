@@ -1212,7 +1212,6 @@ it("registers Game then Category mappings from Overview", async () => {
 	await waitFor(() => expect(bestRequests).toHaveLength(2));
 	expect(bestRequests[1]?.refresh).toBe(false);
 
-	await openMappingEditor();
 	const categorySelect = (await screen.findByLabelText(
 		"SRC Category（必須）",
 	)) as HTMLSelectElement;
@@ -1237,6 +1236,7 @@ it("registers Game then Category mappings from Overview", async () => {
 	expect(bestRequests[2]?.refresh).toBe(false);
 	expect(screen.getByText("登録済み: SRC Game")).toBeTruthy();
 	expect(screen.getByText("登録済み: Any%")).toBeTruthy();
+	await openMappingEditor();
 	fireEvent.click(
 		within(document.querySelector("form.category-editor")!).getByRole(
 			"button",
@@ -2305,12 +2305,20 @@ it("shows a distinct profile error per account and clears it after a successful 
 	expect(screen.getByRole("button", {name: "再試行"})).toBeTruthy();
 });
 
-it("closes the Game Mapping editor after a successful save", async () => {
+it("keeps editing after Game Mapping save and closes after Category Mapping save", async () => {
 	const games: GameMappingRecord[] = [];
 	sendMessage.mockImplementation(
 		mappingHandler({
 			games,
 			categories: [],
+			saveCategory: (mapping) => ({
+				ok: true,
+				data: {
+					record: {mapping, revision: "c1"},
+					action: "created",
+					settingsRevision: 0,
+				},
+			}),
 			saveGame: (mapping) => {
 				const record: GameMappingRecord = {mapping, revision: "g1"};
 				games.splice(0, games.length, record);
@@ -2327,6 +2335,17 @@ it("closes the Game Mapping editor after a successful save", async () => {
 	await editMappingDraft();
 	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
 	expect(await screen.findByText("Game Mappingを保存しました。")).toBeTruthy();
+	expect(screen.getByLabelText("SRC Category（必須）")).toBeTruthy();
+	await act(async () =>
+		fireEvent.change(screen.getByLabelText("SRC Category（必須）"), {
+			target: {value: "c1"},
+		}),
+	);
+	await screen.findByText("このカテゴリにVariablesはありません。");
+	fireEvent.click(screen.getByRole("button", {name: /Category Mappingを保存/}));
+	expect(
+		await screen.findByText("Category Mappingを保存しました。"),
+	).toBeTruthy();
 	await waitFor(() =>
 		expect(screen.queryByLabelText("SRC Category（必須）")).toBeNull(),
 	);
@@ -2376,7 +2395,7 @@ it("keeps a successful Game Mapping save when the follow-up reload fails", async
 	expect(
 		await screen.findByText(/マッピング情報を取得できませんでした/),
 	).toBeTruthy();
-	expect(screen.queryByLabelText("SRC Category（必須）")).toBeNull();
+	expect(screen.getByLabelText("SRC Category（必須）")).toBeTruthy();
 });
 
 it("shows five participant columns, row resolution and origin-aware account links", () => {
@@ -2531,3 +2550,54 @@ it.each(["dnf", "dq", "other"] as const)(
 		);
 	},
 );
+
+it("keeps Category save notification after closing even when the follow-up reload fails", async () => {
+	let saved = false;
+	const handler = mappingHandler({
+		games: [gameRecord],
+		categories: [],
+		saveCategory: (mapping) => {
+			saved = true;
+			return {
+				ok: true,
+				data: {
+					record: {mapping, revision: "c1"},
+					action: "created",
+					settingsRevision: 0,
+				},
+			};
+		},
+	});
+	sendMessage.mockImplementation((name: string, data?: unknown) => {
+		if (saved && /list(Game|Category)Mappings$/.test(name))
+			return Promise.resolve({
+				ok: false,
+				error: {code: "mapping_conflict", message: "reload failed"},
+			});
+		return handler(name, data);
+	});
+	render(<Overview races={races} />);
+	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
+	await openMappingEditor();
+	await waitFor(() =>
+		expect(
+			(screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement)
+				.disabled,
+		).toBe(false),
+	);
+	await act(async () =>
+		fireEvent.change(screen.getByLabelText("SRC Category（必須）"), {
+			target: {value: "c1"},
+		}),
+	);
+	await screen.findByText("このカテゴリにVariablesはありません。");
+	fireEvent.click(screen.getByRole("button", {name: /Category Mappingを保存/}));
+	expect(
+		await screen.findByText("Category Mappingを保存しました。"),
+	).toBeTruthy();
+	expect(
+		await screen.findByText(/マッピング情報を取得できませんでした/),
+	).toBeTruthy();
+	expect(screen.queryByLabelText("SRC Category（必須）")).toBeNull();
+	expect(screen.queryByText(/他の変更と競合しました/)).toBeNull();
+});
