@@ -315,6 +315,10 @@ export type Operations = {
 		response: {watchId: string; state: RaceState & {race: Race}};
 	};
 	unwatchRace: {request: {watchId: string}; response: {released: boolean}};
+	forceUnwatchRace: {
+		request: {url: string};
+		response: {released: boolean; releasedWatches: number};
+	};
 	getRace: {request: {url: string}; response: RaceState | null};
 	getWatch: {request: {watchId: string}; response: RaceState | null};
 	listRaces: {request: undefined; response: RacesState};
@@ -416,6 +420,7 @@ export const OPERATIONS = [
 	"fetchRace",
 	"watchRace",
 	"unwatchRace",
+	"forceUnwatchRace",
 	"getRace",
 	"getWatch",
 	"listRaces",

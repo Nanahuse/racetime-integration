@@ -24,6 +24,7 @@ if (watched.ok) {
 | fetchRace | `{url}` | `ResolvedRace`（単発HTTP取得＋Player解決。監視は開始しない） |
 | watchRace | `{url}` | `{watchId, state}`（初回HTTP成功後、race非null） |
 | unwatchRace | `{watchId}` | `{released}`（再実行時false） |
+| forceUnwatchRace | `{url}` | `{released, releasedWatches}`（指定レースの全watchIdを無効化） |
 | getWatch | `{watchId}` | `RaceState \| null` |
 | getRace | `{url}` | `RaceState \| null`（監視中） |
 | listRaces | `undefined` | `RacesState` |
@@ -50,6 +51,12 @@ if (watched.ok) {
 各watchRaceは独立したwatchIdを返し、同一URLのHTTP/WebSocketを共有します。初回HTTP失敗時はエラー応答となり、そのリクエストの参照を残さず、再接続もしません。他レースの既存監視は維持されます。初回HTTP成功後のWebSocket接続・Player解決は非同期です。接続障害からは最終成功スナップショットを保持して自動復帰します。
 
 最後のwatchIdを解除すると監視と参加者解決の待機を停止します。利用側はwatchIdの所有期間と解除を管理してください。ブラウザの再読込だけでは解除されません。
+
+`forceUnwatchRace` は管理用の強制解除操作です。URLを既存の正規化規則で解決し、そのレースの監視セッションを同期的に破棄します。同じレースに紐付くすべてのwatchId（他バンドルが保持するものも含む）を無効化し、HTTP/WebSocket監視・再接続タイマー・実行中のPlayer解決を停止します。RaceTime上のレース自体は変更しません。他レースの監視も維持します。
+
+対象セッションが存在する場合は `{released: true, releasedWatches: 無効化したwatchId数}`、存在しない場合は `{released: false, releasedWatches: 0}` を返します。解除後のgetRace / getWatchはnull、無効化済みwatchIdのunwatchRaceは `{released: false}` となり、listRacesとracetime-races Replicantから対象が消えます。解除前の非同期応答が対象を復活させることはありません。
+
+強制解除はその時点のセッションを破棄する操作であり、そのURLの監視を禁止しません。他バンドルを含め、再びwatchRaceを呼べば新しいセッション・watchIdで監視できます。通常のunwatchRaceは従来どおり単一watchIdを解除します。Dashboardの監視一覧から確認ダイアログを経て実行でき、一覧とRaceTime status表示はReplicantの状態に追従します。
 
 `RACES_REPLICANT`（racetime-races、名前空間racetime-integration）は非永続の `RacesState` を公開します。再起動後は再購読が必要です。
 

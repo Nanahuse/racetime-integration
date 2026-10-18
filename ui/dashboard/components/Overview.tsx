@@ -376,6 +376,13 @@ export function Overview({
 	const [mappingBusy, setMappingBusy] = useState(false);
 	const [mappingDirty, setMappingDirty] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [forceTarget, setForceTarget] = useState<{
+		url: string;
+		label: string;
+	} | null>(null);
+	const [forceReleasing, setForceReleasing] = useState(false);
+	const [forceError, setForceError] = useState<string | null>(null);
+	const forceInFlight = useRef(false);
 	// The monitored race snapshot currently shown. It is pinned while there are
 	// unsaved mapping edits so an external Replicant update cannot discard them.
 	const [monitoredTarget, setMonitoredTarget] = useState<{
@@ -700,6 +707,22 @@ export function Overview({
 		guardRaceChange(nextKey, () => applySelection(url));
 	};
 
+	const forceUnwatch = async () => {
+		if (!forceTarget || forceInFlight.current) return;
+		forceInFlight.current = true;
+		setForceReleasing(true);
+		setForceError(null);
+		try {
+			await request("forceUnwatchRace", {url: forceTarget.url});
+			setForceTarget(null);
+		} catch (cause) {
+			setForceError(errorMessage(cause));
+		} finally {
+			forceInFlight.current = false;
+			setForceReleasing(false);
+		}
+	};
+
 	const applyFetched = (resolved: ResolvedRace) => {
 		if (displayRef.current !== resolved.race.url) {
 			viewRef.current++;
@@ -802,9 +825,24 @@ export function Overview({
 								onClick={() => selectMonitored(race.url)}
 							>
 								<strong>{race.race?.raceId ?? race.url}</strong>
+								<small>RaceTime: {race.race?.status ?? "未取得"}</small>
 								<small>
-									{race.connection} · E{race.participantsRevision}
+									Connection: {race.connection} · E{race.participantsRevision}
 								</small>
+							</button>
+							<button
+								type='button'
+								className='force-unwatch'
+								disabled={forceReleasing}
+								onClick={() => {
+									setForceError(null);
+									setForceTarget({
+										url: race.url,
+										label: race.race?.raceId ?? race.url,
+									});
+								}}
+							>
+								強制解除
 							</button>
 						</li>
 					))}
@@ -922,6 +960,40 @@ export function Overview({
 					<p className='muted'>レースを選択するかURLで取得してください。</p>
 				)}
 			</section>
+			{forceTarget && (
+				<div className='dialog-backdrop'>
+					<div
+						className='dialog'
+						role='dialog'
+						aria-modal='true'
+						aria-label='監視を強制解除しますか？'
+					>
+						<h3>監視を強制解除しますか？</h3>
+						<p>対象：{forceTarget.label}</p>
+						<p>
+							このレースのすべての監視を解除します。他のバンドルが保持しているwatchIdも無効になります。
+						</p>
+						<p>RaceTime上のレース自体は変更されません。</p>
+						{forceError && <Callout tone='error'>{forceError}</Callout>}
+						<div className='button-row'>
+							<button
+								type='button'
+								disabled={forceReleasing}
+								onClick={() => setForceTarget(null)}
+							>
+								キャンセル
+							</button>
+							<button
+								type='button'
+								disabled={forceReleasing}
+								onClick={() => void forceUnwatch()}
+							>
+								{forceReleasing ? "解除中…" : "強制解除"}
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
 			{pendingRace && (
 				<div className='dialog-backdrop'>
 					<div className='dialog'>

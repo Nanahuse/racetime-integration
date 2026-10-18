@@ -17,6 +17,7 @@ import {
 	render,
 	screen,
 	waitFor,
+	within,
 } from "@testing-library/react";
 import {afterEach, expect, it, vi} from "vitest";
 import {Overview} from "../ui/dashboard/components/Overview";
@@ -172,6 +173,138 @@ afterEach(() => {
 	vi.restoreAllMocks();
 	sendMessage.mockReset();
 	sendMessageToBundle.mockReset();
+});
+
+it("shows live RaceTime status separately from Connection and participant revision, including missing snapshots", () => {
+	const view = render(<Overview races={races} />);
+	let row = screen.getByRole("button", {name: /game\/race/});
+	expect(row.textContent).toContain("RaceTime: in_progress");
+	expect(row.textContent).toContain("Connection: connected · E1");
+	view.rerender(
+		<Overview
+			races={{
+				schemaVersion: 1,
+				races: [
+					{
+						...raceState,
+						race: {...race, status: "pending"},
+						connection: "reconnecting",
+						participantsRevision: 4,
+					},
+				],
+			}}
+		/>,
+	);
+	row = screen.getByRole("button", {name: /game\/race/});
+	expect(row.textContent).toContain("RaceTime: pending");
+	expect(row.textContent).toContain("Connection: reconnecting · E4");
+	view.rerender(
+		<Overview
+			races={{schemaVersion: 1, races: [{...raceState, race: null}]}}
+		/>,
+	);
+	row = screen.getByRole("button", {name: /https:\/\/racetime.gg\/game\/race/});
+	expect(row.textContent).toContain("RaceTime: 未取得");
+	expect(sendMessage).not.toHaveBeenCalled();
+});
+
+it("cancels force-release without selecting the race or sending an RPC", () => {
+	render(<Overview races={races} />);
+	fireEvent.click(screen.getByRole("button", {name: "強制解除"}));
+	const dialog = screen.getByRole("dialog", {name: "監視を強制解除しますか？"});
+	expect(within(dialog).getByText(`対象：${race.raceId}`)).toBeTruthy();
+	expect(
+		within(dialog).getByText(/他のバンドルが保持しているwatchIdも無効/),
+	).toBeTruthy();
+	expect(
+		within(dialog).getByText(/RaceTime上のレース自体は変更されません/),
+	).toBeTruthy();
+	expect(screen.getByText(/レースを選択するかURLで取得/)).toBeTruthy();
+	fireEvent.click(within(dialog).getByRole("button", {name: "キャンセル"}));
+	expect(screen.queryByRole("dialog")).toBeNull();
+	expect(sendMessage).not.toHaveBeenCalled();
+});
+
+it.each([true, false])(
+	"confirms force-release for the chosen URL and waits for Replicant removal (released: %s)",
+	async (released) => {
+		const otherRace: RaceState = {
+			...raceState,
+			url: "https://racetime.gg/game/other",
+			race: {...race, raceId: "game/other"},
+		};
+		sendMessage.mockResolvedValue({
+			ok: true,
+			data: {released, releasedWatches: released ? 3 : 0},
+		});
+		const view = render(
+			<Overview races={{schemaVersion: 1, races: [raceState, otherRace]}} />,
+		);
+		const row = screen
+			.getByRole("button", {name: /game\/other/})
+			.closest("li")!;
+		fireEvent.click(within(row).getByRole("button", {name: "強制解除"}));
+		expect(sendMessage).not.toHaveBeenCalled();
+		fireEvent.click(
+			within(screen.getByRole("dialog")).getByRole("button", {
+				name: "強制解除",
+			}),
+		);
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
+			"racetime.v4.forceUnwatchRace",
+			{url: otherRace.url},
+		);
+		expect(screen.getByRole("button", {name: /game\/other/})).toBeTruthy();
+		view.rerender(<Overview races={races} />);
+		expect(screen.queryByRole("button", {name: /game\/other/})).toBeNull();
+		expect(screen.getByRole("button", {name: /game\/race/})).toBeTruthy();
+	},
+);
+
+it("prevents duplicate force-release submissions while the RPC is pending", async () => {
+	const pending = deferred<unknown>();
+	sendMessage.mockReturnValue(pending.promise);
+	render(<Overview races={races} />);
+	fireEvent.click(screen.getByRole("button", {name: "強制解除"}));
+	const confirm = within(screen.getByRole("dialog")).getByRole("button", {
+		name: "強制解除",
+	});
+	fireEvent.click(confirm);
+	fireEvent.click(confirm);
+	expect((confirm as HTMLButtonElement).disabled).toBe(true);
+	expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
+		"racetime.v4.forceUnwatchRace",
+		{url: race.url},
+	);
+	await act(async () =>
+		pending.resolve({ok: true, data: {released: true, releasedWatches: 1}}),
+	);
+	expect(screen.queryByRole("dialog")).toBeNull();
+	expect(screen.getByRole("button", {name: /game\/race/})).toBeTruthy();
+});
+
+it("shows force-release errors without removing the race and allows retry", async () => {
+	sendMessage.mockResolvedValueOnce({
+		ok: false,
+		error: {code: "internal_error", message: "release failed"},
+	});
+	render(<Overview races={races} />);
+	fireEvent.click(screen.getByRole("button", {name: "強制解除"}));
+	fireEvent.click(
+		within(screen.getByRole("dialog")).getByRole("button", {name: "強制解除"}),
+	);
+	expect(await screen.findByText(/release failed/)).toBeTruthy();
+	expect(screen.getByRole("button", {name: /game\/race/})).toBeTruthy();
+	sendMessage.mockResolvedValueOnce({
+		ok: true,
+		data: {released: true, releasedWatches: 1},
+	});
+	fireEvent.click(
+		within(screen.getByRole("dialog")).getByRole("button", {name: "強制解除"}),
+	);
+	await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+	expect(sendMessage).toHaveBeenCalledTimes(2);
 });
 
 it("displays a single-fetched race with resolved participants without starting a watch", async () => {
@@ -1869,14 +2002,25 @@ it("protects unsaved mapping edits when the monitored race target changes", asyn
 	expect(await screen.findByText("100%")).toBeTruthy();
 });
 
-it("protects unsaved mapping edits when the monitored race is removed", async () => {
-	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));
+it("protects unsaved mapping edits when force-release removes the monitored race from the Replicant", async () => {
+	const base = mappingHandler({games: [], categories: []});
+	sendMessage.mockImplementation((name: string, data?: unknown) =>
+		name === "racetime.v4.forceUnwatchRace"
+			? Promise.resolve({ok: true, data: {released: true, releasedWatches: 3}})
+			: base(name, data),
+	);
 	const {rerender} = render(<Overview races={races} />);
 	await selectFirstMonitored();
 	await openMappingEditor();
 	await editMappingDraft();
 	expect(await screen.findByText(/選択中: SRC Game/)).toBeTruthy();
 
+	fireEvent.click(screen.getByRole("button", {name: "強制解除"}));
+	fireEvent.click(
+		within(screen.getByRole("dialog")).getByRole("button", {name: "強制解除"}),
+	);
+	await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+	expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy();
 	rerender(<Overview races={{schemaVersion: 1, races: []}} />);
 	expect(
 		await screen.findByText(/未保存の変更を破棄して表示を解除しますか/),
@@ -1975,6 +2119,51 @@ it("does not switch the mapping target during a save triggered by an external up
 	});
 	expect(await screen.findByText("100%")).toBeTruthy();
 	expect(screen.getByText("登録済み: SRC Game")).toBeTruthy();
+});
+
+it("preserves an in-flight mapping save when force-release removes the selected race", async () => {
+	const games: GameMappingRecord[] = [];
+	const saved = deferred<unknown>();
+	let submitted: GameMapping | null = null;
+	const base = mappingHandler({
+		games,
+		categories: [],
+		saveGame: (mapping) => {
+			submitted = mapping;
+			return saved.promise;
+		},
+	});
+	sendMessage.mockImplementation((name: string, data?: unknown) =>
+		name === "racetime.v4.forceUnwatchRace"
+			? Promise.resolve({ok: true, data: {released: true, releasedWatches: 1}})
+			: base(name, data),
+	);
+	const view = render(<Overview races={races} />);
+	await selectFirstMonitored();
+	await openMappingEditor();
+	await editMappingDraft();
+	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	await screen.findByRole("button", {name: "保存中…"});
+	fireEvent.click(screen.getByRole("button", {name: "強制解除"}));
+	fireEvent.click(
+		within(screen.getByRole("dialog")).getByRole("button", {name: "強制解除"}),
+	);
+	await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+	view.rerender(<Overview races={{schemaVersion: 1, races: []}} />);
+	expect(screen.getByRole("button", {name: "保存中…"})).toBeTruthy();
+	expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy();
+	expect(screen.queryByText(/未保存の変更を破棄して/)).toBeNull();
+	if (!submitted) throw new Error("Mapping save was not submitted");
+	const record: GameMappingRecord = {mapping: submitted, revision: "saved"};
+	games.push(record);
+	await act(async () =>
+		saved.resolve({
+			ok: true,
+			data: {record, action: "created", settingsRevision: 0},
+		}),
+	);
+	expect(await screen.findByText(/レースを選択するかURLで取得/)).toBeTruthy();
+	expect(screen.queryByRole("button", {name: "保存中…"})).toBeNull();
 });
 
 it("invalidates an in-flight registration when the monitored race is removed", async () => {

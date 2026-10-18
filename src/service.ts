@@ -145,14 +145,27 @@ export class RaceService {
 		const session = this.sessions.get(url);
 		if (session) {
 			session.watches.delete(watchId);
-			if (!session.watches.size) {
-				session.watcher.stop();
-				session.controller?.abort();
-				this.sessions.delete(url);
-				this.publish(this.snapshot());
-			}
+			if (!session.watches.size) this.releaseSession(session);
 		}
 		return true;
+	}
+
+	forceUnwatch(url: string): {released: boolean; releasedWatches: number} {
+		const canonical = canonicalizeRaceUrl(url);
+		const session = this.sessions.get(canonical.canonicalUrl);
+		if (!session) return {released: false, releasedWatches: 0};
+		const releasedWatches = session.watches.size;
+		this.releaseSession(session);
+		return {released: true, releasedWatches};
+	}
+
+	private releaseSession(session: Session): void {
+		for (const watchId of session.watches) this.watches.delete(watchId);
+		session.watches.clear();
+		session.watcher.stop();
+		session.controller?.abort();
+		this.sessions.delete(session.state.url);
+		this.publish(this.snapshot());
 	}
 
 	directoryChanged(revision: number): void {
