@@ -628,35 +628,54 @@ export class HttpSpeedrunClient implements SpeedrunClient {
 						"invalid_payload",
 						"leaderboard.runs must be an array.",
 					);
-				if (!Array.isArray(board.players))
+				const players = requireRecord(board.players, "leaderboard.players");
+				if (!Array.isArray(players.data))
 					throw new SpeedrunError(
 						"invalid_payload",
-						"leaderboard.players must contain the embedded player list.",
+						"leaderboard.players.data must be an array.",
 					);
-				const embeddedPlayers = board.players;
+				const embeddedPlayers = players.data;
 				const playerIndex = new Map<string, SpeedrunRun["players"][number]>();
-				for (const raw of embeddedPlayers) {
-					if (!isRecord(raw)) continue;
-					if (raw.rel === "user" && typeof raw.id === "string") {
+				for (const [index, value] of embeddedPlayers.entries()) {
+					const raw = requireRecord(
+						value,
+						`leaderboard.players.data[${index}]`,
+					);
+					if (raw.rel === "user") {
+						const id = requireString(
+							raw,
+							"id",
+							`leaderboard.players.data[${index}]`,
+						);
 						const names = isRecord(raw.names) ? raw.names : {};
 						const name =
 							typeof names.international === "string"
 								? names.international
-								: raw.id;
-						playerIndex.set(`user:${raw.id}`, {
-							userId: raw.id,
+								: id;
+						playerIndex.set(`user:${id}`, {
+							userId: id,
 							name,
 							url:
 								typeof raw.weblink === "string"
 									? raw.weblink
-									: `https://www.speedrun.com/users/${encodeURIComponent(raw.id)}`,
+									: `https://www.speedrun.com/users/${encodeURIComponent(id)}`,
 						});
-					} else if (raw.rel === "guest" && typeof raw.name === "string") {
-						playerIndex.set(`guest:${raw.name}`, {
+					} else if (raw.rel === "guest") {
+						const name = requireString(
+							raw,
+							"name",
+							`leaderboard.players.data[${index}]`,
+						);
+						playerIndex.set(`guest:${name}`, {
 							userId: null,
-							name: raw.name,
+							name,
 							url: null,
 						});
+					} else {
+						throw new SpeedrunError(
+							"invalid_payload",
+							`leaderboard.players.data[${index}] has an invalid player relation.`,
+						);
 					}
 				}
 				const entries = board.runs.flatMap((raw, index) => {

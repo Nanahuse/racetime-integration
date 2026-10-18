@@ -398,15 +398,17 @@ it("requests a filtered level leaderboard, preserves ties, and joins embedded pl
 				emulators: false,
 				timing: "realtime_noloads",
 				values: {v1: "hard"},
-				players: [
-					{
-						rel: "user",
-						id: "u1",
-						names: {international: "Runner"},
-						weblink: "https://www.speedrun.com/user/runner",
-					},
-					{rel: "guest", name: "Guest Runner"},
-				],
+				players: {
+					data: [
+						{
+							rel: "user",
+							id: "u1",
+							names: {international: "Runner"},
+							weblink: "https://www.speedrun.com/user/runner",
+						},
+						{rel: "guest", name: "Guest Runner"},
+					],
+				},
 				runs: [
 					{
 						place: 1,
@@ -433,6 +435,7 @@ it("requests a filtered level leaderboard, preserves ties, and joins embedded pl
 	const result = await client.getLeaderboard(resolvedLookup, 20);
 	const requested = new URL(fetchImpl.mock.calls[0]![0] as string);
 	expect(requested.searchParams.get("top")).toBe("20");
+	expect(requested.searchParams.get("embed")).toBe("players");
 	expect(requested.searchParams.get("platform")).toBe("p1");
 	expect(requested.searchParams.get("region")).toBe("r1");
 	expect(requested.searchParams.get("emulators")).toBe("false");
@@ -442,6 +445,7 @@ it("requests a filtered level leaderboard, preserves ties, and joins embedded pl
 	expect(result.entries[0]?.run.players[0]).toMatchObject({
 		userId: "u1",
 		name: "Runner",
+		url: "https://www.speedrun.com/user/runner",
 	});
 	expect(result.entries[1]?.run.players[0]).toMatchObject({
 		userId: null,
@@ -496,7 +500,7 @@ function timeBoundaryClient(time: unknown, date: unknown) {
 				emulators: false,
 				timing: "realtime_noloads",
 				values: {v1: "hard"},
-				players: [{rel: "guest", name: "Guest"}],
+				players: {data: [{rel: "guest", name: "Guest"}]},
 				runs: [{place: 3, run}],
 			},
 		},
@@ -519,6 +523,87 @@ it.each(["2024-02-29", null])(
 		expect(leaderboard.fetchedAt).toMatch(/Z$/);
 	},
 );
+
+function leaderboardPayload(
+	players: unknown = {data: []},
+	runs: unknown[] = [],
+): {data: Record<string, unknown>} {
+	return {
+		data: {
+			game: "g1",
+			category: "c1",
+			level: "l1",
+			platform: "p1",
+			region: "r1",
+			emulators: false,
+			timing: "realtime_noloads",
+			values: {v1: "hard"},
+			players,
+			runs,
+		},
+	};
+}
+
+it("accepts an empty embedded player list and empty leaderboard", async () => {
+	const {client} = clientWith({
+		"/api/v1/leaderboards/g1/level/l1/c1": leaderboardPayload(),
+	});
+	await expect(
+		client.getLeaderboard(resolvedLookup, 20),
+	).resolves.toMatchObject({
+		state: "not_found",
+		entries: [],
+	});
+});
+
+it.each([
+	["missing players", undefined],
+	["array players", []],
+	["missing players data", {}],
+	["non-array players data", {data: null}],
+])("rejects %s in an HTTP leaderboard response", async (_label, players) => {
+	const payload = leaderboardPayload(players);
+	if (players === undefined) delete payload.data.players;
+	const {client} = clientWith({
+		"/api/v1/leaderboards/g1/level/l1/c1": payload,
+	});
+	await expect(client.getLeaderboard(resolvedLookup, 20)).rejects.toMatchObject(
+		{
+			code: "invalid_payload",
+		},
+	);
+});
+
+it("rejects a run player reference missing from embedded players", async () => {
+	const run = {
+		id: "orphan",
+		times: {realtime_noloads: "PT1S"},
+		players: [{rel: "user", id: "missing"}],
+	};
+	const {client} = clientWith({
+		"/api/v1/leaderboards/g1/level/l1/c1": leaderboardPayload({data: []}, [
+			{place: 1, run},
+		]),
+	});
+	await expect(client.getLeaderboard(resolvedLookup, 20)).rejects.toMatchObject(
+		{
+			code: "invalid_payload",
+		},
+	);
+});
+
+it("rejects malformed embedded player records", async () => {
+	const {client} = clientWith({
+		"/api/v1/leaderboards/g1/level/l1/c1": leaderboardPayload({
+			data: [{rel: "guest"}],
+		}),
+	});
+	await expect(client.getLeaderboard(resolvedLookup, 20)).rejects.toMatchObject(
+		{
+			code: "invalid_payload",
+		},
+	);
+});
 
 it.each([
 	["-PT1S", "2026-01-01"],
