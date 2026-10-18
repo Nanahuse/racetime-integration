@@ -13,6 +13,8 @@ import {App} from "../ui/dashboard/App";
 
 const sendMessage = vi.fn();
 const sendMessageToBundle = vi.fn();
+const listenFor = vi.fn();
+const unlisten = vi.fn();
 const Replicant = vi.fn(() => ({
 	value: {schemaVersion: 1, races: []},
 	on: (_event: string, listener: (value: unknown) => void) =>
@@ -22,6 +24,8 @@ const Replicant = vi.fn(() => ({
 (window as unknown as {nodecg: unknown}).nodecg = {
 	sendMessage,
 	sendMessageToBundle,
+	listenFor,
+	unlisten,
 	Replicant,
 };
 
@@ -80,6 +84,7 @@ beforeEach(() => {
 							gameMappingsSheet: "GameMappings",
 							categoryMappingsSheet: "CategoryMappings",
 							maxResolvedMappings: 20,
+							allowedRaceOrigins: ["https://racetime.gg"],
 							leaderboardTop: 20,
 						},
 					},
@@ -94,6 +99,8 @@ afterEach(() => {
 	cleanup();
 	sendMessage.mockReset();
 	sendMessageToBundle.mockReset();
+	listenFor.mockReset();
+	unlisten.mockReset();
 });
 
 it("shows the public Player Manager readiness in the header", async () => {
@@ -214,6 +221,7 @@ it("cannot discard edits to switch tabs while a mapping save is in progress", as
 							gameMappingsSheet: "GameMappings",
 							categoryMappingsSheet: "CategoryMappings",
 							maxResolvedMappings: 20,
+							allowedRaceOrigins: ["https://racetime.gg"],
 							leaderboardTop: 20,
 						},
 					},

@@ -1,6 +1,9 @@
 import {
+	DEFAULT_ALLOWED_RACE_ORIGINS,
 	DEFAULT_LEADERBOARD_TOP,
 	DEFAULT_MAX_RESOLVED_MAPPINGS,
+	normalizeAllowedRaceOrigin,
+	normalizeAllowedRaceOrigins,
 	type SettingsState,
 	type Settings as SettingsValue,
 	type SpreadsheetInitialization,
@@ -34,6 +37,7 @@ type SettingsInput = {
 	spreadsheetId: string | null;
 	gameMappingsSheet: string;
 	categoryMappingsSheet: string;
+	allowedRaceOrigins: string[];
 	// null means the field is invalid or empty; saving is blocked.
 	maxResolvedMappings: number | null;
 	leaderboardTop: number | null;
@@ -67,6 +71,11 @@ export function Settings({
 	const [urlInput, setUrlInput] = useState("");
 	const [gameSheet, setGameSheet] = useState("GameMappings");
 	const [categorySheet, setCategorySheet] = useState("CategoryMappings");
+	const [allowedRaceOrigins, setAllowedRaceOrigins] = useState<string[]>([
+		...DEFAULT_ALLOWED_RACE_ORIGINS,
+	]);
+	const [originInput, setOriginInput] = useState("");
+	const [originError, setOriginError] = useState<string | null>(null);
 	const [maxMappingsInput, setMaxMappingsInput] = useState(
 		String(DEFAULT_MAX_RESOLVED_MAPPINGS),
 	);
@@ -87,6 +96,7 @@ export function Settings({
 		spreadsheetId: spreadsheetIdFromInput(urlInput),
 		gameMappingsSheet: gameSheet.trim(),
 		categoryMappingsSheet: categorySheet.trim(),
+		allowedRaceOrigins: [...allowedRaceOrigins],
 		maxResolvedMappings: parseMaxMappings(maxMappingsInput),
 		leaderboardTop: parseLeaderboardTop(leaderboardTopInput),
 	});
@@ -106,6 +116,9 @@ export function Settings({
 		setUrlInput(state.settings.spreadsheetId ?? "");
 		setGameSheet(state.settings.gameMappingsSheet);
 		setCategorySheet(state.settings.categoryMappingsSheet);
+		setAllowedRaceOrigins(
+			normalizeAllowedRaceOrigins(state.settings.allowedRaceOrigins),
+		);
 		setMaxMappingsInput(String(state.settings.maxResolvedMappings));
 		setLeaderboardTopInput(String(state.settings.leaderboardTop));
 	}, []);
@@ -123,8 +136,36 @@ export function Settings({
 	}, [load]);
 
 	const inputsDirty = baseline
-		? JSON.stringify(currentInput()) !== JSON.stringify(baseline.settings)
+		? (() => {
+				const current = currentInput();
+				const comparable = (input: SettingsInput) => ({
+					spreadsheetId: input.spreadsheetId,
+					gameMappingsSheet: input.gameMappingsSheet,
+					categoryMappingsSheet: input.categoryMappingsSheet,
+					allowedRaceOrigins: [...input.allowedRaceOrigins].sort(),
+					maxResolvedMappings: input.maxResolvedMappings,
+					leaderboardTop: input.leaderboardTop,
+				});
+				return (
+					JSON.stringify(comparable(current)) !==
+					JSON.stringify(comparable(baseline.settings))
+				);
+			})()
 		: false;
+
+	const addAllowedOrigin = () => {
+		if (busy || initializing) return;
+		try {
+			const origin = normalizeAllowedRaceOrigin(originInput);
+			if (allowedRaceOrigins.includes(origin))
+				throw new TypeError("正規化後に重複するOriginは登録できません。");
+			setAllowedRaceOrigins((current) => [...current, origin]);
+			setOriginInput("");
+			setOriginError(null);
+		} catch (cause) {
+			setOriginError(errorMessage(cause));
+		}
+	};
 
 	useEffect(() => {
 		onStateChange?.({dirty: inputsDirty, busy: busy || initializing});
@@ -176,6 +217,7 @@ export function Settings({
 			spreadsheetId: input.spreadsheetId,
 			gameMappingsSheet: input.gameMappingsSheet,
 			categoryMappingsSheet: input.categoryMappingsSheet,
+			allowedRaceOrigins: input.allowedRaceOrigins,
 			maxResolvedMappings: input.maxResolvedMappings,
 			leaderboardTop: input.leaderboardTop,
 		};
@@ -190,7 +232,15 @@ export function Settings({
 			applySettings(next);
 			setConflict({status: "none"});
 			setComparison(null);
-			if (next.settings.spreadsheetId === null) {
+			setOriginError(null);
+			const spreadsheetChanged =
+				baseline.settings.spreadsheetId !== input.spreadsheetId ||
+				baseline.settings.gameMappingsSheet !== input.gameMappingsSheet ||
+				baseline.settings.categoryMappingsSheet !== input.categoryMappingsSheet;
+			if (!spreadsheetChanged) {
+				setValidation((current) => (current === "ok" ? "ok" : "unknown"));
+				setMessage("保存しました。Spreadsheet接続の確認は行っていません。");
+			} else if (next.settings.spreadsheetId === null) {
 				setValidation("unknown");
 				setMessage(
 					"Spreadsheetを未設定として保存しました（マッピングは無効）。",
@@ -362,6 +412,58 @@ export function Settings({
 					</div>
 				</div>
 			)}
+			<section className='subpanel'>
+				<h3>RaceTime接続設定</h3>
+				<strong>接続許可先</strong>
+				{allowedRaceOrigins.length === 0 ? (
+					<p className='muted'>接続許可先はありません。</p>
+				) : (
+					<ul className='list allowed-origins'>
+						{allowedRaceOrigins.map((origin) => (
+							<li key={origin}>
+								<span>{origin}</span>
+								<button
+									type='button'
+									disabled={busy || initializing}
+									aria-label={`${origin}を削除`}
+									onClick={() => {
+										setAllowedRaceOrigins((current) =>
+											current.filter((item) => item !== origin),
+										);
+										setOriginError(null);
+									}}
+								>
+									削除
+								</button>
+							</li>
+						))}
+					</ul>
+				)}
+				<Field label='新しい接続先'>
+					<div className='formrow'>
+						<input
+							value={originInput}
+							placeholder='https://racetime.gg または http://localhost:8000'
+							disabled={busy || initializing}
+							onChange={(event) => {
+								setOriginInput(event.target.value);
+								setOriginError(null);
+							}}
+						/>
+						<button
+							type='button'
+							disabled={busy || initializing}
+							onClick={addAllowedOrigin}
+						>
+							追加
+						</button>
+					</div>
+				</Field>
+				{originError && <Callout tone='error'>{originError}</Callout>}
+				<p className='muted'>
+					許可された接続先のみ監視に使用できます。HTTPはlocalhostなどのループバック接続先に限ります。
+				</p>
+			</section>
 			<form
 				className='settings-form'
 				onSubmit={(event) => {

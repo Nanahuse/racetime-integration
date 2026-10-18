@@ -210,9 +210,43 @@ button.active,
 	color: var(--muted);
 }
 
-.list .force-unwatch {
+.allowed-origins li {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.allowed-origins li span {
+	min-width: 0;
+	flex: 1;
+	overflow-wrap: anywhere;
+}
+
+.allowed-origins li button {
 	width: auto;
-	margin-top: 6px;
+	flex: none;
+}
+
+.event-log ol {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	max-height: 320px;
+	overflow: auto;
+}
+
+.event-log li {
+	display: grid;
+	grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+	gap: 6px 10px;
+	padding: 5px 0;
+	border-bottom: 1px solid var(--border);
+	font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+	font-size: 12px;
+}
+
+.event-log li span {
+	overflow-wrap: anywhere;
 }
 
 .formrow {

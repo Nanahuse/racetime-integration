@@ -9,7 +9,7 @@ import {
 	resolveWebSocketUrl,
 } from "../src/integrations/racetime/url";
 import {RaceWatcher} from "../src/integrations/racetime/watcher";
-import {deferred, dto, FakeSocket, flush, payload, url} from "./fixtures";
+import {dto, FakeSocket, flush, payload, url} from "./fixtures";
 
 afterEach(() => vi.useRealTimers());
 it("normalizes result status and preserves canonical race identity, rank and time", () => {
@@ -188,6 +188,33 @@ describe("HTTP boundary", () => {
 	])("rejects unsafe URL %s", (input) => {
 		expect(() => canonicalizeRaceUrl(input)).toThrow();
 	});
+	it("allows configured local origins and preserves their normalized origin", () => {
+		const origins = ["https://racetime.gg", "http://localhost:8000"];
+		const local = canonicalizeRaceUrl(
+			"http://localhost:8000/smw/dazzling-geralt-2972/?x=1",
+			origins,
+		);
+		expect(local).toEqual({
+			canonicalUrl: "http://localhost:8000/smw/dazzling-geralt-2972",
+			categorySlug: "smw",
+			raceSlug: "dazzling-geralt-2972",
+			dataUrl: "http://localhost:8000/smw/dazzling-geralt-2972/data",
+		});
+		expect(() =>
+			canonicalizeRaceUrl("http://localhost:8000/game/race"),
+		).toThrow();
+		expect(() =>
+			canonicalizeRaceUrl("http://localhost:8001/game/race", origins),
+		).toThrow();
+		expect(
+			canonicalizeRaceUrl("http://127.0.0.1:8000/game/race", [
+				"http://127.0.0.1:8000",
+			]).canonicalUrl,
+		).toBe("http://127.0.0.1:8000/game/race");
+		expect(
+			canonicalizeRaceUrl("https://racetime.gg/game/race").canonicalUrl,
+		).toBe(url);
+	});
 	it("restricts WebSocket destinations", () => {
 		expect(resolveWebSocketUrl("/ws/race/test")).toBe(
 			"wss://racetime.gg/ws/race/test",
@@ -199,6 +226,22 @@ describe("HTTP boundary", () => {
 			"wss://u@racetime.gg/x",
 		])
 			expect(() => resolveWebSocketUrl(input)).toThrow();
+	});
+	it("resolves local WebSocket endpoints on the requested race origin", () => {
+		const local = "http://localhost:8000/smw/race-001";
+		expect(resolveWebSocketUrl("/ws/race/test", local)).toBe(
+			"ws://localhost:8000/ws/race/test",
+		);
+		expect(resolveWebSocketUrl("ws://localhost:8000/ws/race/test", local)).toBe(
+			"ws://localhost:8000/ws/race/test",
+		);
+		for (const input of [
+			"ws://localhost:8001/ws/race/test",
+			"ws://evil.test/ws/race/test",
+			"wss://localhost:8000/ws/race/test",
+			"ws://user@localhost:8000/ws/race/test",
+		])
+			expect(() => resolveWebSocketUrl(input, local)).toThrow();
 	});
 	it.each([
 		[404, "not_found"],
@@ -301,30 +344,85 @@ describe("WebSocket monitoring", () => {
 		});
 		return {client, sockets, onUpdate, watcher};
 	};
-	it("refreshes after open, coalesces race.data, and ignores chat/malformed messages", async () => {
+	it("adopts validated race.data directly without HTTP refreshes", async () => {
 		const {watcher, sockets, client} = setup();
 		await watcher.start();
 		await flush();
 		sockets[0]!.open();
 		await flush();
-		expect(client.fetchRaceDetail).toHaveBeenCalledTimes(2);
+		expect(client.fetchRaceDetail).toHaveBeenCalledTimes(1);
 		await vi.advanceTimersByTimeAsync(5000);
-		expect(client.fetchRaceDetail).toHaveBeenCalledTimes(2);
+		expect(client.fetchRaceDetail).toHaveBeenCalledTimes(1);
 		sockets[0]!.message("{");
 		sockets[0]!.message('{"type":"chat.message"}');
-		expect(client.fetchRaceDetail).toHaveBeenCalledTimes(2);
-		const pending = deferred<ReturnType<typeof dto>>();
-		client.fetchRaceDetail.mockReturnValueOnce(pending.promise);
-		sockets[0]!.message('{"type":"race.data"}');
-		sockets[0]!.message('{"type":"race.data"}');
-		sockets[0]!.message('{"type":"race.data"}');
-		client.fetchRaceDetail.mockResolvedValueOnce(dto(3));
-		pending.resolve(dto(2));
+		const pending = payload(2, "race", "pending");
+		sockets[0]!.raceData(pending);
+		sockets[0]!.raceData(pending);
+		sockets[0]!.raceData(payload(3, "race", "in_progress"));
 		await flush();
-		expect(client.fetchRaceDetail).toHaveBeenCalledTimes(4);
+		expect(client.fetchRaceDetail).toHaveBeenCalledTimes(1);
 		expect(watcher.snapshot().race?.version).toBe(3);
+		expect(watcher.snapshot().race?.status).toBe("in_progress");
 		watcher.stop();
 		expect(vi.getTimerCount()).toBe(0);
+	});
+	it("rejects invalid, mismatched, and stale race.data without closing the socket", async () => {
+		const onInvalidMessage = vi.fn();
+		const client = {fetchRaceDetail: vi.fn(async () => dto())};
+		const sockets: FakeSocket[] = [];
+		const watcher = new RaceWatcher({
+			client,
+			canonical: canonicalizeRaceUrl(url),
+			socketFactory: () => {
+				const socket = new FakeSocket();
+				sockets.push(socket);
+				return socket;
+			},
+			onUpdate: vi.fn(),
+			onInvalidMessage,
+		});
+		await watcher.start();
+		sockets[0]!.open();
+		sockets[0]!.raceData(payload(3, "race", "pending"));
+		sockets[0]!.raceData(payload(2, "race", "open"));
+		sockets[0]!.message(
+			JSON.stringify({type: "race.data", version: 4, race: payload(5)}),
+		);
+		sockets[0]!.raceData(payload(4, "another", "pending"));
+		sockets[0]!.message(
+			JSON.stringify({type: "race.data", version: 4, race: {}}),
+		);
+		expect(watcher.snapshot().race).toMatchObject({
+			version: 3,
+			status: "pending",
+		});
+		expect(onInvalidMessage).toHaveBeenCalledTimes(3);
+		expect(sockets[0]!.close).not.toHaveBeenCalled();
+		watcher.stop();
+	});
+	it("ignores messages from a socket after its connection epoch ends", async () => {
+		const {watcher, sockets, client} = setup();
+		await watcher.start();
+		const oldSocket = sockets[0]!;
+		oldSocket.open();
+		oldSocket.raceData(payload(2, "race", "pending"));
+		oldSocket.fail();
+		client.fetchRaceDetail.mockResolvedValueOnce(dto(2, "race", "pending"));
+		await vi.advanceTimersByTimeAsync(10);
+		expect(sockets).toHaveLength(2);
+		oldSocket.raceData(payload(99, "race", "finished"));
+		await flush();
+		expect(watcher.snapshot().race).toMatchObject({
+			version: 2,
+			status: "pending",
+		});
+		sockets[1]!.open();
+		sockets[1]!.raceData(payload(3, "race", "in_progress"));
+		expect(watcher.snapshot().race).toMatchObject({
+			version: 3,
+			status: "in_progress",
+		});
+		watcher.stop();
 	});
 	it("rejects initial HTTP failure without scheduling reconnect", async () => {
 		const {watcher, sockets, client} = setup();
@@ -347,21 +445,31 @@ describe("WebSocket monitoring", () => {
 		expect(sockets).toHaveLength(3);
 		watcher.stop();
 	});
-	it("retains the last good snapshot and retries a failed refresh", async () => {
+	it("resets reconnect backoff after a WebSocket connection opens", async () => {
+		const {watcher, sockets} = setup();
+		await watcher.start();
+		sockets[0]!.fail();
+		await vi.advanceTimersByTimeAsync(10);
+		sockets[1]!.open();
+		sockets[1]!.fail();
+		await vi.advanceTimersByTimeAsync(9);
+		expect(sockets).toHaveLength(2);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(sockets).toHaveLength(3);
+		watcher.stop();
+	});
+	it("retains the last good snapshot when reconnect HTTP fails", async () => {
 		const {watcher, sockets, client} = setup();
 		await watcher.start();
-		await flush();
-		sockets[0]!.open();
-		await flush();
 		client.fetchRaceDetail.mockRejectedValueOnce(new Error("HTTP 503"));
-		sockets[0]!.message('{"type":"race.data"}');
-		await flush();
+		sockets[0]!.fail();
+		await vi.advanceTimersByTimeAsync(10);
 		expect(watcher.snapshot()).toMatchObject({
 			connection: "reconnecting",
 			race: {version: 1},
 		});
 		client.fetchRaceDetail.mockResolvedValueOnce(dto(2));
-		await vi.advanceTimersByTimeAsync(10);
+		await vi.advanceTimersByTimeAsync(20);
 		expect(watcher.snapshot().race?.version).toBe(2);
 		watcher.stop();
 	});
@@ -371,23 +479,15 @@ describe("WebSocket monitoring", () => {
 		await flush();
 		sockets[0]!.open();
 		await flush();
-		const pending = deferred<ReturnType<typeof dto>>();
-		client.fetchRaceDetail.mockReturnValueOnce(pending.promise);
-		sockets[0]!.message('{"type":"race.data"}');
 		sockets[0]!.fail();
 		client.fetchRaceDetail.mockResolvedValueOnce(dto(3));
 		await vi.advanceTimersByTimeAsync(10);
-		pending.resolve(dto(99));
-		await flush();
 		expect(watcher.snapshot().race?.version).toBe(3);
-		const last = deferred<ReturnType<typeof dto>>();
-		client.fetchRaceDetail.mockReturnValueOnce(last.promise);
 		sockets[1]!.open();
 		await flush();
 		watcher.stop();
 		const calls = onUpdate.mock.calls.length;
-		last.resolve(dto(100));
-		await flush();
+		sockets[1]!.raceData(payload(100));
 		expect(onUpdate).toHaveBeenCalledTimes(calls);
 		expect(vi.getTimerCount()).toBe(0);
 	});

@@ -8,7 +8,7 @@
 		"declaration": true,
 		"strict": true,
 		"types": [],
-		"lib": ["ES2022"],
+		"lib": ["ES2022", "DOM"],
 		"skipLibCheck": false
 	},
 	"include": ["src/**/*.ts"]

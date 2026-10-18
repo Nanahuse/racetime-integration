@@ -254,7 +254,7 @@ it("publishes identical ISO race models through direct requests, messages and Re
 		);
 		expect(fetchMessage).toMatchObject({ok: true, data: {race: initial}});
 		sockets[0]!.open();
-		await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(4));
+		await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(3));
 		await flush();
 		const updatedPayload = {
 			...payload(2, "race", "finished"),
@@ -271,7 +271,7 @@ it("publishes identical ISO race models through direct requests, messages and Re
 			],
 		};
 		fetchImpl.mockImplementation(async () => Response.json(updatedPayload));
-		sockets[0]!.message('{"type":"race.data"}');
+		sockets[0]!.raceData(updatedPayload);
 		await vi.waitFor(async () =>
 			expect(await api.request("getRace", {url})).toMatchObject({
 				ok: true,
@@ -302,13 +302,11 @@ it("publishes identical ISO race models through direct requests, messages and Re
 		fetchImpl.mockImplementation(async () =>
 			Response.json({...updatedPayload, opened_at: "invalid"}),
 		);
-		sockets[0]!.message('{"type":"race.data"}');
-		await vi.waitFor(async () =>
-			expect(await api.request("getRace", {url})).toMatchObject({
-				ok: true,
-				data: {connection: "reconnecting"},
-			}),
-		);
+		sockets[0]!.raceData({...updatedPayload, opened_at: "invalid"});
+		expect(await api.request("getRace", {url})).toMatchObject({
+			ok: true,
+			data: {connection: "connected", error: null},
+		});
 		await assertPublished(race);
 		expect(await api.request("fetchRace", {url})).toMatchObject({
 			ok: false,
@@ -415,6 +413,7 @@ it("loads the built extension, subscribes to the v3 event, and refreshes its pub
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		},
@@ -502,10 +501,221 @@ it("initializes from a Proxy-backed settings Replicant and reads the defaults", 
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		},
 	});
+});
+it("migrates allowed RaceTime origins without changing existing settings or revision", async () => {
+	const stored = {
+		revision: 7,
+		settings: {
+			spreadsheetId: "abc_123-XYZ",
+			gameMappingsSheet: "Games",
+			categoryMappingsSheet: "Mappings",
+			maxResolvedMappings: 35,
+			leaderboardTop: 12,
+		},
+	} as SettingsState;
+	const [api, replicants, warn] = loadExtension(stored);
+	const expected = {
+		revision: 7,
+		settings: {
+			spreadsheetId: "abc_123-XYZ",
+			gameMappingsSheet: "Games",
+			categoryMappingsSheet: "Mappings",
+			maxResolvedMappings: 35,
+			leaderboardTop: 12,
+			allowedRaceOrigins: ["https://racetime.gg"],
+		},
+	};
+	expect(await api.request("getSettings", undefined)).toEqual({
+		ok: true,
+		data: expected,
+	});
+	expect(replicants.get(SETTINGS_REPLICANT)?.stored()).toEqual(expected);
+	expect(warn).not.toHaveBeenCalled();
+});
+
+it("does not silently replace invalid persisted allowed origins", () => {
+	const stored = {
+		revision: 3,
+		settings: {
+			spreadsheetId: "abc_123-XYZ",
+			gameMappingsSheet: "Games",
+			categoryMappingsSheet: "Mappings",
+			maxResolvedMappings: 35,
+			leaderboardTop: 12,
+			allowedRaceOrigins: ["http://example.com:8000"],
+		},
+	} as SettingsState;
+	expect(() => loadExtension(stored)).toThrow(/HTTPを許可できるのはlocalhost/);
+});
+
+it("rejects invalid allowed origins without updating Settings", async () => {
+	const invalidLists: unknown[] = [
+		["ftp://racetime.gg"],
+		["http://example.com:8000"],
+		["http://localhost:8000/path"],
+		["https://user@racetime.gg"],
+		["https://racetime.gg", "https://RACETIME.GG:443/"],
+		["not a URL"],
+	];
+	for (const allowedRaceOrigins of invalidLists) {
+		const [api] = loadExtension();
+		const result = await api.request("updateSettings", {
+			settings: {
+				spreadsheetId: null,
+				gameMappingsSheet: "GameMappings",
+				categoryMappingsSheet: "CategoryMappings",
+				maxResolvedMappings: 20,
+				leaderboardTop: 20,
+				allowedRaceOrigins,
+			} as never,
+			expectedRevision: 0,
+		});
+		expect(result).toMatchObject({
+			ok: false,
+			error: {code: "invalid_input"},
+		});
+		expect(await api.request("getSettings", undefined)).toMatchObject({
+			ok: true,
+			data: {
+				revision: 0,
+				settings: {allowedRaceOrigins: ["https://racetime.gg"]},
+			},
+		});
+	}
+	const [api] = loadExtension();
+	expect(
+		await api.request("updateSettings", {
+			settings: {
+				spreadsheetId: null,
+				gameMappingsSheet: "GameMappings",
+				categoryMappingsSheet: "CategoryMappings",
+				maxResolvedMappings: 20,
+				leaderboardTop: 20,
+				allowedRaceOrigins: [],
+			},
+			expectedRevision: 0,
+		}),
+	).toMatchObject({
+		ok: true,
+		data: {revision: 1, settings: {allowedRaceOrigins: []}},
+	});
+});
+
+it("uses the current allowlist for get, fetch, watch and force-unwatch requests", async () => {
+	const [api] = loadExtension();
+	for (const operation of [
+		"getRace",
+		"fetchRace",
+		"watchRace",
+		"forceUnwatchRace",
+	] as const) {
+		expect(
+			await api.request(operation, {url: "http://localhost:8000/game/race"}),
+		).toMatchObject({
+			ok: false,
+			error: {code: "invalid_url"},
+		});
+	}
+	expect(
+		await api.request("updateSettings", {
+			settings: {
+				spreadsheetId: null,
+				gameMappingsSheet: "GameMappings",
+				categoryMappingsSheet: "CategoryMappings",
+				maxResolvedMappings: 20,
+				leaderboardTop: 20,
+				allowedRaceOrigins: ["http://localhost:8000"],
+			},
+			expectedRevision: 0,
+		}),
+	).toMatchObject({ok: true, data: {revision: 1}});
+	expect(
+		await api.request("getRace", {url: "http://localhost:8000/game/race"}),
+	).toEqual({ok: true, data: null});
+});
+
+it("applies origin updates immediately and releases only removed-origin watches", async () => {
+	const sockets: FakeSocket[] = [];
+	const socketUrls: string[] = [];
+	const fetchImpl = vi
+		.fn<typeof fetch>()
+		.mockImplementation(async () => Response.json(payload()));
+	vi.stubGlobal("fetch", fetchImpl);
+	vi.stubGlobal(
+		"WebSocket",
+		class extends FakeSocket {
+			constructor(target: string) {
+				super();
+				sockets.push(this);
+				socketUrls.push(target);
+			}
+		},
+	);
+	const localUrl = "http://localhost:8000/game/race";
+	const [api, replicants, , , stop] = loadExtension({
+		revision: 0,
+		settings: {
+			spreadsheetId: null,
+			gameMappingsSheet: "GameMappings",
+			categoryMappingsSheet: "CategoryMappings",
+			maxResolvedMappings: 20,
+			leaderboardTop: 20,
+			allowedRaceOrigins: ["https://racetime.gg", "http://localhost:8000"],
+		},
+	});
+	try {
+		const publicWatch = await api.request("watchRace", {url});
+		const localWatch = await api.request("watchRace", {url: localUrl});
+		expect(publicWatch.ok).toBe(true);
+		expect(localWatch.ok).toBe(true);
+		expect(socketUrls).toEqual([
+			"wss://racetime.gg/ws/race/race",
+			"ws://localhost:8000/ws/race/race",
+		]);
+		const publicWatchId = publicWatch.ok ? publicWatch.data.watchId : "";
+		const localWatchId = localWatch.ok ? localWatch.data.watchId : "";
+		const update = (allowedRaceOrigins: string[], expectedRevision: number) =>
+			api.request("updateSettings", {
+				settings: {
+					spreadsheetId: null,
+					gameMappingsSheet: "GameMappings",
+					categoryMappingsSheet: "CategoryMappings",
+					maxResolvedMappings: 20,
+					leaderboardTop: 20,
+					allowedRaceOrigins,
+				},
+				expectedRevision,
+			});
+		const removed = await update(["https://racetime.gg"], 0);
+		expect(removed).toMatchObject({ok: true, data: {revision: 1}});
+		expect(sockets[0]!.close).not.toHaveBeenCalled();
+		expect(sockets[1]!.close).toHaveBeenCalledOnce();
+		expect(replicants.get("racetime-races")?.stored()).toMatchObject({
+			races: [{url}],
+		});
+		expect(await api.request("getWatch", {watchId: localWatchId})).toEqual({
+			ok: true,
+			data: null,
+		});
+		expect(
+			await api.request("getWatch", {watchId: publicWatchId}),
+		).toMatchObject({ok: true, data: {url}});
+		const added = await update(
+			["https://racetime.gg", "http://localhost:8000"],
+			1,
+		);
+		expect(added).toMatchObject({ok: true, data: {revision: 2}});
+		const restartedLocalWatch = await api.request("watchRace", {url: localUrl});
+		expect(restartedLocalWatch.ok).toBe(true);
+		expect(socketUrls[2]).toBe("ws://localhost:8000/ws/race/race");
+	} finally {
+		stop();
+	}
 });
 it("loads persisted settings exposed through a Proxy-backed Replicant", async () => {
 	const [api] = loadExtension({
@@ -515,6 +725,7 @@ it("loads persisted settings exposed through a Proxy-backed Replicant", async ()
 			gameMappingsSheet: "Games",
 			categoryMappingsSheet: "Mappings",
 			maxResolvedMappings: 20,
+			allowedRaceOrigins: ["https://racetime.gg"],
 			leaderboardTop: 20,
 		},
 	});
@@ -527,6 +738,7 @@ it("loads persisted settings exposed through a Proxy-backed Replicant", async ()
 				gameMappingsSheet: "Games",
 				categoryMappingsSheet: "Mappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		},
@@ -541,6 +753,7 @@ it("persists updates through the Replicant and restarts from the saved settings"
 				gameMappingsSheet: "Games",
 				categoryMappingsSheet: "Other",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 			expectedRevision: 0,
@@ -554,6 +767,7 @@ it("persists updates through the Replicant and restarts from the saved settings"
 				gameMappingsSheet: "Games",
 				categoryMappingsSheet: "Other",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		},
@@ -566,6 +780,7 @@ it("persists updates through the Replicant and restarts from the saved settings"
 			gameMappingsSheet: "Games",
 			categoryMappingsSheet: "Other",
 			maxResolvedMappings: 20,
+			allowedRaceOrigins: ["https://racetime.gg"],
 			leaderboardTop: 20,
 		},
 	});
@@ -579,6 +794,7 @@ it("persists updates through the Replicant and restarts from the saved settings"
 				gameMappingsSheet: "Games",
 				categoryMappingsSheet: "Other",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		},
@@ -603,6 +819,7 @@ it("fills the default expansion limit for settings persisted before it existed",
 				gameMappingsSheet: "Games",
 				categoryMappingsSheet: "Mappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		},
@@ -624,6 +841,7 @@ it("persists a changed expansion limit and reloads it", async () => {
 				gameMappingsSheet: "Games",
 				categoryMappingsSheet: "Other",
 				maxResolvedMappings: 50,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 			expectedRevision: 0,
@@ -651,6 +869,7 @@ const DEFAULT_SETTINGS: SettingsState = {
 		gameMappingsSheet: "GameMappings",
 		categoryMappingsSheet: "CategoryMappings",
 		maxResolvedMappings: 20,
+		allowedRaceOrigins: ["https://racetime.gg"],
 		leaderboardTop: 20,
 	},
 };
@@ -664,6 +883,7 @@ it("resets invalid persisted settings to defaults and keeps the extension runnin
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		},
@@ -674,6 +894,7 @@ it("resets invalid persisted settings to defaults and keeps the extension runnin
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		},
@@ -684,6 +905,7 @@ it("resets invalid persisted settings to defaults and keeps the extension runnin
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		},
@@ -694,6 +916,7 @@ it("resets invalid persisted settings to defaults and keeps the extension runnin
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		},
@@ -704,6 +927,7 @@ it("resets invalid persisted settings to defaults and keeps the extension runnin
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		},
@@ -713,6 +937,7 @@ it("resets invalid persisted settings to defaults and keeps the extension runnin
 				spreadsheetId: null,
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			} as never,
 		},
@@ -748,6 +973,7 @@ it("resets when the persisted expansion limit is invalid", async () => {
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: maxResolvedMappings as never,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		});
@@ -779,6 +1005,7 @@ it("rejects invalid leaderboardTop values without changing Settings", async () =
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: leaderboardTop as never,
 			},
 			expectedRevision: 0,
@@ -798,6 +1025,7 @@ it("starts even when the persisted settings omit gameMappingsSheet", async () =>
 			spreadsheetId: null,
 			categoryMappingsSheet: "CategoryMappings",
 			maxResolvedMappings: 20,
+			allowedRaceOrigins: ["https://racetime.gg"],
 			leaderboardTop: 20,
 		} as never,
 	});
@@ -816,6 +1044,7 @@ it("keeps valid persisted settings unchanged", async () => {
 			gameMappingsSheet: "Games",
 			categoryMappingsSheet: "Mappings",
 			maxResolvedMappings: 20,
+			allowedRaceOrigins: ["https://racetime.gg"],
 			leaderboardTop: 20,
 		},
 	};

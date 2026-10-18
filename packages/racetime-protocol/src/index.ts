@@ -61,6 +61,49 @@ export const SETTINGS_REPLICANT = "racetime-settings";
 /** Default cap on the number of mappings one Any expansion may produce. */
 export const DEFAULT_MAX_RESOLVED_MAPPINGS = 20;
 export const DEFAULT_LEADERBOARD_TOP = 20;
+export const DEFAULT_ALLOWED_RACE_ORIGINS = ["https://racetime.gg"] as const;
+
+export function normalizeAllowedRaceOrigin(value: unknown): string {
+	if (typeof value !== "string" || value.trim() === "")
+		throw new TypeError("Originは空にできません。");
+	const input = value.trim();
+	let parsed: URL;
+	try {
+		parsed = new URL(input);
+	} catch {
+		throw new TypeError("有効なOrigin URLを入力してください。");
+	}
+	if (parsed.protocol !== "https:" && parsed.protocol !== "http:")
+		throw new TypeError("OriginはHTTPSまたはループバックHTTPにしてください。");
+	if (parsed.username || parsed.password)
+		throw new TypeError("Originにユーザー名やパスワードは指定できません。");
+	if (
+		!/^https?:\/\/[^/?#\\]+\/?$/i.test(input) ||
+		parsed.pathname !== "/" ||
+		parsed.search !== "" ||
+		parsed.hash !== "" ||
+		input.includes("?") ||
+		input.includes("#")
+	)
+		throw new TypeError("Originにパス、クエリ、フラグメントは指定できません。");
+	if (
+		parsed.protocol === "http:" &&
+		!new Set(["localhost", "127.0.0.1", "[::1]"]).has(parsed.hostname)
+	)
+		throw new TypeError(
+			"HTTPを許可できるのはlocalhostまたはループバックIPだけです。",
+		);
+	return parsed.origin;
+}
+
+export function normalizeAllowedRaceOrigins(value: unknown): string[] {
+	if (!Array.isArray(value))
+		throw new TypeError("allowedRaceOriginsはOrigin URLの配列にしてください。");
+	const normalized = value.map(normalizeAllowedRaceOrigin);
+	if (new Set(normalized).size !== normalized.length)
+		throw new TypeError("正規化後に重複するOriginは登録できません。");
+	return normalized;
+}
 export type PlayerSnapshot = {
 	playerId: string;
 	revision: number;
@@ -207,6 +250,7 @@ export type Settings = {
 	spreadsheetId: string | null;
 	gameMappingsSheet: string;
 	categoryMappingsSheet: string;
+	allowedRaceOrigins: string[];
 	/** Maximum number of mappings a single Any expansion may produce. */
 	maxResolvedMappings: number;
 	leaderboardTop: number;

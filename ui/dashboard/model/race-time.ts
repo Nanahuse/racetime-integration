@@ -14,6 +14,18 @@ export function formatRaceInstant(value: string | null): string {
 	}).format(instant.epochMilliseconds);
 }
 
+/** Displays a timestamp as a local wall-clock time for compact event logs. */
+export function formatRaceClock(value: string | null): string {
+	const instant = parseRaceInstant(value);
+	if (instant === null) return "未設定";
+	return new Intl.DateTimeFormat(undefined, {
+		hour: "2-digit",
+		minute: "2-digit",
+		second: "2-digit",
+		hourCycle: "h23",
+	}).format(instant.epochMilliseconds);
+}
+
 function fraction(duration: RaceDuration): string {
 	const digits =
 		`${duration.milliseconds}`.padStart(3, "0") +

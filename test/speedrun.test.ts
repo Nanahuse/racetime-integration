@@ -340,6 +340,7 @@ it("validates the SRC category against the game resolved from the game link", as
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		},

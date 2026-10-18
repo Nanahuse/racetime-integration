@@ -29,6 +29,7 @@ const initial: SettingsState = {
 		gameMappingsSheet: "GameMappings",
 		categoryMappingsSheet: "CategoryMappings",
 		maxResolvedMappings: 20,
+		allowedRaceOrigins: ["https://racetime.gg"],
 		leaderboardTop: 20,
 	},
 };
@@ -41,6 +42,7 @@ let updateResult: () => Envelope | Promise<Envelope> = () => ({
 			gameMappingsSheet: "GameMappings",
 			categoryMappingsSheet: "CategoryMappings",
 			maxResolvedMappings: 20,
+			allowedRaceOrigins: ["https://racetime.gg"],
 			leaderboardTop: 20,
 		},
 	},
@@ -62,6 +64,7 @@ beforeEach(() => {
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		},
@@ -87,6 +90,111 @@ afterEach(() => {
 it("shows 未設定 when no spreadsheet is configured", async () => {
 	render(<Settings />);
 	expect(await screen.findByText("未設定")).toBeTruthy();
+	expect(screen.getByText("https://racetime.gg")).toBeTruthy();
+});
+
+it("adds and saves a normalized RaceTime origin without checking the spreadsheet", async () => {
+	const next: SettingsState = {
+		revision: 1,
+		settings: {
+			...initial.settings,
+			allowedRaceOrigins: ["https://racetime.gg", "http://localhost:8000"],
+		},
+	};
+	updateResult = () => ({ok: true, data: next});
+	render(<Settings />);
+	await screen.findByText("未設定");
+	sendMessage.mockClear();
+	fireEvent.change(screen.getByLabelText("新しい接続先"), {
+		target: {value: "http://LOCALHOST:8000/"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "追加"}));
+	expect(screen.getByText("http://localhost:8000")).toBeTruthy();
+	expect(sendMessage).not.toHaveBeenCalledWith(
+		"racetime.v4.updateSettings",
+		expect.anything(),
+	);
+	fireEvent.click(screen.getByRole("button", {name: "保存"}));
+	expect(
+		await screen.findByText(
+			"保存しました。Spreadsheet接続の確認は行っていません。",
+		),
+	).toBeTruthy();
+	expect(sendMessage).toHaveBeenCalledWith(
+		"racetime.v4.updateSettings",
+		expect.objectContaining({
+			settings: expect.objectContaining({
+				allowedRaceOrigins: ["https://racetime.gg", "http://localhost:8000"],
+			}),
+		}),
+	);
+});
+
+it("allows deleting the default origin and saving an empty allowlist", async () => {
+	const next: SettingsState = {
+		revision: 1,
+		settings: {...initial.settings, allowedRaceOrigins: []},
+	};
+	updateResult = () => ({ok: true, data: next});
+	render(<Settings />);
+	await screen.findByText("未設定");
+	sendMessage.mockClear();
+	fireEvent.click(
+		screen.getByRole("button", {name: "https://racetime.ggを削除"}),
+	);
+	expect(screen.getByText("接続許可先はありません。")).toBeTruthy();
+	expect(sendMessage).not.toHaveBeenCalledWith(
+		"racetime.v4.updateSettings",
+		expect.anything(),
+	);
+	fireEvent.click(screen.getByRole("button", {name: "保存"}));
+	expect(
+		await screen.findByText(
+			"保存しました。Spreadsheet接続の確認は行っていません。",
+		),
+	).toBeTruthy();
+	expect(sendMessage).toHaveBeenCalledWith(
+		"racetime.v4.updateSettings",
+		expect.objectContaining({
+			settings: expect.objectContaining({allowedRaceOrigins: []}),
+		}),
+	);
+});
+
+it("rejects duplicate and non-loopback HTTP origins in the editor", async () => {
+	render(<Settings />);
+	await screen.findByText("未設定");
+	const input = screen.getByLabelText("新しい接続先");
+	const invalidInputs: Array<[string, RegExp]> = [
+		["https://RACETIME.GG:443/", /重複するOrigin/],
+		["http://example.com:8000", /HTTPを許可できるのはlocalhost/],
+	];
+	for (const [value, message] of invalidInputs) {
+		fireEvent.change(input, {target: {value}});
+		fireEvent.click(screen.getByRole("button", {name: "追加"}));
+		expect(await screen.findByText(message)).toBeTruthy();
+	}
+	expect(screen.queryByText("接続許可先はありません。")).toBeNull();
+	for (const call of sendMessage.mock.calls)
+		expect(call[0]).not.toBe("racetime.v4.updateSettings");
+});
+
+it("keeps the edited origins when saving fails", async () => {
+	updateResult = () => ({
+		ok: false,
+		error: {code: "settings_changed", message: "stale"},
+	});
+	render(<Settings />);
+	await screen.findByText("未設定");
+	fireEvent.change(screen.getByLabelText("新しい接続先"), {
+		target: {value: "http://localhost:8000"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "追加"}));
+	fireEvent.click(screen.getByRole("button", {name: "保存"}));
+	expect(await screen.findByText("http://localhost:8000")).toBeTruthy();
+	expect(
+		await screen.findByRole("button", {name: "最新設定を採用"}),
+	).toBeTruthy();
 });
 
 it("shows 利用可能 only after a validated save and reverts to 未確認 when edited", async () => {
@@ -113,6 +221,7 @@ it("does not claim validation when the spreadsheet is disabled", async () => {
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		},
@@ -120,7 +229,10 @@ it("does not claim validation when the spreadsheet is disabled", async () => {
 	render(<Settings />);
 	await screen.findByText("未設定");
 	fireEvent.click(screen.getByRole("button", {name: "保存"}));
-	expect(await screen.findByText(/未設定として保存/)).toBeTruthy();
+	expect(
+		await screen.findByText(/Spreadsheet接続の確認は行っていません/),
+	).toBeTruthy();
+	expect(screen.getByText("未設定")).toBeTruthy();
 	expect(screen.queryByText(/両シートを確認しました/)).toBeNull();
 });
 
@@ -339,12 +451,16 @@ it("shows, edits and saves the Any expansion limit", async () => {
 	sendMessage.mockClear();
 	fireEvent.change(input, {target: {value: "30"}});
 	fireEvent.click(screen.getByRole("button", {name: "保存"}));
-	expect(await screen.findByText("利用可能")).toBeTruthy();
+	expect(await screen.findByText("未設定")).toBeTruthy();
+	expect(
+		await screen.findByText(/Spreadsheet接続の確認は行っていません/),
+	).toBeTruthy();
 	expect(sendMessage).toHaveBeenCalledWith(
 		"racetime.v4.updateSettings",
 		expect.objectContaining({
 			settings: expect.objectContaining({
 				maxResolvedMappings: 30,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			}),
 		}),

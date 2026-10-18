@@ -4,9 +4,11 @@ import {
 	eventMessageName as playerEventMessageName,
 } from "@nanahuse/player-manager-protocol";
 import {
+	DEFAULT_ALLOWED_RACE_ORIGINS,
 	DEFAULT_LEADERBOARD_TOP,
 	DEFAULT_MAX_RESOLVED_MAPPINGS,
 	eventMessageName,
+	normalizeAllowedRaceOrigins,
 	OPERATIONS,
 	operationMessageName,
 	RACES_REPLICANT,
@@ -65,6 +67,12 @@ export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 		(error, event) => {
 			nodecg.log.warn(`Race event notification failed: ${event.type}`, error);
 		},
+		DEFAULT_ALLOWED_RACE_ORIGINS,
+		(url, error) => {
+			nodecg.log.warn(
+				`Discarded invalid RaceTime WebSocket data for ${url}: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		},
 	);
 	const defaultSettings: SettingsState = {
 		revision: 0,
@@ -72,6 +80,7 @@ export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 			spreadsheetId: config.spreadsheetId ?? null,
 			gameMappingsSheet: config.gameMappingsSheet ?? "GameMappings",
 			categoryMappingsSheet: config.categoryMappingsSheet ?? "CategoryMappings",
+			allowedRaceOrigins: [...DEFAULT_ALLOWED_RACE_ORIGINS],
 			maxResolvedMappings: DEFAULT_MAX_RESOLVED_MAPPINGS,
 			leaderboardTop: DEFAULT_LEADERBOARD_TOP,
 		},
@@ -84,6 +93,21 @@ export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 	try {
 		initialSettings = parseSettingsState(settings.value);
 	} catch (error) {
+		const storedSettings =
+			settings.value &&
+			typeof settings.value === "object" &&
+			"settings" in settings.value &&
+			settings.value.settings &&
+			typeof settings.value.settings === "object"
+				? settings.value.settings
+				: null;
+		if (storedSettings && Object.hasOwn(storedSettings, "allowedRaceOrigins")) {
+			try {
+				normalizeAllowedRaceOrigins(storedSettings.allowedRaceOrigins);
+			} catch {
+				throw error;
+			}
+		}
 		// Only a malformed persisted configuration is recoverable; anything else
 		// must keep failing the mount.
 		if (!(error instanceof IntegrationError) || error.code !== "invalid_input")
@@ -100,9 +124,12 @@ export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 		"settings" in settings.value &&
 		settings.value.settings &&
 		typeof settings.value.settings === "object" &&
-		!("leaderboardTop" in settings.value.settings)
+		["maxResolvedMappings", "leaderboardTop", "allowedRaceOrigins"].some(
+			(field) => !(field in settings.value.settings),
+		)
 	)
 		settings.value = structuredClone(initialSettings);
+	races.setAllowedRaceOrigins(initialSettings.settings.allowedRaceOrigins);
 	const speedrun = new HttpSpeedrunClient({
 		userAgent: `racetime-integration/${nodecg.bundleVersion}`,
 	});
@@ -123,6 +150,7 @@ export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 				}),
 			};
 		},
+		(next) => races.setAllowedRaceOrigins(next.settings.allowedRaceOrigins),
 	);
 	const records = new SpeedrunRecordService(
 		mappings,

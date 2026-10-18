@@ -26,7 +26,7 @@ Player Managerと同じ構成で、PRとmainへのpush時に`Check`を実行し�
 
 NodeCGの `bundles/racetime-integration` に配置して `pnpm install --frozen-lockfile`、`pnpm build` を実行します。同じNodeCGに `player-manager` >=3.0.0 を配置してください。bundleDependenciesで読込み順を指定しています。
 
-DashboardにはOverview / Mappings / Settingsがあります。Overviewで選択したレースのRaceTime情報、Speedrun.com Mapping、参加者とPB、条件別Leaderboardを表示します。レースを選択またはURLで単発取得するとLeaderboardを自動取得し、手動再取得もできます。Leaderboardには順位・プレイヤー名・記録時間・日付を表示し、PBは参加者一覧で確認できます。Leaderboard取得時に追加のPB照会は行いません。Mappingの保存・削除後はLeaderboardと参加者PBの両方を再解決します。NodeCGの外部バンドルもDashboardと同じ `RaceTimeAPI.request()` を利用できます。
+DashboardにはOverview / Mappings / Settingsがあります。OverviewではURLからレースの監視を追加し、監視一覧で選んだレースのRaceTime情報、イベントログ、Speedrun.com Mapping、参加者とPB、条件別Leaderboardを表示します。監視の初回取得と再接続にはHTTPを使い、接続後の状態更新にはWebSocketの `race.data` を直接使うため、HTTPキャッシュに依存しません。`raceStartScheduled` は pending 中の開始予定設定・変更、`raceStarted` は `in_progress` への遷移を通知します。イベントログにはイベント名・時刻・詳細を表示し、Race IDは重複表示しません。Overview表示中に受信したRaceTimeイベントをレースURLごとに最大100件保持します。詳細には表示中のレースに属するイベントだけを表示し、レースを切り替えても各レースの受信履歴は維持されます。Overviewを閉じると履歴は破棄されます。詳細から「監視を停止」を実行すると、確認のうえ共有中の監視セッション全体を停止します。Leaderboardと参加者PBは選択中の監視レースの情報に基づき、Leaderboardは順位・プレイヤー名・記録時間・日付を表示します。Mappingの保存・削除後はLeaderboardと参加者PBを再解決します。公開APIの `fetchRace` は引き続き単発取得を提供しますが、Dashboardに単発取得操作はありません。NodeCGの外部バンドルもDashboardと同じ `RaceTimeAPI.request()` を利用できます。
 
 ## Google Spreadsheet
 
@@ -40,6 +40,21 @@ DashboardにはOverview / Mappings / Settingsがあります。Overviewで選択
 ```
 
 起動後はgetSettings/updateSettingsで取得・変更できます。変更はracetime-settings Replicantへ永続化され、次回起動時は保存された設定が優先されます。新しい表へのアクセスと形式を検証できた場合だけ切り替えます。spreadsheetId:nullで無効化できます。Sheets未設定時もレース機能は利用可能です。
+
+`allowedRaceOrigins` はRaceTime URLの接続許可先です。初期値は `https://racetime.gg` のみで、Settings画面から追加・削除できます。HTTPSのOriginを登録でき、HTTPは `localhost`、`127.0.0.1`、`[::1]` のループバックに限ります。Originにはパス・クエリ・フラグメント・認証情報を指定できません。変更は設定保存後すぐ監視URLの検証に反映され、許可リストから外れた接続先の監視セッションは停止します。既存設定でこの項目が欠けている場合はrevisionを変えずに初期値を補完します。RaceTimeのOriginだけを変更した場合、Spreadsheetへの接続確認やMappingリポジトリの再作成は行いません。
+
+設定オブジェクト内での値は次のようになります。これはNodeCGの `cfg/racetime-integration.json` に追加する設定ではなく、DashboardのSettings画面で管理する `racetime-settings` の項目です。
+
+```json
+{
+  "allowedRaceOrigins": [
+    "https://racetime.gg",
+    "http://localhost:8000"
+  ]
+}
+```
+
+`localhost` はブラウザーではなく、NodeCG Extensionが動作している環境を指します。ローカル互換サーバーを使う場合は、接続先のOriginをSettings画面で追加して保存してください。
 
 設定には `maxResolvedMappings`（Any展開の最大件数、初期値20）も含まれます。DashboardのSettings画面（表示名「Any展開の最大件数」）から1以上の整数で変更・保存できます。この値を持たない旧設定は、他の項目とrevisionを変更せずに20を補完して読み込みます。
 
@@ -79,7 +94,7 @@ fetchRaceはURLからRaceTimeを1回だけHTTP取得し、その参加者をwatc
 
 Player Manager v3の公開listでDirectoryを取得し、Primary/Secondaryを問わずRaceTime AccountをRaceTime IDで照合して表示名などを含むSnapshotを提供します。directoryChanged通知で監視中のレースを自動再解決します。レース状態とPlayer解決のRevisionおよびpending/ready/errorも公開します。Race.resultsは放送で使用する結果ステータスに正規化済みです。
 
-Raceには作成・開始・終了・中止日時、カウントダウン・制限時間、説明、記録対象設定（ranked）・記録可能状態（recordable）・記録済み状態（recorded）、API提供の参加者総数・完走人数・DNF/DQ人数、制限時間到達時の処理を含みます。参加者の `finishedAt` は完走日時で、経過時間の `finishTime` / `RaceResult.time` とは異なります。Overviewは単発取得・監視の両方でこれらを表示します。日時は利用環境のローカルタイムゾーン、期間は経過時間形式、null日時は「未設定」、説明は通常のテキストで表示します。
+Raceには作成・開始・終了・中止日時、カウントダウン・制限時間、説明、記録対象設定（ranked）・記録可能状態（recordable）・記録済み状態（recorded）、API提供の参加者総数・完走人数・DNF/DQ人数、制限時間到達時の処理を含みます。参加者の `finishedAt` は完走日時で、経過時間の `finishTime` / `RaceResult.time` とは異なります。Overviewは監視中の選択レースでこれらを表示します。公開APIの `fetchRace` は従来どおり単発取得用のデータ取得APIとして利用できます。日時は利用環境のローカルタイムゾーン、期間は経過時間形式、null日時は「未設定」、説明は通常のテキストで表示します。
 
 時間情報はすべての公開インターフェース（直接API・NodeCGメッセージ・Replicant）でISO 8601文字列です。絶対日時はUTC（例 `2026-01-01T01:02:18.123456789Z`）、期間はDuration（例 `PT1H2M3.45S`）、SRC記録日は日付のみ（例 `2026-01-01`）。Protocolの共通関数で内部の `Temporal.Instant` / `Temporal.Duration` / `Temporal.PlainDate` に変換できます。タイムゾーンなしの日時、不正な日付、負または年・月・週を含む期間は拒否し、nullは保持します。公開モデルにTemporalインスタンスは含みません。API_VERSION=4、メッセージ名 `racetime.v4.*`、RacesState.schemaVersion=1は維持します。
 

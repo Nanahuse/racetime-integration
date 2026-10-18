@@ -76,6 +76,11 @@ export class FakeSocket implements Socket {
 	message(data: string) {
 		this.onmessage?.(new MessageEvent("message", {data}));
 	}
+	raceData(data: {version: number; [key: string]: unknown}) {
+		this.message(
+			JSON.stringify({type: "race.data", version: data.version, race: data}),
+		);
+	}
 	fail() {
 		this.onerror?.(new Event("error"));
 	}

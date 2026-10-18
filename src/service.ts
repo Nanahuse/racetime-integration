@@ -5,6 +5,10 @@ import type {
 	RacesState,
 	ResolvedRace,
 } from "@nanahuse/racetime-protocol";
+import {
+	DEFAULT_ALLOWED_RACE_ORIGINS,
+	normalizeAllowedRaceOrigins,
+} from "@nanahuse/racetime-protocol";
 import type {ParticipantResolver} from "./integrations/players";
 import type {RaceTimeClient} from "./integrations/racetime/client";
 import {RaceTimeAbortedError} from "./integrations/racetime/errors";
@@ -33,6 +37,7 @@ export class RaceService {
 	private readonly sessions = new Map<string, Session>();
 	private readonly watches = new Map<string, string>();
 	private disposed = false;
+	private allowedOrigins: string[];
 	constructor(
 		private readonly client: RaceTimeClient,
 		private readonly socketFactory: (url: string) => Socket,
@@ -43,7 +48,26 @@ export class RaceService {
 			error: unknown,
 			event: RaceChangeEvent,
 		) => void = () => {},
-	) {}
+		allowedOrigins: readonly string[] = DEFAULT_ALLOWED_RACE_ORIGINS,
+		private readonly onInvalidRaceData: (
+			url: string,
+			error: unknown,
+		) => void = () => {},
+	) {
+		this.allowedOrigins = normalizeAllowedRaceOrigins(allowedOrigins);
+	}
+
+	setAllowedRaceOrigins(origins: readonly string[]): void {
+		this.allowedOrigins = normalizeAllowedRaceOrigins(origins);
+		let released = false;
+		for (const session of [...this.sessions.values()]) {
+			if (!this.allowedOrigins.includes(new URL(session.state.url).origin)) {
+				this.releaseSession(session, false);
+				released = true;
+			}
+		}
+		if (released) this.publish(this.snapshot());
+	}
 
 	snapshot(): RacesState {
 		return {
@@ -53,7 +77,9 @@ export class RaceService {
 	}
 	get(url: string): RaceState | null {
 		return structuredClone(
-			this.sessions.get(canonicalizeRaceUrl(url).canonicalUrl)?.state ?? null,
+			this.sessions.get(
+				canonicalizeRaceUrl(url, this.allowedOrigins).canonicalUrl,
+			)?.state ?? null,
 		);
 	}
 	getWatch(watchId: string): RaceState | null {
@@ -61,7 +87,7 @@ export class RaceService {
 		return url ? this.get(url) : null;
 	}
 	async fetch(url: string): Promise<ResolvedRace> {
-		const canonical = canonicalizeRaceUrl(url);
+		const canonical = canonicalizeRaceUrl(url, this.allowedOrigins);
 		const race = mapRace(
 			await this.client.fetchRaceDetail(canonical),
 			canonical.canonicalUrl,
@@ -81,13 +107,15 @@ export class RaceService {
 		url: string,
 	): Promise<{watchId: string; state: RaceState & {race: Race}}> {
 		if (this.disposed) throw new RaceTimeAbortedError("Race service stopped");
-		const canonical = canonicalizeRaceUrl(url);
+		const canonical = canonicalizeRaceUrl(url, this.allowedOrigins);
 		let session = this.sessions.get(canonical.canonicalUrl);
 		if (!session) {
 			const watcher = new RaceWatcher({
 				client: this.client,
 				canonical,
 				socketFactory: this.socketFactory,
+				onInvalidMessage: (error) =>
+					this.onInvalidRaceData(canonical.canonicalUrl, error),
 				onUpdate: (state) =>
 					this.update(canonical.canonicalUrl, watcher, state),
 			});
@@ -151,7 +179,7 @@ export class RaceService {
 	}
 
 	forceUnwatch(url: string): {released: boolean; releasedWatches: number} {
-		const canonical = canonicalizeRaceUrl(url);
+		const canonical = canonicalizeRaceUrl(url, this.allowedOrigins);
 		const session = this.sessions.get(canonical.canonicalUrl);
 		if (!session) return {released: false, releasedWatches: 0};
 		const releasedWatches = session.watches.size;
@@ -159,13 +187,13 @@ export class RaceService {
 		return {released: true, releasedWatches};
 	}
 
-	private releaseSession(session: Session): void {
+	private releaseSession(session: Session, publish = true): void {
 		for (const watchId of session.watches) this.watches.delete(watchId);
 		session.watches.clear();
 		session.watcher.stop();
 		session.controller?.abort();
 		this.sessions.delete(session.state.url);
-		this.publish(this.snapshot());
+		if (publish) this.publish(this.snapshot());
 	}
 
 	directoryChanged(revision: number): void {

@@ -34,7 +34,12 @@ export function detectRaceEvents(
 		url: current.url,
 		raceVersion: current.version,
 	};
-	if (current.startedAt !== null && previous.startedAt !== current.startedAt) {
+	if (
+		!hasStarted &&
+		current.status === "pending" &&
+		current.startedAt !== null &&
+		previous.startedAt !== current.startedAt
+	) {
 		events.push({
 			type: "raceStartScheduled",
 			payload: {

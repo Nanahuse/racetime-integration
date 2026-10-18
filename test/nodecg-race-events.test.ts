@@ -81,7 +81,7 @@ async function setup() {
 	await vi.advanceTimersByTimeAsync(0);
 	const change = async (patch: Partial<typeof raw>) => {
 		raw = {...raw, version: raw.version + 1, ...patch};
-		sockets[0]!.message('{"type":"race.data"}');
+		sockets[0]!.raceData(raw);
 		await vi.advanceTimersByTimeAsync(0);
 	};
 	return {
@@ -202,13 +202,12 @@ it.each(["synchronous", "rejected Promise"])(
 		});
 		await change({...payload(2, "race", "in_progress")});
 		expect(nodecg.sendMessage.mock.calls.map(([name]) => name)).toEqual([
-			eventMessageName("raceStartScheduled"),
 			eventMessageName("raceStarted"),
 			eventMessageName("entrantFinished"),
 		]);
 		expect(warn).toHaveBeenCalledWith(
 			expect.stringContaining(
-				"Failed to send racetime.v4.raceStartScheduled: send failed",
+				"Failed to send racetime.v4.raceStarted: send failed",
 			),
 		);
 		expect(state().races[0]).toMatchObject({
@@ -220,9 +219,9 @@ it.each(["synchronous", "rejected Promise"])(
 		await vi.advanceTimersByTimeAsync(1000);
 		expect(fetchImpl).toHaveBeenCalledTimes(calls);
 		expect(sockets).toHaveLength(1);
-		expect(nodecg.sendMessage).toHaveBeenCalledTimes(3);
+		expect(nodecg.sendMessage).toHaveBeenCalledTimes(2);
 		await change({});
-		expect(nodecg.sendMessage).toHaveBeenCalledTimes(3);
+		expect(nodecg.sendMessage).toHaveBeenCalledTimes(2);
 		await change({entrants: payload(1, "race", "open").entrants});
 		expect(nodecg.sendMessage).toHaveBeenLastCalledWith(
 			eventMessageName("entrantFinishUndone"),

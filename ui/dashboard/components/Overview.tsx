@@ -1,18 +1,25 @@
-import type {
-	Entrant,
-	Participant,
-	Race,
-	RaceResult,
-	RaceState,
-	RacesState,
-	ResolvedRace,
-	SpeedrunPlayerBest,
+import {
+	BUNDLE_NAME,
+	type Entrant,
+	eventMessageName,
+	type Participant,
+	type Race,
+	type RaceResult,
+	type RaceState,
+	type RacesState,
+	type RaceTimeEvents,
+	type SpeedrunPlayerBest,
 } from "@nanahuse/racetime-protocol";
 import {useCallback, useEffect, useRef, useState} from "react";
 import {errorMessage, request} from "../api/client";
+import {getNodeCG} from "../api/nodecg-client";
 import {beginRegistration, playerEditUrl} from "../api/player-manager";
 import type {EditorState} from "../model/editor";
-import {formatRaceInstant, formatRaceTime} from "../model/race-time";
+import {
+	formatRaceClock,
+	formatRaceInstant,
+	formatRaceTime,
+} from "../model/race-time";
 import {Callout} from "./common";
 import {
 	MappingWorkspace,
@@ -20,6 +27,54 @@ import {
 	targetKeyOf,
 } from "./Mappings";
 import {RaceLeaderboard} from "./RaceLeaderboard";
+
+type EventLogEntry = {
+	id: number;
+	receivedAt: string;
+	event: keyof RaceTimeEvents;
+	details: string[];
+};
+type EventLogsByRace = Record<string, EventLogEntry[]>;
+
+type PendingSelection = {
+	url: string;
+	generation: number;
+};
+
+function eventDetails<K extends keyof RaceTimeEvents>(
+	event: K,
+	data: RaceTimeEvents[K],
+): Omit<EventLogEntry, "id"> {
+	let details: string[];
+	switch (event) {
+		case "raceStartScheduled":
+		case "raceStarted":
+			details = [
+				formatRaceInstant((data as RaceTimeEvents["raceStarted"]).startedAt),
+			];
+			break;
+		case "entrantFinished": {
+			const result = (data as RaceTimeEvents["entrantFinished"]).result;
+			details = [result.userId, formatRaceTime(result.time)];
+			break;
+		}
+		case "entrantFinishUndone":
+			details = [(data as RaceTimeEvents["entrantFinishUndone"]).userId];
+			break;
+		case "raceCancelled":
+			details = [
+				formatRaceInstant(
+					(data as RaceTimeEvents["raceCancelled"]).cancelledAt,
+				),
+			];
+			break;
+	}
+	return {
+		receivedAt: new Date().toISOString(),
+		event,
+		details,
+	};
+}
 
 function counts(participants: readonly Participant[]) {
 	const matched = participants.filter((p) => p.status === "matched").length;
@@ -55,7 +110,7 @@ function raceTarget(race: Race): RaceMappingTarget {
 	};
 }
 
-/** Fields common to a single Race, used by both monitored and fetched views. */
+/** Fields common to a single Race. */
 function RaceFields({race}: {race: Race}) {
 	return (
 		<dl className='details'>
@@ -134,19 +189,6 @@ function MonitoredDetails({state}: {state: RaceState}) {
 				</div>
 			</dl>
 			{state.error && <Callout tone='error'>{state.error}</Callout>}
-		</div>
-	);
-}
-
-function FetchedDetails({resolved}: {resolved: ResolvedRace}) {
-	return (
-		<div className='subpanel'>
-			<RaceFields race={resolved.race} />
-			{resolved.resolution.state === "error" && (
-				<Callout tone='error'>
-					参加者の解決に失敗しました。Player Managerを確認してください。
-				</Callout>
-			)}
 		</div>
 	);
 }
@@ -367,13 +409,14 @@ export function Overview({
 }) {
 	const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
 	const [urlInput, setUrlInput] = useState("");
-	const [fetched, setFetched] = useState<ResolvedRace | null>(null);
+	const [addingWatch, setAddingWatch] = useState(false);
+	const [pendingSelection, setPendingSelection] =
+		useState<PendingSelection | null>(null);
+	const [eventLogsByRace, setEventLogsByRace] = useState<EventLogsByRace>({});
 	const [registrationUrl, setRegistrationUrl] = useState<string | null>(null);
 	const [registrationError, setRegistrationError] = useState<string | null>(
 		null,
 	);
-	const [fetchNotice, setFetchNotice] = useState<string | null>(null);
-	const [fetching, setFetching] = useState(false);
 	const [mappingBusy, setMappingBusy] = useState(false);
 	const [mappingRevision, setMappingRevision] = useState(0);
 	const [mappingDirty, setMappingDirty] = useState(false);
@@ -385,6 +428,9 @@ export function Overview({
 	const [forceReleasing, setForceReleasing] = useState(false);
 	const [forceError, setForceError] = useState<string | null>(null);
 	const forceInFlight = useRef(false);
+	const addInFlight = useRef(false);
+	const selectionGeneration = useRef(0);
+	const eventSequence = useRef(0);
 	// The monitored race snapshot currently shown. It is pinned while there are
 	// unsaved mapping edits so an external Replicant update cannot discard them.
 	const [monitoredTarget, setMonitoredTarget] = useState<{
@@ -398,12 +444,9 @@ export function Overview({
 		"changed" | "removed" | null
 	>(null);
 	const [pendingRace, setPendingRace] = useState<(() => void) | null>(null);
-	const fetchGen = useRef(0);
 	// Identifies the currently displayed race so a registration that finishes
 	// after the user moved on cannot change the view.
 	const viewRef = useRef(0);
-	const displayRef = useRef<string | null>(null);
-	const displaySourceRef = useRef<"monitored" | "fetched" | null>(null);
 	const registerGen = useRef(0);
 	const activeRegistration = useRef<{
 		view: number;
@@ -412,6 +455,78 @@ export function Overview({
 	const mappingRef = useRef<EditorState>({dirty: false, busy: false});
 	const acknowledgedExternalRef = useRef<string | null>(null);
 
+	useEffect(() => {
+		const nodecg = getNodeCG();
+		const append = <K extends keyof RaceTimeEvents>(
+			event: K,
+			data: RaceTimeEvents[K],
+		) => {
+			const entry = {...eventDetails(event, data), id: ++eventSequence.current};
+			setEventLogsByRace((current) => ({
+				...current,
+				[data.url]: [...(current[data.url] ?? []), entry].slice(-100),
+			}));
+		};
+		const raceStartScheduled = (data: RaceTimeEvents["raceStartScheduled"]) =>
+			append("raceStartScheduled", data);
+		const raceStarted = (data: RaceTimeEvents["raceStarted"]) =>
+			append("raceStarted", data);
+		const entrantFinished = (data: RaceTimeEvents["entrantFinished"]) =>
+			append("entrantFinished", data);
+		const entrantFinishUndone = (data: RaceTimeEvents["entrantFinishUndone"]) =>
+			append("entrantFinishUndone", data);
+		const raceCancelled = (data: RaceTimeEvents["raceCancelled"]) =>
+			append("raceCancelled", data);
+		nodecg.listenFor(
+			eventMessageName("raceStartScheduled"),
+			BUNDLE_NAME,
+			raceStartScheduled,
+		);
+		nodecg.listenFor(eventMessageName("raceStarted"), BUNDLE_NAME, raceStarted);
+		nodecg.listenFor(
+			eventMessageName("entrantFinished"),
+			BUNDLE_NAME,
+			entrantFinished,
+		);
+		nodecg.listenFor(
+			eventMessageName("entrantFinishUndone"),
+			BUNDLE_NAME,
+			entrantFinishUndone,
+		);
+		nodecg.listenFor(
+			eventMessageName("raceCancelled"),
+			BUNDLE_NAME,
+			raceCancelled,
+		);
+		return () => {
+			nodecg.unlisten(
+				eventMessageName("raceStartScheduled"),
+				BUNDLE_NAME,
+				raceStartScheduled,
+			);
+			nodecg.unlisten(
+				eventMessageName("raceStarted"),
+				BUNDLE_NAME,
+				raceStarted,
+			);
+			nodecg.unlisten(
+				eventMessageName("entrantFinished"),
+				BUNDLE_NAME,
+				entrantFinished,
+			);
+			nodecg.unlisten(
+				eventMessageName("entrantFinishUndone"),
+				BUNDLE_NAME,
+				entrantFinishUndone,
+			);
+			nodecg.unlisten(
+				eventMessageName("raceCancelled"),
+				BUNDLE_NAME,
+				raceCancelled,
+			);
+		};
+	}, []);
+
 	const list = races?.races ?? [];
 	const liveMonitored =
 		selectedUrl === null
@@ -419,16 +534,15 @@ export function Overview({
 			: (list.find((race) => race.url === selectedUrl) ?? null);
 	const monitoredDisplay = monitoredTarget?.state ?? liveMonitored;
 	const isMonitored = selectedUrl !== null && monitoredDisplay !== null;
-	const displayedRace = isMonitored
-		? (monitoredDisplay?.race ?? null)
-		: (fetched?.race ?? null);
+	const visibleEventLog = monitoredDisplay
+		? (eventLogsByRace[monitoredDisplay.url] ?? [])
+		: [];
+	const displayedRace = monitoredDisplay?.race ?? null;
 	const target: RaceMappingTarget | null = displayedRace
 		? raceTarget(displayedRace)
 		: null;
 	const targetKey = target ? targetKeyOf(target) : null;
-	const shownParticipants = isMonitored
-		? (monitoredDisplay?.participants ?? [])
-		: (fetched?.participants ?? []);
+	const shownParticipants = monitoredDisplay?.participants ?? [];
 	const playerIds = [
 		...new Set(
 			shownParticipants.flatMap((participant) =>
@@ -544,8 +658,6 @@ export function Overview({
 	// so a late response cannot open the registration screen.
 	const endDisplay = useCallback(() => {
 		viewRef.current++;
-		displayRef.current = null;
-		displaySourceRef.current = null;
 		clearRegistration();
 	}, [clearRegistration]);
 
@@ -676,51 +788,97 @@ export function Overview({
 		acknowledgedExternalRef.current = null;
 	};
 
-	const applySelection = (url: string) => {
-		fetchGen.current++;
-		viewRef.current++;
-		displayRef.current = url;
-		displaySourceRef.current = "monitored";
-		const live = list.find((race) => race.url === url) ?? null;
-		setMonitoredTarget(
-			live?.race
-				? {key: targetKeyOf(raceTarget(live.race)), state: live}
-				: null,
-		);
-		setExternalPrompt(null);
-		setExternalNotice(null);
-		acknowledgedExternalRef.current = null;
-		setSelectedUrl(url);
-		setFetched(null);
-		clearRegistration();
-		setFetchNotice(null);
-		setError(null);
-		setFetching(false);
-	};
+	const applySelection = useCallback(
+		(url: string) => {
+			viewRef.current++;
+			const live = list.find((race) => race.url === url) ?? null;
+			setMonitoredTarget(
+				live?.race
+					? {key: targetKeyOf(raceTarget(live.race)), state: live}
+					: null,
+			);
+			setExternalPrompt(null);
+			setExternalNotice(null);
+			acknowledgedExternalRef.current = null;
+			setSelectedUrl(url);
+			clearRegistration();
+			setError(null);
+		},
+		[clearRegistration, list],
+	);
 
-	const guardRaceChange = (nextKey: string | null, action: () => void) => {
-		if (mappingRef.current.busy) return;
-		if (mappingRef.current.dirty && nextKey !== targetKeyRef.current) {
-			setPendingRace(() => action);
+	const guardRaceChange = useCallback(
+		(nextKey: string | null, action: () => void) => {
+			if (mappingRef.current.busy) return;
+			if (mappingRef.current.dirty && nextKey !== targetKeyRef.current) {
+				setPendingRace(() => action);
+				return;
+			}
+			action();
+		},
+		[],
+	);
+
+	const selectMonitored = useCallback(
+		(url: string) => {
+			const next = list.find((race) => race.url === url)?.race ?? null;
+			const nextKey = next
+				? targetKeyOf({
+						categorySlug: next.category.slug,
+						categoryName: next.category.name,
+						goal: next.category.goal,
+					})
+				: null;
+			guardRaceChange(nextKey, () => applySelection(url));
+		},
+		[applySelection, guardRaceChange, list],
+	);
+
+	useEffect(() => {
+		if (pendingSelection === null || mappingBusy) return;
+		if (pendingSelection.generation !== selectionGeneration.current) {
+			setPendingSelection(null);
 			return;
 		}
-		action();
-	};
+		const pending = list.find(
+			(race) => race.url === pendingSelection.url && race.race !== null,
+		);
+		if (!pending) return;
+		setPendingSelection(null);
+		selectMonitored(pending.url);
+	}, [pendingSelection, list, mappingBusy, selectMonitored]);
 
-	const selectMonitored = (url: string) => {
-		const next = list.find((race) => race.url === url)?.race ?? null;
-		const nextKey = next
-			? targetKeyOf({
-					categorySlug: next.category.slug,
-					categoryName: next.category.name,
-					goal: next.category.goal,
-				})
-			: null;
-		guardRaceChange(nextKey, () => applySelection(url));
+	const addWatch = async () => {
+		const url = urlInput.trim();
+		if (url === "" || addInFlight.current) return;
+		const generation = ++selectionGeneration.current;
+		setPendingSelection(null);
+		addInFlight.current = true;
+		setAddingWatch(true);
+		setError(null);
+		try {
+			const existing = await request("getRace", {url});
+			if (existing !== null) {
+				if (generation === selectionGeneration.current)
+					setPendingSelection({url: existing.url, generation});
+				return;
+			}
+			const {state} = await request("watchRace", {url});
+			if (generation === selectionGeneration.current)
+				setPendingSelection({url: state.url, generation});
+		} catch (cause) {
+			if (generation === selectionGeneration.current)
+				setError(errorMessage(cause));
+		} finally {
+			addInFlight.current = false;
+			setAddingWatch(false);
+		}
 	};
 
 	const forceUnwatch = async () => {
 		if (!forceTarget || forceInFlight.current) return;
+		selectionGeneration.current += 1;
+		setPendingSelection(null);
 		forceInFlight.current = true;
 		setForceReleasing(true);
 		setForceError(null);
@@ -732,64 +890,6 @@ export function Overview({
 		} finally {
 			forceInFlight.current = false;
 			setForceReleasing(false);
-		}
-	};
-
-	const applyFetched = (resolved: ResolvedRace) => {
-		if (displayRef.current !== resolved.race.url) {
-			viewRef.current++;
-			displayRef.current = resolved.race.url;
-			// Registration results belong to the race that was displayed.
-			clearRegistration();
-		}
-		displaySourceRef.current = "fetched";
-		setFetchNotice(null);
-		setFetched(resolved);
-		setSelectedUrl(null);
-	};
-
-	const loadFetch = async (url: string) => {
-		if (mappingRef.current.busy) return;
-		const gen = ++fetchGen.current;
-		setFetching(true);
-		setError(null);
-		setFetchNotice(null);
-		try {
-			const resolved = await request("fetchRace", {url});
-			if (gen !== fetchGen.current) return;
-			// A save that started while this request was in flight must not have
-			// its workspace unmounted from under it.
-			if (mappingRef.current.busy) {
-				setFetchNotice(
-					"マッピングの保存処理中だったため、取得したレースは表示に反映されませんでした。保存完了後に再度取得してください。",
-				);
-				return;
-			}
-			const nextKey = targetKeyOf({
-				categorySlug: resolved.race.category.slug,
-				categoryName: resolved.race.category.name,
-				goal: resolved.race.category.goal,
-			});
-			if (mappingRef.current.dirty && nextKey !== targetKeyRef.current) {
-				setPendingRace(() => () => applyFetched(resolved));
-				return;
-			}
-			applyFetched(resolved);
-		} catch (cause) {
-			if (gen !== fetchGen.current) return;
-			setError(errorMessage(cause));
-			// A workspace that is saving or holds unsaved edits must survive a
-			// failed fetch of another race.
-			if (mappingRef.current.busy || mappingRef.current.dirty) return;
-			if (displaySourceRef.current === "fetched") {
-				displayRef.current = null;
-				displaySourceRef.current = null;
-				viewRef.current++;
-				clearRegistration();
-			}
-			setFetched(null);
-		} finally {
-			if (gen === fetchGen.current) setFetching(false);
 		}
 	};
 
@@ -834,7 +934,11 @@ export function Overview({
 							<button
 								type='button'
 								className={selectedUrl === race.url ? "active" : ""}
-								onClick={() => selectMonitored(race.url)}
+								onClick={() => {
+									selectionGeneration.current += 1;
+									setPendingSelection(null);
+									selectMonitored(race.url);
+								}}
 							>
 								<strong>{race.race?.raceId ?? race.url}</strong>
 								<small>RaceTime: {race.race?.status ?? "未取得"}</small>
@@ -842,25 +946,11 @@ export function Overview({
 									Connection: {race.connection} · E{race.participantsRevision}
 								</small>
 							</button>
-							<button
-								type='button'
-								className='force-unwatch'
-								disabled={forceReleasing}
-								onClick={() => {
-									setForceError(null);
-									setForceTarget({
-										url: race.url,
-										label: race.race?.raceId ?? race.url,
-									});
-								}}
-							>
-								強制解除
-							</button>
 						</li>
 					))}
 				</ul>
 				<div className='subpanel'>
-					<h3>URLで単発取得</h3>
+					<h3>URLで監視を追加</h3>
 					<div className='formrow'>
 						<input
 							aria-label='RaceTime race URL'
@@ -870,22 +960,37 @@ export function Overview({
 						/>
 						<button
 							type='button'
-							disabled={fetching || mappingBusy || urlInput.trim() === ""}
-							onClick={() => void loadFetch(urlInput.trim())}
+							disabled={addingWatch || urlInput.trim() === ""}
+							onClick={() => void addWatch()}
 						>
-							{fetching ? "取得中…" : "取得"}
+							{addingWatch ? "追加中…" : "監視を追加"}
 						</button>
 					</div>
-					<p className='muted'>watchIdは生成せず、監視には影響しません。</p>
 				</div>
 			</aside>
 			<section className='panel'>
-				<h2>レース詳細</h2>
+				<div className='toolbar'>
+					<h2>レース詳細</h2>
+					{liveMonitored && (
+						<button
+							type='button'
+							disabled={forceReleasing}
+							onClick={() => {
+								setForceError(null);
+								setForceTarget({
+									url: liveMonitored.url,
+									label: liveMonitored.race?.raceId ?? liveMonitored.url,
+								});
+							}}
+						>
+							監視を停止
+						</button>
+					)}
+				</div>
 				{error && <Callout tone='error'>{error}</Callout>}
 				{registrationError && (
 					<Callout tone='error'>{registrationError}</Callout>
 				)}
-				{fetchNotice && <Callout tone='info'>{fetchNotice}</Callout>}
 				{externalNotice && (
 					<Callout tone='warning'>
 						{externalNotice === "changed"
@@ -916,6 +1021,26 @@ export function Overview({
 				{isMonitored && monitoredDisplay ? (
 					<>
 						<MonitoredDetails state={monitoredDisplay} />
+						<div className='event-log subpanel'>
+							<h3>イベントログ</h3>
+							{visibleEventLog.length === 0 ? (
+								<p className='muted'>受信したイベントはありません。</p>
+							) : (
+								<ol>
+									{visibleEventLog.map((entry) => (
+										<li key={entry.id}>
+											<time dateTime={entry.receivedAt}>
+												{formatRaceClock(entry.receivedAt)}
+											</time>
+											<span>{entry.event}</span>
+											{entry.details.map((detail, index) => (
+												<span key={`${entry.id}-${index}`}>{detail}</span>
+											))}
+										</li>
+									))}
+								</ol>
+							)}
+						</div>
 						{target && (
 							<MappingWorkspace
 								key={targetKey}
@@ -944,48 +1069,8 @@ export function Overview({
 							/>
 						)}
 					</>
-				) : fetched ? (
-					<>
-						<FetchedDetails resolved={fetched} />
-						{target && (
-							<MappingWorkspace
-								key={targetKey}
-								mode='race'
-								target={target}
-								onStateChange={reportMapping}
-								onMappingChange={() => setMappingRevision((value) => value + 1)}
-							/>
-						)}
-						<h3>参加者</h3>
-						<Participants
-							participants={orderParticipants(fetched.participants)}
-							race={fetched.race}
-							onRegister={(participant) => void register(participant)}
-							registerDisabled={fetching}
-							bests={bestsMappingCurrent ? participantBests : []}
-							bestsLoading={bestsLoading || !bestsMappingCurrent}
-							bestsError={bestsMappingCurrent ? bestsError : null}
-							onRefreshBests={() => setBestsRefreshToken((value) => value + 1)}
-						/>
-						{target && (
-							<RaceLeaderboard
-								categorySlug={target.categorySlug}
-								goal={target.goal}
-								mappingRevision={mappingRevision}
-							/>
-						)}
-						<div className='formrow'>
-							<button
-								type='button'
-								disabled={fetching || mappingBusy}
-								onClick={() => void loadFetch(fetched.race.url)}
-							>
-								{fetching ? "取得中…" : "再取得"}
-							</button>
-						</div>
-					</>
 				) : (
-					<p className='muted'>レースを選択するかURLで取得してください。</p>
+					<p className='muted'>レースを選択してください。</p>
 				)}
 			</section>
 			{forceTarget && (
@@ -994,13 +1079,12 @@ export function Overview({
 						className='dialog'
 						role='dialog'
 						aria-modal='true'
-						aria-label='監視を強制解除しますか？'
+						aria-label='監視を停止しますか？'
 					>
-						<h3>監視を強制解除しますか？</h3>
+						<h3>監視を停止しますか？</h3>
 						<p>対象：{forceTarget.label}</p>
-						<p>
-							このレースのすべての監視を解除します。他のバンドルが保持しているwatchIdも無効になります。
-						</p>
+						<p>このレースの監視をすべて停止します。</p>
+						<p>他のバンドルが保持しているwatchIdも無効になります。</p>
 						<p>RaceTime上のレース自体は変更されません。</p>
 						{forceError && <Callout tone='error'>{forceError}</Callout>}
 						<div className='button-row'>
@@ -1016,7 +1100,7 @@ export function Overview({
 								disabled={forceReleasing}
 								onClick={() => void forceUnwatch()}
 							>
-								{forceReleasing ? "解除中…" : "強制解除"}
+								{forceReleasing ? "停止中…" : "監視を停止"}
 							</button>
 						</div>
 					</div>

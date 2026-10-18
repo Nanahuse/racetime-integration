@@ -10,7 +10,15 @@ import {ParticipantResolver} from "../src/integrations/players";
 import {RaceTimeHttpError} from "../src/integrations/racetime/errors";
 import {MappingService} from "../src/mappings";
 import {RaceService} from "../src/service";
-import {deferred, dto, FakeSocket, flush, mapping, url} from "./fixtures";
+import {
+	deferred,
+	dto,
+	FakeSocket,
+	flush,
+	mapping,
+	payload,
+	url,
+} from "./fixtures";
 
 afterEach(() => vi.useRealTimers());
 
@@ -282,6 +290,46 @@ function setup() {
 	return {service, client, sockets, publish, ...players};
 }
 
+it("applies allowed-origin changes and releases only removed-origin sessions", async () => {
+	vi.useFakeTimers();
+	const sockets: FakeSocket[] = [];
+	const players = playerAPI();
+	const publish = vi.fn();
+	const localUrl = "http://localhost:8000/smw/dazzling-geralt-2972";
+	const service = new RaceService(
+		{fetchRaceDetail: vi.fn(async () => dto())},
+		() => {
+			const socket = new FakeSocket();
+			sockets.push(socket);
+			return socket;
+		},
+		new ParticipantResolver(() => players.api),
+		publish,
+		() => {},
+		() => {},
+		["https://racetime.gg", "http://localhost:8000"],
+	);
+	try {
+		const publicWatch = await service.watch(url);
+		const localWatch = await service.watch(localUrl);
+		sockets[0]!.open();
+		await flush();
+		service.setAllowedRaceOrigins(["https://racetime.gg"]);
+		expect(service.snapshot().races.map((item) => item.url)).toEqual([url]);
+		expect(service.getWatch(localWatch.watchId)).toBeNull();
+		expect(service.unwatch(localWatch.watchId)).toBe(false);
+		expect(sockets[0]!.close).not.toHaveBeenCalled();
+		expect(sockets[1]!.close).toHaveBeenCalledOnce();
+		expect(service.getWatch(publicWatch.watchId)?.url).toBe(url);
+		expect(publish.mock.lastCall?.[0]).toEqual(service.snapshot());
+		await expect(service.watch(localUrl)).rejects.toMatchObject({
+			code: "invalid_url",
+		});
+	} finally {
+		service.dispose();
+	}
+});
+
 it.each([1, 3])(
 	"force-releases all %s watches by canonical URL while preserving another race",
 	async (count) => {
@@ -368,21 +416,15 @@ it("force-releases pending initial watches without affecting a replacement sessi
 	service.dispose();
 });
 
-it("ignores HTTP refreshes completed after force-release and permits a fresh watch", async () => {
-	const {service, client, sockets, publish} = setup();
+it("ignores messages from a force-released socket and permits a fresh watch", async () => {
+	const {service, sockets, publish} = setup();
 	const old = await service.watch(url);
-	sockets[0]!.open();
-	await flush();
-	const pending = deferred<ReturnType<typeof dto>>();
-	client.fetchRaceDetail.mockReturnValueOnce(pending.promise);
-	sockets[0]!.message('{"type":"race.data"}');
+	const oldSocket = sockets[0]!;
 	service.forceUnwatch(url);
-	client.fetchRaceDetail.mockResolvedValueOnce(dto(5));
 	const replacement = await service.watch(url);
-	pending.resolve(dto(99));
-	await flush();
+	oldSocket.raceData(payload(99));
 	expect(service.getWatch(old.watchId)).toBeNull();
-	expect(service.getWatch(replacement.watchId)?.race?.version).toBe(5);
+	expect(service.getWatch(replacement.watchId)?.race?.version).toBe(1);
 	expect(publish.mock.lastCall?.[0]).toEqual(service.snapshot());
 	expect(service.snapshot().races).toHaveLength(1);
 	service.dispose();
@@ -560,15 +602,14 @@ it("coalesces directory events and discards outdated resolutions and post-releas
 	expect(publish).toHaveBeenCalledTimes(count);
 });
 it("keeps race and participant revisions independent for result-only updates", async () => {
-	const {service, client, sockets, request} = setup();
+	const {service, sockets, request} = setup();
 	await service.watch(url);
 	await flush();
 	sockets[0]!.open();
 	await flush();
 	const before = service.get(url)!;
 	const count = request.mock.calls.length;
-	client.fetchRaceDetail.mockResolvedValueOnce(dto(2));
-	sockets[0]!.message('{"type":"race.data"}');
+	sockets[0]!.raceData(payload(2));
 	await flush();
 	const after = service.get(url)!;
 	expect(after.raceRevision).toBeGreaterThan(before.raceRevision);
@@ -612,6 +653,7 @@ it("validates new public write contracts and reports disabled Sheets without aff
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		},
@@ -775,6 +817,7 @@ it("returns an API error when the RaceTime fetch fails without touching monitori
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		},

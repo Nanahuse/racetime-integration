@@ -1,8 +1,11 @@
 // Adapted and modified from Nanahuse/nodecg-race-layouts (Apache-2.0).
+import {
+	DEFAULT_ALLOWED_RACE_ORIGINS,
+	normalizeAllowedRaceOrigins,
+} from "@nanahuse/racetime-protocol";
 import {InvalidRaceUrlError, RaceTimeWebSocketError} from "./errors";
 
 export const RACETIME_ORIGIN = "https://racetime.gg";
-const RACETIME_HOST = "racetime.gg";
 const SLUG_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 export type CanonicalRaceUrl = {
@@ -13,34 +16,32 @@ export type CanonicalRaceUrl = {
 	dataUrl: string;
 };
 
-/**
- * Validate an operator-supplied RaceTime.gg race page URL and produce a stable
- * canonical form plus the Race Detail API URL.
- *
- * Only `https://racetime.gg/<category>/<race>` (optionally with a trailing
- * slash, query or fragment) is accepted. The API URL is always rebuilt from the
- * validated slugs so an arbitrary URL can never be fetched.
- */
-export function canonicalizeRaceUrl(input: string): CanonicalRaceUrl {
+/** Validate an allowed RaceTime race page and rebuild its API URL from slugs. */
+export function canonicalizeRaceUrl(
+	input: string,
+	allowedOrigins: readonly string[] = DEFAULT_ALLOWED_RACE_ORIGINS,
+): CanonicalRaceUrl {
 	let parsed: URL;
 	try {
 		parsed = new URL(input.trim());
 	} catch {
 		throw new InvalidRaceUrlError(`"${input}" is not a valid URL.`);
 	}
+	if (parsed.username || parsed.password)
+		throw new InvalidRaceUrlError("Race URL cannot contain credentials.");
 
-	if (parsed.protocol !== "https:") {
-		throw new InvalidRaceUrlError("Race URL must use the https: protocol.");
+	let origins: string[];
+	try {
+		origins = normalizeAllowedRaceOrigins(allowedOrigins);
+	} catch (cause) {
+		throw new InvalidRaceUrlError(
+			cause instanceof Error
+				? cause.message
+				: "Invalid allowed RaceTime origins.",
+		);
 	}
-
-	if (
-		parsed.hostname !== RACETIME_HOST ||
-		parsed.port ||
-		parsed.username ||
-		parsed.password
-	) {
-		throw new InvalidRaceUrlError(`Race URL must be on ${RACETIME_HOST}.`);
-	}
+	if (!origins.includes(parsed.origin))
+		throw new InvalidRaceUrlError("Race URL origin is not allowed.");
 
 	const segments = parsed.pathname
 		.replace(/^\//, "")
@@ -48,7 +49,7 @@ export function canonicalizeRaceUrl(input: string): CanonicalRaceUrl {
 		.split("/");
 	if (segments.length !== 2) {
 		throw new InvalidRaceUrlError(
-			"Race URL must point to a race page (https://racetime.gg/<category>/<race>).",
+			"Race URL must point to a race page (<origin>/<category>/<race>).",
 		);
 	}
 
@@ -60,7 +61,7 @@ export function canonicalizeRaceUrl(input: string): CanonicalRaceUrl {
 		throw new InvalidRaceUrlError("Race URL is missing a valid race slug.");
 	}
 
-	const canonicalUrl = `${RACETIME_ORIGIN}/${categorySlug}/${raceSlug}`;
+	const canonicalUrl = `${parsed.origin}/${categorySlug}/${raceSlug}`;
 	return {
 		canonicalUrl,
 		categorySlug,
@@ -69,38 +70,33 @@ export function canonicalizeRaceUrl(input: string): CanonicalRaceUrl {
 	};
 }
 
-/**
- * Resolve the `websocket_url` returned by the API. Relative URLs are resolved
- * against racetime.gg and must end up as a `wss:` URL on racetime.gg.
- */
-export function resolveWebSocketUrl(raw: string): string {
+/** Resolve the server-provided WebSocket URL and bind it to the race origin. */
+export function resolveWebSocketUrl(
+	raw: string,
+	raceUrl = RACETIME_ORIGIN,
+): string {
+	let base: URL;
 	let parsed: URL;
 	try {
-		parsed = new URL(raw, RACETIME_ORIGIN);
+		base = new URL(raceUrl);
+		parsed = new URL(raw, base);
 	} catch {
 		throw new RaceTimeWebSocketError(`"${raw}" is not a valid WebSocket URL.`);
 	}
-
-	if (
-		parsed.hostname !== RACETIME_HOST ||
-		parsed.port ||
-		parsed.username ||
-		parsed.password
-	) {
+	if (parsed.username || parsed.password)
 		throw new RaceTimeWebSocketError(
-			`WebSocket URL must be on ${RACETIME_HOST}.`,
+			"WebSocket URL cannot contain credentials.",
 		);
-	}
-
-	if (parsed.protocol === "https:") {
-		parsed.protocol = "wss:";
-	}
-
-	if (parsed.protocol !== "wss:") {
+	if (parsed.hostname !== base.hostname || parsed.port !== base.port)
 		throw new RaceTimeWebSocketError(
-			"WebSocket URL must use the wss: protocol.",
+			"WebSocket URL must use the race's host and port.",
 		);
-	}
 
+	const expectedProtocol = base.protocol === "https:" ? "wss:" : "ws:";
+	if (parsed.protocol === base.protocol) parsed.protocol = expectedProtocol;
+	if (parsed.protocol !== expectedProtocol)
+		throw new RaceTimeWebSocketError(
+			`WebSocket URL must use ${expectedProtocol}`,
+		);
 	return parsed.toString();
 }

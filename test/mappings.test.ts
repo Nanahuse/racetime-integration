@@ -3,6 +3,7 @@ import type {
 	CategoryMappingRecord,
 	GameMapping,
 	GameMappingRecord,
+	SettingsState,
 	SpeedrunVariableOption,
 } from "@nanahuse/racetime-protocol";
 import {expect, it, vi} from "vitest";
@@ -105,6 +106,7 @@ function setup(
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		},
@@ -487,6 +489,7 @@ it("validates settings through the API and forwards Speedrun.com discovery opera
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 			expectedRevision: 0,
@@ -518,11 +521,52 @@ it("validates settings through the API and forwards Speedrun.com discovery opera
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 			expectedRevision: 0,
 		}),
 	).toMatchObject({ok: false, error: {code: "settings_changed"}});
+});
+
+it("saves non-spreadsheet settings without recreating or validating sheets", async () => {
+	const repository = memoryRepository().repository;
+	const listGames = vi.spyOn(repository.games, "list");
+	const listCategories = vi.spyOn(repository.categories, "list");
+	const createRepository = vi.fn(() => repository);
+	const persist = vi.fn();
+	const apply = vi.fn();
+	const initial: SettingsState = {
+		revision: 5,
+		settings: {
+			spreadsheetId: "sheet",
+			gameMappingsSheet: "GameMappings",
+			categoryMappingsSheet: "CategoryMappings",
+			allowedRaceOrigins: ["https://racetime.gg"],
+			maxResolvedMappings: 20,
+			leaderboardTop: 20,
+		},
+	};
+	const service = new MappingService(initial, persist, createRepository, apply);
+	createRepository.mockClear();
+	const next = await service.update(
+		{
+			...initial.settings,
+			allowedRaceOrigins: ["https://racetime.gg", "http://localhost:8000"],
+		},
+		5,
+	);
+	expect(next).toMatchObject({
+		revision: 6,
+		settings: {
+			allowedRaceOrigins: ["https://racetime.gg", "http://localhost:8000"],
+		},
+	});
+	expect(createRepository).not.toHaveBeenCalled();
+	expect(listGames).not.toHaveBeenCalled();
+	expect(listCategories).not.toHaveBeenCalled();
+	expect(persist).toHaveBeenCalledWith(next);
+	expect(apply).toHaveBeenCalledWith(next);
 });
 
 const rulesetVariable: SpeedrunVariableOption = {
@@ -851,6 +895,7 @@ it("honors a configured expansion limit from Settings", async () => {
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 30,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 			expectedRevision: 0,
