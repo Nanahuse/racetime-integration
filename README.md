@@ -26,7 +26,7 @@ Player Managerと同じ構成で、PRとmainへのpush時に`Check`を実行し�
 
 NodeCGの `bundles/racetime-integration` に配置して `pnpm install --frozen-lockfile`、`pnpm build` を実行します。同じNodeCGに `player-manager` >=3.0.0 を配置してください。bundleDependenciesで読込み順を指定しています。
 
-DashboardにはOverview / Mappings / Settingsがあります。OverviewではURLからレースの監視を追加し、監視一覧で選んだレースのRaceTime情報、イベントログ、Speedrun.com Mapping、参加者とPB、条件別Leaderboardを表示します。イベントログはレース詳細内にあり、Overview表示中に受信した全レースのイベントの最新100件を受信順に保持します。詳細から「監視を停止」を実行すると、確認のうえ共有中の監視セッション全体を停止します。Leaderboardと参加者PBは選択中の監視レースの情報に基づき、Leaderboardは順位・プレイヤー名・記録時間・日付を表示します。Mappingの保存・削除後はLeaderboardと参加者PBを再解決します。公開APIの `fetchRace` は引き続き単発取得を提供しますが、Dashboardに単発取得操作はありません。NodeCGの外部バンドルもDashboardと同じ `RaceTimeAPI.request()` を利用できます。
+DashboardにはOverview / Mappings / Settingsがあります。OverviewではURLからレースの監視を追加し、監視一覧で選んだレースのRaceTime情報、イベントログ、Speedrun.com Mapping、参加者とPB、条件別Leaderboardを表示します。Overview表示中に受信したRaceTimeイベントをレースURLごとに最大100件保持します。詳細には表示中のレースに属するイベントだけを表示し、レースを切り替えても各レースの受信履歴は維持されます。Overviewを閉じると履歴は破棄されます。詳細から「監視を停止」を実行すると、確認のうえ共有中の監視セッション全体を停止します。Leaderboardと参加者PBは選択中の監視レースの情報に基づき、Leaderboardは順位・プレイヤー名・記録時間・日付を表示します。Mappingの保存・削除後はLeaderboardと参加者PBを再解決します。公開APIの `fetchRace` は引き続き単発取得を提供しますが、Dashboardに単発取得操作はありません。NodeCGの外部バンドルもDashboardと同じ `RaceTimeAPI.request()` を利用できます。
 
 ## Google Spreadsheet
 

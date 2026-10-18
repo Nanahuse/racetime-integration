@@ -217,6 +217,7 @@ it("subscribes to the five RaceTime events and renders them in receive order", (
 		act(() => handler(data));
 	};
 	emit("racetime.v4.raceStartScheduled", {
+		url: race.url,
 		raceId: "game/race-001",
 		startedAt: "2026-01-01T00:12:00Z",
 	});
@@ -236,32 +237,53 @@ it("subscribes to the five RaceTime events and renders them in receive order", (
 	expect(rowsFor()).toHaveLength(1);
 	expect(rowsFor()?.[0]?.textContent).toContain("game/race-001");
 	emit("racetime.v4.raceStarted", {
+		url: race.url,
 		raceId: "game/race-001",
 		startedAt: "2026-01-01T00:12:00Z",
 	});
 	emit("racetime.v4.entrantFinished", {
+		url: raceTwo.url,
 		raceId: "other/race-002",
 		result: {userId: "runner1", time: "PT45M12S"},
 	});
 	emit("racetime.v4.entrantFinishUndone", {
+		url: race.url,
 		raceId: "game/race-001",
 		userId: "runner1",
 	});
 	emit("racetime.v4.raceCancelled", {
+		url: race.url,
 		raceId: "game/race-001",
 		cancelledAt: "2026-01-01T00:47:03Z",
 	});
 	const rows = rowsFor();
-	expect(rows).toHaveLength(5);
+	expect(rows).toHaveLength(4);
 	expect(rows?.[0]?.textContent).toContain("raceStartScheduled");
 	expect(rows?.[1]?.textContent).toContain("raceStarted");
-	expect(rows?.[2]?.textContent).toContain("other/race-002");
-	expect(rows?.[2]?.textContent).toContain("runner1");
-	expect(rows?.[2]?.textContent).toContain("0:45:12");
-	expect(rows?.[3]?.textContent).toContain("entrantFinishUndone");
-	expect(rows?.[4]?.textContent).toContain("raceCancelled");
+	expect(rows?.[2]?.textContent).toContain("entrantFinishUndone");
+	expect(rows?.[3]?.textContent).toContain("raceCancelled");
+	expect(rows?.[0]?.textContent).not.toContain("runner1");
+	emit("racetime.v4.raceStarted", {
+		url: raceTwo.url,
+		raceId: "other/race-002",
+		startedAt: "2026-01-01T00:12:00Z",
+	});
+	emit("racetime.v4.entrantFinishUndone", {
+		url: raceTwo.url,
+		raceId: "other/race-002",
+		userId: "runner2",
+	});
 	fireEvent.click(screen.getByRole("button", {name: /other\/race2/}));
-	expect(rowsFor()).toHaveLength(5);
+	const raceTwoRows = rowsFor();
+	expect(raceTwoRows).toHaveLength(3);
+	expect(raceTwoRows?.[0]?.textContent).toContain("entrantFinished");
+	expect(raceTwoRows?.[0]?.textContent).toContain("runner1");
+	expect(raceTwoRows?.[0]?.textContent).toContain("0:45:12");
+	expect(raceTwoRows?.[1]?.textContent).toContain("raceStarted");
+	expect(raceTwoRows?.[2]?.textContent).toContain("runner2");
+	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
+	expect(rowsFor()).toHaveLength(4);
+	expect(rowsFor()?.[0]?.textContent).toContain("raceStartScheduled");
 	expect(screen.getByRole("heading", {name: "イベントログ"})).toBeTruthy();
 	expect(listenFor).toHaveBeenCalledTimes(5);
 	expect(unlisten).not.toHaveBeenCalled();
@@ -277,30 +299,93 @@ it("subscribes to the five RaceTime events and renders them in receive order", (
 	reopened.unmount();
 });
 
-it("keeps only the newest 100 received events", () => {
-	render(<Overview races={races} />);
+it("keeps the newest 100 events independently for each race", () => {
+	render(<Overview races={racesTwo} />);
 	expect(screen.queryByRole("heading", {name: "イベントログ"})).toBeNull();
 	const handler = listenFor.mock.calls.find(
 		(call) => call[0] === "racetime.v4.raceStarted",
 	)?.[2];
 	if (typeof handler !== "function")
 		throw new Error("missing raceStarted handler");
-	for (let index = 0; index < 101; index++) {
-		act(() =>
-			handler({
-				raceId: `race-${index}`,
-				startedAt: "2026-01-01T00:12:00Z",
-			}),
-		);
-	}
+	for (const [url, prefix] of [
+		[raceTwo.url, "other"],
+		[race.url, "game"],
+	] as const)
+		for (let index = 0; index < 101; index++)
+			act(() =>
+				handler({
+					url,
+					raceId: `${prefix}-${index}`,
+					startedAt: "2026-01-01T00:12:00Z",
+				}),
+			);
 	expect(screen.queryByRole("heading", {name: "イベントログ"})).toBeNull();
 	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
-	const rows = screen
+	const rowsFor = () =>
+		screen
+			.getByRole("heading", {name: "イベントログ"})
+			.parentElement?.querySelectorAll("li");
+	const gameRows = rowsFor();
+	expect(gameRows).toHaveLength(100);
+	expect(gameRows?.[0]?.textContent).toContain("game-1");
+	expect(gameRows?.[99]?.textContent).toContain("game-100");
+	fireEvent.click(screen.getByRole("button", {name: /other\/race2/}));
+	const otherRows = rowsFor();
+	expect(otherRows).toHaveLength(100);
+	expect(otherRows?.[0]?.textContent).toContain("other-1");
+	expect(otherRows?.[99]?.textContent).toContain("other-100");
+});
+
+it("separates event history by URL when Race IDs match across origins", () => {
+	const localRace: Race = {
+		...race,
+		url: "http://localhost:8000/smw/race-001",
+	};
+	const localState: RaceState = {
+		...raceState,
+		url: localRace.url,
+		race: localRace,
+	};
+	const view = render(
+		<Overview races={{schemaVersion: 1, races: [raceState, localState]}} />,
+	);
+	const handler = listenFor.mock.calls.find(
+		(call) => call[0] === "racetime.v4.entrantFinished",
+	)?.[2];
+	if (typeof handler !== "function")
+		throw new Error("missing entrantFinished handler");
+	act(() =>
+		handler({
+			url: race.url,
+			raceId: "game/race",
+			result: {userId: "public-runner", time: "PT1M"},
+		}),
+	);
+	act(() =>
+		handler({
+			url: localRace.url,
+			raceId: "game/race",
+			result: {userId: "local-runner", time: "PT2M"},
+		}),
+	);
+	const matchingRaceButtons = screen.getAllByText("game/race", {
+		selector: "strong",
+	});
+	fireEvent.click(matchingRaceButtons[0]!.closest("button")!);
+	let rows = screen
 		.getByRole("heading", {name: "イベントログ"})
 		.parentElement?.querySelectorAll("li");
-	expect(rows).toHaveLength(100);
-	expect(rows?.[0]?.textContent).toContain("race-1");
-	expect(rows?.[99]?.textContent).toContain("race-100");
+	expect(rows).toHaveLength(1);
+	expect(rows?.[0]?.textContent).toContain("public-runner");
+	expect(rows?.[0]?.textContent).not.toContain("local-runner");
+	fireEvent.click(matchingRaceButtons[1]!.closest("button")!);
+	rows = screen
+		.getByRole("heading", {name: "イベントログ"})
+		.parentElement?.querySelectorAll("li");
+	expect(rows).toHaveLength(1);
+	expect(rows?.[0]?.textContent).toContain("local-runner");
+	expect(rows?.[0]?.textContent).not.toContain("public-runner");
+	view.unmount();
 });
 
 it("adds an unmonitored URL once and selects it after the Replicant updates", async () => {
@@ -1333,8 +1418,17 @@ it("surfaces a mapping save conflict in Overview", async () => {
 it("asks before discarding unsaved mapping edits when switching races", async () => {
 	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));
 	render(<Overview races={racesTwo} />);
+	const emit = (url: string, userId: string) => {
+		const handler = listenFor.mock.calls.find(
+			(call) => call[0] === "racetime.v4.entrantFinishUndone",
+		)?.[2];
+		if (typeof handler !== "function")
+			throw new Error("missing entrantFinishUndone handler");
+		act(() => handler({url, raceId: "race", userId}));
+	};
 	const [firstRace] = screen.getAllByRole("button", {name: /game\/race/});
 	fireEvent.click(firstRace!);
+	emit(race.url, "race-a-runner");
 	await openMappingEditor();
 
 	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
@@ -1343,6 +1437,7 @@ it("asks before discarding unsaved mapping edits when switching races", async ()
 	fireEvent.click(screen.getByRole("button", {name: "検索"}));
 	fireEvent.click(await screen.findByRole("button", {name: /SRC Game/}));
 	expect(screen.getByText("Game / Any%")).toBeTruthy();
+	emit(raceTwo.url, "race-b-runner");
 
 	fireEvent.click(screen.getByRole("button", {name: /other\/race2/}));
 	expect(
@@ -1350,12 +1445,22 @@ it("asks before discarding unsaved mapping edits when switching races", async ()
 	).toBeTruthy();
 	// The pending change is not applied until the user approves it.
 	expect(screen.getByText("Game / Any%")).toBeTruthy();
+	let eventRows = screen
+		.getByRole("heading", {name: "イベントログ"})
+		.parentElement?.querySelectorAll("li");
+	expect(eventRows).toHaveLength(1);
+	expect(eventRows?.[0]?.textContent).toContain("race-a-runner");
 	fireEvent.click(screen.getByRole("button", {name: "キャンセル"}));
 	expect(screen.queryByText(/未保存のマッピング変更があります/)).toBeNull();
 
 	fireEvent.click(screen.getByRole("button", {name: /other\/race2/}));
 	fireEvent.click(await screen.findByRole("button", {name: "破棄して移動"}));
 	expect(await screen.findByText("Other / 100%")).toBeTruthy();
+	eventRows = screen
+		.getByRole("heading", {name: "イベントログ"})
+		.parentElement?.querySelectorAll("li");
+	expect(eventRows).toHaveLength(1);
+	expect(eventRows?.[0]?.textContent).toContain("race-b-runner");
 });
 
 it("keeps the mapping edit session when switching to a race with the same target", async () => {

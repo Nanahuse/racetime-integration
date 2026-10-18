@@ -35,6 +35,7 @@ type EventLogEntry = {
 	raceId: string;
 	details: string[];
 };
+type EventLogsByRace = Record<string, EventLogEntry[]>;
 
 type PendingSelection = {
 	url: string;
@@ -413,7 +414,7 @@ export function Overview({
 	const [addingWatch, setAddingWatch] = useState(false);
 	const [pendingSelection, setPendingSelection] =
 		useState<PendingSelection | null>(null);
-	const [eventLog, setEventLog] = useState<EventLogEntry[]>([]);
+	const [eventLogsByRace, setEventLogsByRace] = useState<EventLogsByRace>({});
 	const [registrationUrl, setRegistrationUrl] = useState<string | null>(null);
 	const [registrationError, setRegistrationError] = useState<string | null>(
 		null,
@@ -463,7 +464,10 @@ export function Overview({
 			data: RaceTimeEvents[K],
 		) => {
 			const entry = {...eventDetails(event, data), id: ++eventSequence.current};
-			setEventLog((current) => [...current, entry].slice(-100));
+			setEventLogsByRace((current) => ({
+				...current,
+				[data.url]: [...(current[data.url] ?? []), entry].slice(-100),
+			}));
 		};
 		const raceStartScheduled = (data: RaceTimeEvents["raceStartScheduled"]) =>
 			append("raceStartScheduled", data);
@@ -532,6 +536,9 @@ export function Overview({
 			: (list.find((race) => race.url === selectedUrl) ?? null);
 	const monitoredDisplay = monitoredTarget?.state ?? liveMonitored;
 	const isMonitored = selectedUrl !== null && monitoredDisplay !== null;
+	const visibleEventLog = monitoredDisplay
+		? (eventLogsByRace[monitoredDisplay.url] ?? [])
+		: [];
 	const displayedRace = monitoredDisplay?.race ?? null;
 	const target: RaceMappingTarget | null = displayedRace
 		? raceTarget(displayedRace)
@@ -1018,11 +1025,11 @@ export function Overview({
 						<MonitoredDetails state={monitoredDisplay} />
 						<div className='event-log subpanel'>
 							<h3>イベントログ</h3>
-							{eventLog.length === 0 ? (
+							{visibleEventLog.length === 0 ? (
 								<p className='muted'>受信したイベントはありません。</p>
 							) : (
 								<ol>
-									{eventLog.map((entry) => (
+									{visibleEventLog.map((entry) => (
 										<li key={entry.id}>
 											<time dateTime={entry.receivedAt}>
 												{formatRaceClock(entry.receivedAt)}
