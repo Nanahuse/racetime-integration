@@ -190,6 +190,34 @@ it("recomputes from the latest snapshot after reconnecting", () => {
 	expect(detailTimer()).toBe("0:00:02.0");
 });
 
+it("switches a pending race from countdown to elapsed at its start time", () => {
+	const start = NOW + 8_000;
+	render(
+		<Overview
+			races={racesFor(state(race({status: "pending", startedAt: ISO(start)})))}
+		/>,
+	);
+	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
+	expect(listTimers()).toEqual(["-0:00:08"]);
+	expect(detailTimer()).toBe("-0:00:08.0");
+	expect(document.querySelector(".timer-label")?.textContent).toBe(
+		"カウントダウン",
+	);
+
+	act(() => {
+		vi.advanceTimersByTime(8_000);
+	});
+	expect(listTimers()).toEqual(["0:00:00"]);
+	expect(detailTimer()).toBe("0:00:00.0");
+
+	act(() => {
+		vi.advanceTimersByTime(2_500);
+	});
+	expect(listTimers()).toEqual(["0:00:02"]);
+	expect(detailTimer()).toBe("0:00:02.5");
+	expect(document.querySelector(".timer-label")?.textContent).toBe("進行中");
+});
+
 it("clears its update interval when the Overview unmounts", () => {
 	const view = render(<Overview races={racesFor(state(race()))} />);
 	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));

@@ -107,6 +107,47 @@ describe("computeRaceTimer", () => {
 		});
 	});
 
+	it("reports an end before the start as unavailable instead of zero", () => {
+		expect(
+			computeRaceTimer(
+				race({
+					status: "finished",
+					startedAt: ISO(START),
+					endedAt: ISO(START - 1_000),
+				}),
+				START,
+			),
+		).toEqual({kind: "unavailable"});
+	});
+
+	it("treats an end equal to the start as a zero-second finish", () => {
+		expect(
+			computeRaceTimer(
+				race({
+					status: "finished",
+					startedAt: ISO(START),
+					endedAt: ISO(START),
+				}),
+				START,
+			),
+		).toEqual({kind: "finished", offsetMs: 0});
+	});
+
+	it("reports a cancellation without a cancellation time as unavailable", () => {
+		expect(
+			computeRaceTimer(
+				race({status: "cancelled", startedAt: ISO(START), cancelledAt: null}),
+				START,
+			),
+		).toEqual({kind: "unavailable"});
+		expect(
+			computeRaceTimer(
+				race({status: "cancelled", startedAt: null, cancelledAt: null}),
+				START,
+			),
+		).toEqual({kind: "unavailable"});
+	});
+
 	it("stops at the cancellation time for a race cancelled after starting", () => {
 		const cancelled = race({
 			status: "cancelled",

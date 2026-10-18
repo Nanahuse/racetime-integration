@@ -83,11 +83,13 @@ export function computeRaceTimer(
 			return {kind: "elapsed", offsetMs: now - startedAt};
 		}
 		case "finished": {
-			if (startedAt === null || endedAt === null) return {kind: "unavailable"};
-			return {kind: "finished", offsetMs: Math.max(0, endedAt - startedAt)};
+			if (startedAt === null || endedAt === null || endedAt < startedAt)
+				return {kind: "unavailable"};
+			return {kind: "finished", offsetMs: endedAt - startedAt};
 		}
 		case "cancelled": {
-			if (startedAt === null || cancelledAt === null || cancelledAt < startedAt)
+			if (cancelledAt === null) return {kind: "unavailable"};
+			if (startedAt === null || cancelledAt < startedAt)
 				return {kind: "cancelledBeforeStart"};
 			return {kind: "cancelledAfterStart", offsetMs: cancelledAt - startedAt};
 		}
