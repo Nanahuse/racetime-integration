@@ -582,7 +582,18 @@ it("shows force-release only for the selected monitored race and cancels without
 	expect(screen.queryByRole("button", {name: "監視を停止"})).toBeNull();
 	expect(screen.getByText("レースを選択してください。")).toBeTruthy();
 	selectFirstMonitored();
-	fireEvent.click(screen.getByRole("button", {name: "監視を停止"}));
+	const forceRelease = screen.getByRole("button", {name: "監視を停止"});
+	const selectedRaceRow = screen
+		.getByRole("button", {name: /game\/race/})
+		.closest("li");
+	expect(selectedRaceRow).toBeTruthy();
+	expect(
+		within(selectedRaceRow as HTMLElement).queryByRole("button", {
+			name: "監視を停止",
+		}),
+	).toBeNull();
+	expect(forceRelease.closest(".toolbar")).toBeTruthy();
+	fireEvent.click(forceRelease);
 	const dialog = screen.getByRole("dialog", {name: "監視を停止しますか？"});
 	expect(within(dialog).getByText(`対象：${race.raceId}`)).toBeTruthy();
 	expect(
