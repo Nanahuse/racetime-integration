@@ -6,7 +6,7 @@ APIバージョンは4で、旧バージョンとの互換実装は提供しま�
 
 ## セットアップ
 
-利用するバンドルでは2種類の依存を設定します。
+利用するバンドルでは、役割の異なる2種類の依存を設定します。
 
 1. **NodeCGのバンドル依存**: `package.json`の`nodecg.bundleDependencies`にracetime-integrationを書き、racetime-integrationより後に読み込まれるようにします。racetime-integrationのExtensionが起動している必要があります。
 
@@ -21,11 +21,29 @@ APIバージョンは4で、旧バージョンとの互換実装は提供しま�
    }
    ```
 
-2. **Protocolパッケージの依存**: 型・定数・メッセージ名をimportするために、`@nanahuse/racetime-protocol`を依存に加えます。このパッケージは現時点ではレジストリへ公開していません。このリポジトリで次のコマンドを実行し、作成されたtarballを依存に指定して利用します。レジストリへ公開した後は、バージョンを指定してインストールできます。
+2. **Protocolパッケージの依存**: 型・定数・メッセージ名をimportするために、`@nanahuse/racetime-protocol`をpnpmの依存に加えます。導入方法は次の節で説明します。
+
+### Protocolパッケージの導入
+
+`@nanahuse/racetime-protocol`は現時点ではレジストリへ公開していません。次の手順でパッケージを生成し、利用側バンドルへ導入します。
+
+1. racetime-integrationのリポジトリのルートで、Protocolパッケージを生成します。
 
    ```sh
    pnpm --filter @nanahuse/racetime-protocol pack
    ```
+
+2. コマンドが出力した`.tgz`ファイルを確認します。ファイル名はパッケージ名とバージョンから決まり、`nanahuse-racetime-protocol-<バージョン>.tgz`の形式です。出力先はコマンドを実行したディレクトリで、リポジトリのルートで実行した場合はリポジトリのルートに作成されます。
+
+3. 利用側バンドルのディレクトリで、その`.tgz`を依存に追加します。パスは実際に出力されたファイルに合わせてください。
+
+   ```sh
+   pnpm add /path/to/nanahuse-racetime-protocol-<バージョン>.tgz
+   ```
+
+4. これで、利用側バンドルから`@nanahuse/racetime-protocol`の公開型と関数をimportできます。
+
+レジストリへ公開した後は、バージョンを指定してインストールできます。
 
 Extensionでは`BUNDLE_NAME`でracetime-integrationの拡張を取得し、`RaceTimeAPI.request()`を呼びます。すべての応答は`Response<T>`です。
 
