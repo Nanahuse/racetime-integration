@@ -36,6 +36,11 @@ type EventLogEntry = {
 	details: string[];
 };
 
+type PendingSelection = {
+	url: string;
+	generation: number;
+};
+
 function eventDetails<K extends keyof RaceTimeEvents>(
 	event: K,
 	data: RaceTimeEvents[K],
@@ -406,7 +411,8 @@ export function Overview({
 	const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
 	const [urlInput, setUrlInput] = useState("");
 	const [addingWatch, setAddingWatch] = useState(false);
-	const [pendingWatchUrl, setPendingWatchUrl] = useState<string | null>(null);
+	const [pendingSelection, setPendingSelection] =
+		useState<PendingSelection | null>(null);
 	const [eventLog, setEventLog] = useState<EventLogEntry[]>([]);
 	const [registrationUrl, setRegistrationUrl] = useState<string | null>(null);
 	const [registrationError, setRegistrationError] = useState<string | null>(
@@ -424,6 +430,7 @@ export function Overview({
 	const [forceError, setForceError] = useState<string | null>(null);
 	const forceInFlight = useRef(false);
 	const addInFlight = useRef(false);
+	const selectionGeneration = useRef(0);
 	const eventSequence = useRef(0);
 	// The monitored race snapshot currently shown. It is pinned while there are
 	// unsaved mapping edits so an external Replicant update cannot discard them.
@@ -823,46 +830,50 @@ export function Overview({
 	);
 
 	useEffect(() => {
-		if (pendingWatchUrl === null || mappingBusy) return;
+		if (pendingSelection === null || mappingBusy) return;
+		if (pendingSelection.generation !== selectionGeneration.current) {
+			setPendingSelection(null);
+			return;
+		}
 		const pending = list.find(
-			(race) => race.url === pendingWatchUrl && race.race !== null,
+			(race) => race.url === pendingSelection.url && race.race !== null,
 		);
 		if (!pending) return;
-		setPendingWatchUrl(null);
-		addInFlight.current = false;
-		setAddingWatch(false);
+		setPendingSelection(null);
 		selectMonitored(pending.url);
-	}, [pendingWatchUrl, list, mappingBusy, selectMonitored]);
+	}, [pendingSelection, list, mappingBusy, selectMonitored]);
 
 	const addWatch = async () => {
 		const url = urlInput.trim();
 		if (url === "" || addInFlight.current) return;
+		const generation = ++selectionGeneration.current;
+		setPendingSelection(null);
 		addInFlight.current = true;
 		setAddingWatch(true);
 		setError(null);
-		let waitingForReplicant = false;
 		try {
 			const existing = await request("getRace", {url});
 			if (existing !== null) {
-				setPendingWatchUrl(existing.url);
-				waitingForReplicant = true;
+				if (generation === selectionGeneration.current)
+					setPendingSelection({url: existing.url, generation});
 				return;
 			}
 			const {state} = await request("watchRace", {url});
-			setPendingWatchUrl(state.url);
-			waitingForReplicant = true;
+			if (generation === selectionGeneration.current)
+				setPendingSelection({url: state.url, generation});
 		} catch (cause) {
-			setError(errorMessage(cause));
+			if (generation === selectionGeneration.current)
+				setError(errorMessage(cause));
 		} finally {
-			if (!waitingForReplicant) {
-				addInFlight.current = false;
-				setAddingWatch(false);
-			}
+			addInFlight.current = false;
+			setAddingWatch(false);
 		}
 	};
 
 	const forceUnwatch = async () => {
 		if (!forceTarget || forceInFlight.current) return;
+		selectionGeneration.current += 1;
+		setPendingSelection(null);
 		forceInFlight.current = true;
 		setForceReleasing(true);
 		setForceError(null);
@@ -918,7 +929,11 @@ export function Overview({
 							<button
 								type='button'
 								className={selectedUrl === race.url ? "active" : ""}
-								onClick={() => selectMonitored(race.url)}
+								onClick={() => {
+									selectionGeneration.current += 1;
+									setPendingSelection(null);
+									selectMonitored(race.url);
+								}}
 							>
 								<strong>{race.race?.raceId ?? race.url}</strong>
 								<small>RaceTime: {race.race?.status ?? "未取得"}</small>
@@ -984,7 +999,7 @@ export function Overview({
 								});
 							}}
 						>
-							強制解除
+							監視を停止
 						</button>
 					)}
 				</div>
@@ -1060,13 +1075,12 @@ export function Overview({
 						className='dialog'
 						role='dialog'
 						aria-modal='true'
-						aria-label='監視を強制解除しますか？'
+						aria-label='監視を停止しますか？'
 					>
-						<h3>監視を強制解除しますか？</h3>
+						<h3>監視を停止しますか？</h3>
 						<p>対象：{forceTarget.label}</p>
-						<p>
-							このレースのすべての監視を解除します。他のバンドルが保持しているwatchIdも無効になります。
-						</p>
+						<p>このレースの監視をすべて停止します。</p>
+						<p>他のバンドルが保持しているwatchIdも無効になります。</p>
 						<p>RaceTime上のレース自体は変更されません。</p>
 						{forceError && <Callout tone='error'>{forceError}</Callout>}
 						<div className='button-row'>
@@ -1082,7 +1096,7 @@ export function Overview({
 								disabled={forceReleasing}
 								onClick={() => void forceUnwatch()}
 							>
-								{forceReleasing ? "解除中…" : "強制解除"}
+								{forceReleasing ? "停止中…" : "監視を停止"}
 							</button>
 						</div>
 					</div>

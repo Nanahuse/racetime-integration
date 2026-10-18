@@ -26,7 +26,7 @@ Player Managerと同じ構成で、PRとmainへのpush時に`Check`を実行し�
 
 NodeCGの `bundles/racetime-integration` に配置して `pnpm install --frozen-lockfile`、`pnpm build` を実行します。同じNodeCGに `player-manager` >=3.0.0 を配置してください。bundleDependenciesで読込み順を指定しています。
 
-DashboardにはOverview / Mappings / Settingsがあります。Overviewで選択したレースのRaceTime情報、Speedrun.com Mapping、参加者とPB、条件別Leaderboardを表示します。レースを選択またはURLで単発取得するとLeaderboardを自動取得し、手動再取得もできます。Leaderboardには順位・プレイヤー名・記録時間・日付を表示し、PBは参加者一覧で確認できます。Leaderboard取得時に追加のPB照会は行いません。Mappingの保存・削除後はLeaderboardと参加者PBの両方を再解決します。NodeCGの外部バンドルもDashboardと同じ `RaceTimeAPI.request()` を利用できます。
+DashboardにはOverview / Mappings / Settingsがあります。OverviewではURLからレースの監視を追加し、監視一覧で選んだレースのRaceTime情報、Speedrun.com Mapping、参加者とPB、条件別Leaderboardを表示します。詳細から「監視を停止」を実行すると、確認のうえ共有中の監視セッション全体を停止します。イベントログはOverview表示中に受信したイベントだけを表示します。Leaderboardと参加者PBは選択中の監視レースの情報に基づき、Leaderboardは順位・プレイヤー名・記録時間・日付を表示します。Mappingの保存・削除後はLeaderboardと参加者PBを再解決します。公開APIの `fetchRace` は引き続き単発取得を提供しますが、Dashboardに単発取得操作はありません。NodeCGの外部バンドルもDashboardと同じ `RaceTimeAPI.request()` を利用できます。
 
 ## Google Spreadsheet
 
@@ -79,7 +79,7 @@ fetchRaceはURLからRaceTimeを1回だけHTTP取得し、その参加者をwatc
 
 Player Manager v3の公開listでDirectoryを取得し、Primary/Secondaryを問わずRaceTime AccountをRaceTime IDで照合して表示名などを含むSnapshotを提供します。directoryChanged通知で監視中のレースを自動再解決します。レース状態とPlayer解決のRevisionおよびpending/ready/errorも公開します。Race.resultsは放送で使用する結果ステータスに正規化済みです。
 
-Raceには作成・開始・終了・中止日時、カウントダウン・制限時間、説明、記録対象設定（ranked）・記録可能状態（recordable）・記録済み状態（recorded）、API提供の参加者総数・完走人数・DNF/DQ人数、制限時間到達時の処理を含みます。参加者の `finishedAt` は完走日時で、経過時間の `finishTime` / `RaceResult.time` とは異なります。Overviewは単発取得・監視の両方でこれらを表示します。日時は利用環境のローカルタイムゾーン、期間は経過時間形式、null日時は「未設定」、説明は通常のテキストで表示します。
+Raceには作成・開始・終了・中止日時、カウントダウン・制限時間、説明、記録対象設定（ranked）・記録可能状態（recordable）・記録済み状態（recorded）、API提供の参加者総数・完走人数・DNF/DQ人数、制限時間到達時の処理を含みます。参加者の `finishedAt` は完走日時で、経過時間の `finishTime` / `RaceResult.time` とは異なります。Overviewは監視中の選択レースでこれらを表示します。公開APIの `fetchRace` は従来どおり単発取得用のデータ取得APIとして利用できます。日時は利用環境のローカルタイムゾーン、期間は経過時間形式、null日時は「未設定」、説明は通常のテキストで表示します。
 
 時間情報はすべての公開インターフェース（直接API・NodeCGメッセージ・Replicant）でISO 8601文字列です。絶対日時はUTC（例 `2026-01-01T01:02:18.123456789Z`）、期間はDuration（例 `PT1H2M3.45S`）、SRC記録日は日付のみ（例 `2026-01-01`）。Protocolの共通関数で内部の `Temporal.Instant` / `Temporal.Duration` / `Temporal.PlainDate` に変換できます。タイムゾーンなしの日時、不正な日付、負または年・月・週を含む期間は拒否し、nullは保持します。公開モデルにTemporalインスタンスは含みません。API_VERSION=4、メッセージ名 `racetime.v4.*`、RacesState.schemaVersion=1は維持します。
 
