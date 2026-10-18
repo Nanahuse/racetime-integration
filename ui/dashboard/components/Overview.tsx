@@ -26,7 +26,9 @@ import {
 	type RaceMappingTarget,
 	targetKeyOf,
 } from "./Mappings";
+import {MonitoredRaceList} from "./MonitoredRaceList";
 import {RaceLeaderboard} from "./RaceLeaderboard";
+import {RaceTimerPanel} from "./RaceTimerPanel";
 
 type EventLogEntry = {
 	id: number;
@@ -928,27 +930,15 @@ export function Overview({
 				{list.length === 0 && (
 					<p className='muted'>監視中のレースはありません。</p>
 				)}
-				<ul className='list'>
-					{list.map((race) => (
-						<li key={race.url}>
-							<button
-								type='button'
-								className={selectedUrl === race.url ? "active" : ""}
-								onClick={() => {
-									selectionGeneration.current += 1;
-									setPendingSelection(null);
-									selectMonitored(race.url);
-								}}
-							>
-								<strong>{race.race?.raceId ?? race.url}</strong>
-								<small>RaceTime: {race.race?.status ?? "未取得"}</small>
-								<small>
-									Connection: {race.connection} · E{race.participantsRevision}
-								</small>
-							</button>
-						</li>
-					))}
-				</ul>
+				<MonitoredRaceList
+					races={list}
+					selectedUrl={selectedUrl}
+					onSelect={(url) => {
+						selectionGeneration.current += 1;
+						setPendingSelection(null);
+						selectMonitored(url);
+					}}
+				/>
 				<div className='subpanel'>
 					<h3>URLで監視を追加</h3>
 					<div className='formrow'>
@@ -1020,6 +1010,10 @@ export function Overview({
 				)}
 				{isMonitored && monitoredDisplay ? (
 					<>
+						<RaceTimerPanel
+							race={liveMonitored?.race ?? null}
+							connection={liveMonitored?.connection}
+						/>
 						<MonitoredDetails state={monitoredDisplay} />
 						<div className='event-log subpanel'>
 							<h3>イベントログ</h3>

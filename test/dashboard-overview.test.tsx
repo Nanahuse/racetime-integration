@@ -1655,6 +1655,54 @@ it("protects unsaved mapping edits when the monitored race target changes", asyn
 	expect(await screen.findByText("100%")).toBeTruthy();
 });
 
+it("keeps the timer on the latest race snapshot while mapping edits are unsaved", async () => {
+	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));
+	const now = Date.now();
+	const pinned: Race = {
+		...race,
+		startedAt: new Date(now - 3_600_000).toISOString(),
+	};
+	const live: Race = {
+		...race,
+		startedAt: new Date(now - 5_000).toISOString(),
+		category: {...race.category, goal: "100%"},
+	};
+	const {rerender} = render(
+		<Overview
+			races={{schemaVersion: 1, races: [{...raceState, race: pinned}]}}
+		/>,
+	);
+	await selectFirstMonitored();
+	await openMappingEditor();
+	await editMappingDraft();
+	expect(await screen.findByText(/選択中: SRC Game/)).toBeTruthy();
+
+	rerender(
+		<Overview
+			races={{schemaVersion: 1, races: [{...raceState, race: live}]}}
+		/>,
+	);
+	expect(
+		await screen.findByText(
+			/未保存の変更を破棄して最新のレース情報を表示しますか/,
+		),
+	).toBeTruthy();
+
+	// The pinned snapshot still drives the RaceTime details.
+	expect(
+		screen.getByText("開始日時", {selector: "dt"}).nextElementSibling
+			?.textContent,
+	).toBe(formatRaceInstant(pinned.startedAt));
+	// The timer follows the newest monitored RaceTime snapshot instead.
+	const clock = (
+		document.querySelector(".race-timer-large")?.textContent ?? ""
+	).split(".")[0]!;
+	const [hours = 0, minutes = 0, seconds = 0] = clock.split(":").map(Number);
+	const elapsed = hours * 3600 + minutes * 60 + seconds;
+	expect(elapsed).toBeGreaterThanOrEqual(5);
+	expect(elapsed).toBeLessThan(120);
+});
+
 it("protects unsaved mapping edits when force-release removes the monitored race from the Replicant", async () => {
 	const base = mappingHandler({games: [], categories: []});
 	sendMessage.mockImplementation((name: string, data?: unknown) =>
