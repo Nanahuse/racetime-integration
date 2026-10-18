@@ -201,8 +201,9 @@ it("shows live RaceTime status separately from Connection and participant revisi
 });
 
 it("subscribes to the five RaceTime events and renders them in receive order", () => {
-	const view = render(<Overview races={undefined} />);
+	const view = render(<Overview races={racesTwo} />);
 	expect(listenFor).toHaveBeenCalledTimes(5);
+	expect(screen.queryByRole("heading", {name: "イベントログ"})).toBeNull();
 	for (const [name, bundle] of listenFor.mock.calls) {
 		expect(bundle).toBe("racetime-integration");
 		expect(name).toMatch(
@@ -219,6 +220,21 @@ it("subscribes to the five RaceTime events and renders them in receive order", (
 		raceId: "game/race-001",
 		startedAt: "2026-01-01T00:12:00Z",
 	});
+	expect(screen.queryByRole("heading", {name: "イベントログ"})).toBeNull();
+	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
+	const eventLogHeading = screen.getByRole("heading", {name: "イベントログ"});
+	expect(eventLogHeading.closest("section")).toBeTruthy();
+	expect(
+		within(screen.getByRole("complementary")).queryByRole("heading", {
+			name: "イベントログ",
+		}),
+	).toBeNull();
+	const rowsFor = () =>
+		screen
+			.getByRole("heading", {name: "イベントログ"})
+			.parentElement?.querySelectorAll("li");
+	expect(rowsFor()).toHaveLength(1);
+	expect(rowsFor()?.[0]?.textContent).toContain("game/race-001");
 	emit("racetime.v4.raceStarted", {
 		raceId: "game/race-001",
 		startedAt: "2026-01-01T00:12:00Z",
@@ -235,9 +251,7 @@ it("subscribes to the five RaceTime events and renders them in receive order", (
 		raceId: "game/race-001",
 		cancelledAt: "2026-01-01T00:47:03Z",
 	});
-	const rows = screen
-		.getByRole("heading", {name: "イベントログ"})
-		.parentElement?.querySelectorAll("li");
+	const rows = rowsFor();
 	expect(rows).toHaveLength(5);
 	expect(rows?.[0]?.textContent).toContain("raceStartScheduled");
 	expect(rows?.[1]?.textContent).toContain("raceStarted");
@@ -246,19 +260,26 @@ it("subscribes to the five RaceTime events and renders them in receive order", (
 	expect(rows?.[2]?.textContent).toContain("0:45:12");
 	expect(rows?.[3]?.textContent).toContain("entrantFinishUndone");
 	expect(rows?.[4]?.textContent).toContain("raceCancelled");
-	expect(sendMessage).not.toHaveBeenCalled();
+	fireEvent.click(screen.getByRole("button", {name: /other\/race2/}));
+	expect(rowsFor()).toHaveLength(5);
+	expect(screen.getByRole("heading", {name: "イベントログ"})).toBeTruthy();
+	expect(listenFor).toHaveBeenCalledTimes(5);
+	expect(unlisten).not.toHaveBeenCalled();
 	view.unmount();
 	expect(unlisten).toHaveBeenCalledTimes(5);
 	for (const call of unlisten.mock.calls)
 		expect(call[1]).toBe("racetime-integration");
-	const reopened = render(<Overview races={undefined} />);
+	const reopened = render(<Overview races={races} />);
+	expect(screen.queryByRole("heading", {name: "イベントログ"})).toBeNull();
+	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
 	expect(screen.getByText("受信したイベントはありません。")).toBeTruthy();
 	expect(listenFor).toHaveBeenCalledTimes(10);
 	reopened.unmount();
 });
 
 it("keeps only the newest 100 received events", () => {
-	render(<Overview races={undefined} />);
+	render(<Overview races={races} />);
+	expect(screen.queryByRole("heading", {name: "イベントログ"})).toBeNull();
 	const handler = listenFor.mock.calls.find(
 		(call) => call[0] === "racetime.v4.raceStarted",
 	)?.[2];
@@ -272,6 +293,8 @@ it("keeps only the newest 100 received events", () => {
 			}),
 		);
 	}
+	expect(screen.queryByRole("heading", {name: "イベントログ"})).toBeNull();
+	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
 	const rows = screen
 		.getByRole("heading", {name: "イベントログ"})
 		.parentElement?.querySelectorAll("li");

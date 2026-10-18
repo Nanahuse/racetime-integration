@@ -944,27 +944,6 @@ export function Overview({
 						</li>
 					))}
 				</ul>
-				<div className='event-log subpanel'>
-					<h3>イベントログ</h3>
-					{eventLog.length === 0 ? (
-						<p className='muted'>受信したイベントはありません。</p>
-					) : (
-						<ol>
-							{eventLog.map((entry) => (
-								<li key={entry.id}>
-									<time dateTime={entry.receivedAt}>
-										{formatRaceClock(entry.receivedAt)}
-									</time>
-									<span>{entry.event}</span>
-									<span>{entry.raceId}</span>
-									{entry.details.map((detail, index) => (
-										<span key={`${entry.id}-${index}`}>{detail}</span>
-									))}
-								</li>
-							))}
-						</ol>
-					)}
-				</div>
 				<div className='subpanel'>
 					<h3>URLで監視を追加</h3>
 					<div className='formrow'>
@@ -1037,6 +1016,27 @@ export function Overview({
 				{isMonitored && monitoredDisplay ? (
 					<>
 						<MonitoredDetails state={monitoredDisplay} />
+						<div className='event-log subpanel'>
+							<h3>イベントログ</h3>
+							{eventLog.length === 0 ? (
+								<p className='muted'>受信したイベントはありません。</p>
+							) : (
+								<ol>
+									{eventLog.map((entry) => (
+										<li key={entry.id}>
+											<time dateTime={entry.receivedAt}>
+												{formatRaceClock(entry.receivedAt)}
+											</time>
+											<span>{entry.event}</span>
+											<span>{entry.raceId}</span>
+											{entry.details.map((detail, index) => (
+												<span key={`${entry.id}-${index}`}>{detail}</span>
+											))}
+										</li>
+									))}
+								</ol>
+							)}
+						</div>
 						{target && (
 							<MappingWorkspace
 								key={targetKey}
