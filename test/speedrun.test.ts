@@ -398,15 +398,17 @@ it("requests a filtered level leaderboard, preserves ties, and joins embedded pl
 				emulators: false,
 				timing: "realtime_noloads",
 				values: {v1: "hard"},
-				players: [
-					{
-						rel: "user",
-						id: "u1",
-						names: {international: "Runner"},
-						weblink: "https://www.speedrun.com/user/runner",
-					},
-					{rel: "guest", name: "Guest Runner"},
-				],
+				players: {
+					data: [
+						{
+							rel: "user",
+							id: "u1",
+							names: {international: "Runner"},
+							weblink: "https://www.speedrun.com/user/runner",
+						},
+						{rel: "guest", name: "Guest Runner"},
+					],
+				},
 				runs: [
 					{
 						place: 1,
@@ -433,6 +435,7 @@ it("requests a filtered level leaderboard, preserves ties, and joins embedded pl
 	const result = await client.getLeaderboard(resolvedLookup, 20);
 	const requested = new URL(fetchImpl.mock.calls[0]![0] as string);
 	expect(requested.searchParams.get("top")).toBe("20");
+	expect(requested.searchParams.get("embed")).toBe("players");
 	expect(requested.searchParams.get("platform")).toBe("p1");
 	expect(requested.searchParams.get("region")).toBe("r1");
 	expect(requested.searchParams.get("emulators")).toBe("false");
@@ -442,6 +445,7 @@ it("requests a filtered level leaderboard, preserves ties, and joins embedded pl
 	expect(result.entries[0]?.run.players[0]).toMatchObject({
 		userId: "u1",
 		name: "Runner",
+		url: "https://www.speedrun.com/user/runner",
 	});
 	expect(result.entries[1]?.run.players[0]).toMatchObject({
 		userId: null,
@@ -484,7 +488,6 @@ function timeBoundaryClient(time: unknown, date: unknown) {
 	return clientWith({
 		"/api/v1/users/u1/personal-bests": {
 			data: [{...pb, run}],
-			pagination: {size: 1, offset: 0, max: 200},
 		},
 		"/api/v1/leaderboards/g1/level/l1/c1": {
 			data: {
@@ -496,7 +499,7 @@ function timeBoundaryClient(time: unknown, date: unknown) {
 				emulators: false,
 				timing: "realtime_noloads",
 				values: {v1: "hard"},
-				players: [{rel: "guest", name: "Guest"}],
+				players: {data: [{rel: "guest", name: "Guest"}]},
 				runs: [{place: 3, run}],
 			},
 		},
@@ -519,6 +522,87 @@ it.each(["2024-02-29", null])(
 		expect(leaderboard.fetchedAt).toMatch(/Z$/);
 	},
 );
+
+function leaderboardPayload(
+	players: unknown = {data: []},
+	runs: unknown[] = [],
+): {data: Record<string, unknown>} {
+	return {
+		data: {
+			game: "g1",
+			category: "c1",
+			level: "l1",
+			platform: "p1",
+			region: "r1",
+			emulators: false,
+			timing: "realtime_noloads",
+			values: {v1: "hard"},
+			players,
+			runs,
+		},
+	};
+}
+
+it("accepts an empty embedded player list and empty leaderboard", async () => {
+	const {client} = clientWith({
+		"/api/v1/leaderboards/g1/level/l1/c1": leaderboardPayload(),
+	});
+	await expect(
+		client.getLeaderboard(resolvedLookup, 20),
+	).resolves.toMatchObject({
+		state: "not_found",
+		entries: [],
+	});
+});
+
+it.each([
+	["missing players", undefined],
+	["array players", []],
+	["missing players data", {}],
+	["non-array players data", {data: null}],
+])("rejects %s in an HTTP leaderboard response", async (_label, players) => {
+	const payload = leaderboardPayload(players);
+	if (players === undefined) delete payload.data.players;
+	const {client} = clientWith({
+		"/api/v1/leaderboards/g1/level/l1/c1": payload,
+	});
+	await expect(client.getLeaderboard(resolvedLookup, 20)).rejects.toMatchObject(
+		{
+			code: "invalid_payload",
+		},
+	);
+});
+
+it("rejects a run player reference missing from embedded players", async () => {
+	const run = {
+		id: "orphan",
+		times: {realtime_noloads: "PT1S"},
+		players: [{rel: "user", id: "missing"}],
+	};
+	const {client} = clientWith({
+		"/api/v1/leaderboards/g1/level/l1/c1": leaderboardPayload({data: []}, [
+			{place: 1, run},
+		]),
+	});
+	await expect(client.getLeaderboard(resolvedLookup, 20)).rejects.toMatchObject(
+		{
+			code: "invalid_payload",
+		},
+	);
+});
+
+it("rejects malformed embedded player records", async () => {
+	const {client} = clientWith({
+		"/api/v1/leaderboards/g1/level/l1/c1": leaderboardPayload({
+			data: [{rel: "guest"}],
+		}),
+	});
+	await expect(client.getLeaderboard(resolvedLookup, 20)).rejects.toMatchObject(
+		{
+			code: "invalid_payload",
+		},
+	);
+});
 
 it.each([
 	["-PT1S", "2026-01-01"],
@@ -548,13 +632,15 @@ it("normalizes official Personal Best entries and uses game without a top filter
 	const {client, fetchImpl} = clientWith({
 		"/api/v1/users/u1/personal-bests": {
 			data: [personalBest("pb1", 7)],
-			pagination: {size: 1, offset: 0, max: 200},
 		},
 	});
 	const personalBests = await client.getUserPersonalBests("u1", "g1");
 	const requested = new URL(fetchImpl.mock.calls[0]![0] as string);
 	expect(requested.searchParams.get("game")).toBe("g1");
 	expect(requested.searchParams.has("top")).toBe(false);
+	expect(requested.searchParams.has("max")).toBe(false);
+	expect(requested.searchParams.has("offset")).toBe(false);
+	expect(fetchImpl).toHaveBeenCalledOnce();
 	expect(personalBests).toEqual([
 		{
 			runId: "pb1",
@@ -581,7 +667,6 @@ it("reuses the complete PB list for another category in the same game", async ()
 	const {client, fetchImpl} = clientWith({
 		"/api/v1/users/u1/personal-bests": {
 			data: [personalBest("pb1", 7), personalBest("pb2", 2, "c2", null, {})],
-			pagination: {size: 2, offset: 0, max: 200},
 		},
 	});
 	const first = await client.getUserPersonalBests("u1", "g1");
@@ -591,52 +676,30 @@ it("reuses the complete PB list for another category in the same game", async ()
 	expect(fetchImpl).toHaveBeenCalledTimes(1);
 });
 
-it("reads every Personal Best page and preserves official places", async () => {
-	const pageData = (offset: number) =>
-		Array.from({length: offset === 1000 ? 1 : 200}, (_, index) =>
-			personalBest(`pb-${offset}-${index}`, index + 1),
-		);
-	const fetchImpl = vi.fn(async (url: string) => {
-		const offset = Number(new URL(url).searchParams.get("offset"));
-		return Response.json({
-			data: pageData(offset),
-			pagination: {size: pageData(offset).length, offset, max: 200},
-		});
-	});
-	const client = new HttpSpeedrunClient({fetchImpl: fetchImpl as never});
-	const results = await client.getUserPersonalBests("u1", "g1");
-	expect(results).toHaveLength(1001);
-	expect(fetchImpl).toHaveBeenCalledTimes(6);
-	expect(
-		fetchImpl.mock.calls.map(([url]) =>
-			Number(new URL(url).searchParams.get("offset")),
-		),
-	).toEqual([0, 200, 400, 600, 800, 1000]);
-});
-
-it("rejects a repeated full Personal Best page", async () => {
-	const page = Array.from({length: 200}, (_, index) =>
+it("accepts more than 200 PBs from one response without pagination", async () => {
+	const pbs = Array.from({length: 225}, (_, index) =>
 		personalBest(`pb-${index}`, index + 1),
 	);
-	const fetchImpl = vi.fn(async (url: string) => {
-		const offset = Number(new URL(url).searchParams.get("offset"));
-		return Response.json({
-			data: page,
-			pagination: {size: page.length, offset, max: 200},
-		});
-	});
+	const fetchImpl = vi.fn(async () => Response.json({data: pbs}));
 	const client = new HttpSpeedrunClient({fetchImpl: fetchImpl as never});
-	await expect(client.getUserPersonalBests("u1", "g1")).rejects.toMatchObject({
-		code: "invalid_payload",
+	const results = await client.getUserPersonalBests("u1", "g1");
+	expect(results).toHaveLength(225);
+	expect(results.at(-1)).toMatchObject({runId: "pb-224", place: 225});
+	expect(fetchImpl).toHaveBeenCalledOnce();
+});
+
+it("returns an empty PB list when the response data is empty", async () => {
+	const {client, fetchImpl} = clientWith({
+		"/api/v1/users/u1/personal-bests": {data: []},
 	});
-	expect(fetchImpl).toHaveBeenCalledTimes(2);
+	await expect(client.getUserPersonalBests("u1", "g1")).resolves.toEqual([]);
+	expect(fetchImpl).toHaveBeenCalledOnce();
 });
 
 it("refreshes a cached Personal Best list on request", async () => {
 	const {client, fetchImpl} = clientWith({
 		"/api/v1/users/u1/personal-bests": {
 			data: [personalBest("pb1", 7)],
-			pagination: {size: 1, offset: 0, max: 200},
 		},
 	});
 	await client.getUserPersonalBests("u1", "g1");
@@ -644,22 +707,36 @@ it("refreshes a cached Personal Best list on request", async () => {
 	expect(fetchImpl).toHaveBeenCalledTimes(2);
 });
 
-it("propagates an error when a Personal Best page fails before completion", async () => {
-	const firstPage = Array.from({length: 200}, (_, index) =>
-		personalBest(`pb-${index}`, index + 1),
-	);
-	const fetchImpl = vi.fn(async (url: string) => {
-		const offset = Number(new URL(url).searchParams.get("offset"));
-		return offset === 0
-			? Response.json({
-					data: firstPage,
-					pagination: {size: 200, offset, max: 200},
-				})
-			: new Response("", {status: 503});
-	});
+it("propagates a failed Personal Best request", async () => {
+	const fetchImpl = vi.fn(async () => new Response("", {status: 503}));
 	const client = new HttpSpeedrunClient({fetchImpl: fetchImpl as never});
 	await expect(client.getUserPersonalBests("u1", "g1")).rejects.toMatchObject({
 		code: "speedrun_unavailable",
+	});
+	expect(fetchImpl).toHaveBeenCalledOnce();
+});
+
+it.each([undefined, null, {}])(
+	"rejects a Personal Best response with invalid data (%s)",
+	async (data) => {
+		const payload = data === undefined ? {} : {data};
+		const {client} = clientWith({
+			"/api/v1/users/u1/personal-bests": payload,
+		});
+		await expect(client.getUserPersonalBests("u1", "g1")).rejects.toMatchObject(
+			{code: "invalid_payload"},
+		);
+	},
+);
+
+it("rejects an entire PB list if any record is malformed", async () => {
+	const {client} = clientWith({
+		"/api/v1/users/u1/personal-bests": {
+			data: [personalBest("valid", 1), {place: 2}],
+		},
+	});
+	await expect(client.getUserPersonalBests("u1", "g1")).rejects.toMatchObject({
+		code: "invalid_payload",
 	});
 });
 
@@ -667,7 +744,6 @@ it("rejects malformed official PB records instead of treating them as found", as
 	const {client} = clientWith({
 		"/api/v1/users/u1/personal-bests": {
 			data: [{place: 0, run: personalBest("bad", 1).run}],
-			pagination: {size: 1, offset: 0, max: 200},
 		},
 	});
 	await expect(client.getUserPersonalBests("u1", "g1")).rejects.toMatchObject({
