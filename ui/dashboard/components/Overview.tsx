@@ -273,6 +273,9 @@ function AccountLink({
 	return (
 		<div>
 			{label}: <span>{name}</span>
+			{state?.state === "loading" && (
+				<small className='muted'> リンク取得中</small>
+			)}
 			{state?.state === "error" && (
 				<>
 					<button

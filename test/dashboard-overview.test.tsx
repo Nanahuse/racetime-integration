@@ -2105,6 +2105,86 @@ function racesWithParticipant(participant: Participant): RacesState {
 	};
 }
 
+it("shows a loading hint while profile URLs are being resolved", async () => {
+	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));
+	const src = deferred<unknown>();
+	const twitch = deferred<unknown>();
+	sendMessageToBundle.mockImplementation((_name, _bundle, data?: unknown) =>
+		(data as {accountId: string}).accountId === "acct-src"
+			? src.promise
+			: twitch.promise,
+	);
+	render(<Overview races={racesWithParticipant(linkedParticipant)} />);
+	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
+
+	expect(await screen.findAllByText(/リンク取得中/)).toHaveLength(2);
+	expect(screen.getByText("src-one")).toBeTruthy();
+	expect(screen.getByText("twitch-one")).toBeTruthy();
+	expect(screen.queryByRole("link", {name: "src-one"})).toBeNull();
+	expect(screen.queryByRole("link", {name: "twitch-one"})).toBeNull();
+
+	await act(async () => {
+		src.resolve({
+			ok: true,
+			data: {url: "https://www.speedrun.com/user/src-one"},
+		});
+		twitch.resolve({ok: true, data: {url: "https://www.twitch.tv/twitch-one"}});
+		for (let i = 0; i < 12; i += 1) await Promise.resolve();
+	});
+
+	expect(screen.queryByText(/リンク取得中/)).toBeNull();
+	expect(screen.getByRole("link", {name: "src-one"}).getAttribute("href")).toBe(
+		"https://www.speedrun.com/user/src-one",
+	);
+	expect(
+		screen.getByRole("link", {name: "twitch-one"}).getAttribute("href"),
+	).toBe("https://www.twitch.tv/twitch-one");
+});
+
+it("replaces the loading hint with an error and retry when lookup fails", async () => {
+	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));
+	const pending = deferred<unknown>();
+	sendMessageToBundle.mockReturnValue(pending.promise);
+	render(<Overview races={racesWithParticipant(linkedParticipant)} />);
+	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
+
+	expect(await screen.findAllByText(/リンク取得中/)).toHaveLength(2);
+	expect(screen.queryByRole("link", {name: "src-one"})).toBeNull();
+
+	await act(async () => {
+		pending.resolve({
+			ok: false,
+			error: {code: "lookup_failed", message: "lookup failed"},
+		});
+		for (let i = 0; i < 12; i += 1) await Promise.resolve();
+	});
+
+	expect(screen.queryByText(/リンク取得中/)).toBeNull();
+	expect(
+		await screen.findAllByText("プロフィールURLを取得できませんでした。"),
+	).toHaveLength(2);
+	expect(screen.getAllByRole("button", {name: "再試行"})).toHaveLength(2);
+});
+
+it("does not request or show loading when an account ID is missing", async () => {
+	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));
+	const participant: Participant = {
+		...linkedParticipant,
+		player: {
+			...linkedParticipant.player!,
+			primaryAccountIds: undefined,
+		},
+	};
+	render(<Overview races={racesWithParticipant(participant)} />);
+	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
+
+	expect(await screen.findByText("src-one")).toBeTruthy();
+	expect(screen.getByText("twitch-one")).toBeTruthy();
+	expect(screen.queryByText(/リンク取得中/)).toBeNull();
+	expect(screen.queryByRole("link", {name: "src-one"})).toBeNull();
+	expect(sendMessageToBundle).not.toHaveBeenCalled();
+});
+
 it("links resolved SRC and Twitch profiles through Player Manager without refetching", async () => {
 	sendMessage.mockImplementation(mappingHandler({games: [], categories: []}));
 	sendMessageToBundle.mockImplementation((_name, _bundle, data?: unknown) => {
