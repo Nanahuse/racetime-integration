@@ -56,6 +56,7 @@ export class MappingService {
 		private readonly createRepository: (
 			settings: Settings,
 		) => MappingsRepository | null,
+		private readonly onSettingsChanged: (state: SettingsState) => void = () => {},
 	) {
 		this.state = structuredClone(initial);
 		this.repository = createRepository(this.state.settings);
@@ -87,8 +88,15 @@ export class MappingService {
 		const next = structuredClone(settings);
 		return this.serialize(async () => {
 			this.checkRevision(expectedRevision);
-			const repository = this.createRepository(next);
-			if (repository)
+			const spreadsheetChanged =
+				this.state.settings.spreadsheetId !== next.spreadsheetId ||
+				this.state.settings.gameMappingsSheet !== next.gameMappingsSheet ||
+				this.state.settings.categoryMappingsSheet !==
+					next.categoryMappingsSheet;
+			const repository = spreadsheetChanged
+				? this.createRepository(next)
+				: this.repository;
+			if (spreadsheetChanged && repository)
 				await Promise.all([
 					repository.games.list(),
 					repository.categories.list(),
@@ -97,6 +105,7 @@ export class MappingService {
 			this.persist(structuredClone(state));
 			this.repository = repository;
 			this.state = state;
+			this.onSettingsChanged(this.settings());
 			return this.settings();
 		});
 	}

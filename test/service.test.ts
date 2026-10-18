@@ -282,6 +282,46 @@ function setup() {
 	return {service, client, sockets, publish, ...players};
 }
 
+it("applies allowed-origin changes and releases only removed-origin sessions", async () => {
+	vi.useFakeTimers();
+	const sockets: FakeSocket[] = [];
+	const players = playerAPI();
+	const publish = vi.fn();
+	const localUrl = "http://localhost:8000/smw/dazzling-geralt-2972";
+	const service = new RaceService(
+		{fetchRaceDetail: vi.fn(async () => dto())},
+		() => {
+			const socket = new FakeSocket();
+			sockets.push(socket);
+			return socket;
+		},
+		new ParticipantResolver(() => players.api),
+		publish,
+		() => {},
+		() => {},
+		["https://racetime.gg", "http://localhost:8000"],
+	);
+	try {
+		const publicWatch = await service.watch(url);
+		const localWatch = await service.watch(localUrl);
+		sockets[0]!.open();
+		await flush();
+		service.setAllowedRaceOrigins(["https://racetime.gg"]);
+		expect(service.snapshot().races.map((item) => item.url)).toEqual([url]);
+		expect(service.getWatch(localWatch.watchId)).toBeNull();
+		expect(service.unwatch(localWatch.watchId)).toBe(false);
+		expect(sockets[0]!.close).not.toHaveBeenCalled();
+		expect(sockets[1]!.close).toHaveBeenCalledOnce();
+		expect(service.getWatch(publicWatch.watchId)?.url).toBe(url);
+		expect(publish.mock.lastCall?.[0]).toEqual(service.snapshot());
+		await expect(service.watch(localUrl)).rejects.toMatchObject({
+			code: "invalid_url",
+		});
+	} finally {
+		service.dispose();
+	}
+});
+
 it.each([1, 3])(
 	"force-releases all %s watches by canonical URL while preserving another race",
 	async (count) => {
@@ -612,6 +652,7 @@ it("validates new public write contracts and reports disabled Sheets without aff
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		},
@@ -775,6 +816,7 @@ it("returns an API error when the RaceTime fetch fails without touching monitori
 				gameMappingsSheet: "GameMappings",
 				categoryMappingsSheet: "CategoryMappings",
 				maxResolvedMappings: 20,
+				allowedRaceOrigins: ["https://racetime.gg"],
 				leaderboardTop: 20,
 			},
 		},

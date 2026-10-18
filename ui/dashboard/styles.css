@@ -210,6 +210,23 @@ button.active,
 	color: var(--muted);
 }
 
+.allowed-origins li {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.allowed-origins li span {
+	min-width: 0;
+	flex: 1;
+	overflow-wrap: anywhere;
+}
+
+.allowed-origins li button {
+	width: auto;
+	flex: none;
+}
+
 .event-log ol {
 	list-style: none;
 	margin: 0;

@@ -188,6 +188,32 @@ describe("HTTP boundary", () => {
 	])("rejects unsafe URL %s", (input) => {
 		expect(() => canonicalizeRaceUrl(input)).toThrow();
 	});
+	it("allows configured local origins and preserves their normalized origin", () => {
+		const origins = ["https://racetime.gg", "http://localhost:8000"];
+		const local = canonicalizeRaceUrl(
+			"http://localhost:8000/smw/dazzling-geralt-2972/?x=1",
+			origins,
+		);
+		expect(local).toEqual({
+			canonicalUrl: "http://localhost:8000/smw/dazzling-geralt-2972",
+			categorySlug: "smw",
+			raceSlug: "dazzling-geralt-2972",
+			dataUrl:
+				"http://localhost:8000/smw/dazzling-geralt-2972/data",
+		});
+		expect(() => canonicalizeRaceUrl("http://localhost:8000/game/race")).toThrow();
+		expect(() =>
+			canonicalizeRaceUrl("http://localhost:8001/game/race", origins),
+		).toThrow();
+		expect(
+			canonicalizeRaceUrl("http://127.0.0.1:8000/game/race", [
+				"http://127.0.0.1:8000",
+			]).canonicalUrl,
+		).toBe("http://127.0.0.1:8000/game/race");
+		expect(
+			canonicalizeRaceUrl("https://racetime.gg/game/race").canonicalUrl,
+		).toBe(url);
+	});
 	it("restricts WebSocket destinations", () => {
 		expect(resolveWebSocketUrl("/ws/race/test")).toBe(
 			"wss://racetime.gg/ws/race/test",
@@ -199,6 +225,22 @@ describe("HTTP boundary", () => {
 			"wss://u@racetime.gg/x",
 		])
 			expect(() => resolveWebSocketUrl(input)).toThrow();
+	});
+	it("resolves local WebSocket endpoints on the requested race origin", () => {
+		const local = "http://localhost:8000/smw/race-001";
+		expect(resolveWebSocketUrl("/ws/race/test", local)).toBe(
+			"ws://localhost:8000/ws/race/test",
+		);
+		expect(
+			resolveWebSocketUrl("ws://localhost:8000/ws/race/test", local),
+		).toBe("ws://localhost:8000/ws/race/test");
+		for (const input of [
+			"ws://localhost:8001/ws/race/test",
+			"ws://evil.test/ws/race/test",
+			"wss://localhost:8000/ws/race/test",
+			"ws://user@localhost:8000/ws/race/test",
+		])
+			expect(() => resolveWebSocketUrl(input, local)).toThrow();
 	});
 	it.each([
 		[404, "not_found"],

@@ -158,7 +158,9 @@ export class RaceWatcher {
 	}
 
 	private connect(raw: string): void {
-		const socket = this.options.socketFactory(resolveWebSocketUrl(raw));
+		const socket = this.options.socketFactory(
+			resolveWebSocketUrl(raw, this.options.canonical.canonicalUrl),
+		);
 		this.socket = socket;
 		this.state.connection = "connecting";
 		this.emit();

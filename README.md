@@ -41,6 +41,21 @@ DashboardにはOverview / Mappings / Settingsがあります。OverviewではURL
 
 起動後はgetSettings/updateSettingsで取得・変更できます。変更はracetime-settings Replicantへ永続化され、次回起動時は保存された設定が優先されます。新しい表へのアクセスと形式を検証できた場合だけ切り替えます。spreadsheetId:nullで無効化できます。Sheets未設定時もレース機能は利用可能です。
 
+`allowedRaceOrigins` はRaceTime URLの接続許可先です。初期値は `https://racetime.gg` のみで、Settings画面から追加・削除できます。HTTPSのOriginを登録でき、HTTPは `localhost`、`127.0.0.1`、`[::1]` のループバックに限ります。Originにはパス・クエリ・フラグメント・認証情報を指定できません。変更は設定保存後すぐ監視URLの検証に反映され、許可リストから外れた接続先の監視セッションは停止します。既存設定でこの項目が欠けている場合はrevisionを変えずに初期値を補完します。RaceTimeのOriginだけを変更した場合、Spreadsheetへの接続確認やMappingリポジトリの再作成は行いません。
+
+設定オブジェクト内での値は次のようになります。これはNodeCGの `cfg/racetime-integration.json` に追加する設定ではなく、DashboardのSettings画面で管理する `racetime-settings` の項目です。
+
+```json
+{
+  "allowedRaceOrigins": [
+    "https://racetime.gg",
+    "http://localhost:8000"
+  ]
+}
+```
+
+`localhost` はブラウザーではなく、NodeCG Extensionが動作している環境を指します。ローカル互換サーバーを使う場合は、接続先のOriginをSettings画面で追加して保存してください。
+
 設定には `maxResolvedMappings`（Any展開の最大件数、初期値20）も含まれます。DashboardのSettings画面（表示名「Any展開の最大件数」）から1以上の整数で変更・保存できます。この値を持たない旧設定は、他の項目とrevisionを変更せずに20を補完して読み込みます。
 
 `leaderboardTop`（初期値20）はLeaderboardの取得順位上限です。Settings画面の「リーダーボード取得順位数」から1以上の安全な整数で変更できます。SRCが同順位として返したRunはすべて表示します。旧設定ではrevisionを変えずに20を補完します。OverviewのLeaderboardと公開APIはExtensionの共通5分キャッシュを使います。

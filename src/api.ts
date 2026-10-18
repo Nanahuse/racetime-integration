@@ -1,6 +1,7 @@
 import {
 	API_VERSION,
 	type CategoryMapping,
+	DEFAULT_ALLOWED_RACE_ORIGINS,
 	DEFAULT_LEADERBOARD_TOP,
 	DEFAULT_MAX_RESOLVED_MAPPINGS,
 	type GameMapping,
@@ -14,6 +15,7 @@ import {
 	supportsAnySelection,
 	type TimingMethod,
 	type VariableSelection,
+	normalizeAllowedRaceOrigins,
 } from "@nanahuse/racetime-protocol";
 import {IntegrationError} from "./errors";
 import {RaceTimeError} from "./integrations/racetime/errors";
@@ -67,6 +69,17 @@ function positiveInteger(value: unknown, field: string): number {
 }
 export function parseSettings(raw: unknown): Settings {
 	const input = object(raw, "settings");
+	let allowedRaceOrigins: string[];
+	try {
+		allowedRaceOrigins = Object.hasOwn(input, "allowedRaceOrigins")
+			? normalizeAllowedRaceOrigins(input.allowedRaceOrigins)
+			: [...DEFAULT_ALLOWED_RACE_ORIGINS];
+	} catch (cause) {
+		throw new RequestError(
+			"invalid_input",
+			cause instanceof Error ? cause.message : "Invalid allowedRaceOrigins",
+		);
+	}
 	const spreadsheetId =
 		input.spreadsheetId === null
 			? null
@@ -80,6 +93,7 @@ export function parseSettings(raw: unknown): Settings {
 			input.categoryMappingsSheet,
 			"categoryMappingsSheet",
 		),
+		allowedRaceOrigins,
 		// Settings persisted before this field existed default to the initial cap
 		// rather than being rejected; other values are preserved.
 		maxResolvedMappings:
