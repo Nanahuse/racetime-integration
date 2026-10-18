@@ -387,8 +387,11 @@ it("keeps a URL monitor when switching away is canceled for a dirty mapping", as
 	);
 });
 
-it("cancels force-release without selecting the race or sending an RPC", () => {
+it("shows force-release only for the selected monitored race and cancels without an RPC", () => {
 	render(<Overview races={races} />);
+	expect(screen.queryByRole("button", {name: "強制解除"})).toBeNull();
+	expect(screen.getByText("レースを選択してください。")).toBeTruthy();
+	selectFirstMonitored();
 	fireEvent.click(screen.getByRole("button", {name: "強制解除"}));
 	const dialog = screen.getByRole("dialog", {name: "監視を強制解除しますか？"});
 	expect(within(dialog).getByText(`対象：${race.raceId}`)).toBeTruthy();
@@ -398,10 +401,13 @@ it("cancels force-release without selecting the race or sending an RPC", () => {
 	expect(
 		within(dialog).getByText(/RaceTime上のレース自体は変更されません/),
 	).toBeTruthy();
-	expect(screen.getByText("レースを選択してください。")).toBeTruthy();
 	fireEvent.click(within(dialog).getByRole("button", {name: "キャンセル"}));
 	expect(screen.queryByRole("dialog")).toBeNull();
-	expect(sendMessage).not.toHaveBeenCalled();
+	expect(
+		sendMessage.mock.calls.filter(
+			([name]) => name === "racetime.v4.forceUnwatchRace",
+		),
+	).toHaveLength(0);
 });
 
 it.each([true, false])(
@@ -419,25 +425,33 @@ it.each([true, false])(
 		const view = render(
 			<Overview races={{schemaVersion: 1, races: [raceState, otherRace]}} />,
 		);
-		const row = screen
-			.getByRole("button", {name: /game\/other/})
-			.closest("li")!;
-		fireEvent.click(within(row).getByRole("button", {name: "強制解除"}));
-		expect(sendMessage).not.toHaveBeenCalled();
+		expect(screen.queryByRole("button", {name: "強制解除"})).toBeNull();
+		fireEvent.click(screen.getByRole("button", {name: /game\/other/}));
+		fireEvent.click(screen.getByRole("button", {name: "強制解除"}));
+		expect(
+			sendMessage.mock.calls.filter(
+				([name]) => name === "racetime.v4.forceUnwatchRace",
+			),
+		).toHaveLength(0);
+		expect(
+			within(screen.getByRole("dialog")).getByText("対象：game/other"),
+		).toBeTruthy();
 		fireEvent.click(
 			within(screen.getByRole("dialog")).getByRole("button", {
 				name: "強制解除",
 			}),
 		);
 		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-		expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
-			"racetime.v4.forceUnwatchRace",
-			{url: otherRace.url},
-		);
+		expect(
+			sendMessage.mock.calls.filter(
+				([name]) => name === "racetime.v4.forceUnwatchRace",
+			),
+		).toEqual([["racetime.v4.forceUnwatchRace", {url: otherRace.url}]]);
 		expect(screen.getByRole("button", {name: /game\/other/})).toBeTruthy();
 		view.rerender(<Overview races={races} />);
 		expect(screen.queryByRole("button", {name: /game\/other/})).toBeNull();
 		expect(screen.getByRole("button", {name: /game\/race/})).toBeTruthy();
+		expect(screen.queryByRole("button", {name: "強制解除"})).toBeNull();
 	},
 );
 
@@ -445,6 +459,7 @@ it("prevents duplicate force-release submissions while the RPC is pending", asyn
 	const pending = deferred<unknown>();
 	sendMessage.mockReturnValue(pending.promise);
 	render(<Overview races={races} />);
+	selectFirstMonitored();
 	fireEvent.click(screen.getByRole("button", {name: "強制解除"}));
 	const confirm = within(screen.getByRole("dialog")).getByRole("button", {
 		name: "強制解除",
@@ -452,10 +467,11 @@ it("prevents duplicate force-release submissions while the RPC is pending", asyn
 	fireEvent.click(confirm);
 	fireEvent.click(confirm);
 	expect((confirm as HTMLButtonElement).disabled).toBe(true);
-	expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
-		"racetime.v4.forceUnwatchRace",
-		{url: race.url},
-	);
+	expect(
+		sendMessage.mock.calls.filter(
+			([name]) => name === "racetime.v4.forceUnwatchRace",
+		),
+	).toEqual([["racetime.v4.forceUnwatchRace", {url: race.url}]]);
 	await act(async () =>
 		pending.resolve({ok: true, data: {released: true, releasedWatches: 1}}),
 	);
@@ -469,6 +485,7 @@ it("shows force-release errors without removing the race and allows retry", asyn
 		error: {code: "internal_error", message: "release failed"},
 	});
 	render(<Overview races={races} />);
+	selectFirstMonitored();
 	fireEvent.click(screen.getByRole("button", {name: "強制解除"}));
 	fireEvent.click(
 		within(screen.getByRole("dialog")).getByRole("button", {name: "強制解除"}),
@@ -483,7 +500,11 @@ it("shows force-release errors without removing the race and allows retry", asyn
 		within(screen.getByRole("dialog")).getByRole("button", {name: "強制解除"}),
 	);
 	await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-	expect(sendMessage).toHaveBeenCalledTimes(2);
+	expect(
+		sendMessage.mock.calls.filter(
+			([name]) => name === "racetime.v4.forceUnwatchRace",
+		),
+	).toHaveLength(2);
 });
 
 it("displays and updates the same race details from monitored snapshots", async () => {
@@ -1235,6 +1256,7 @@ it("protects unsaved mapping edits when force-release removes the monitored race
 	await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 	expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy();
 	rerender(<Overview races={{schemaVersion: 1, races: []}} />);
+	expect(screen.queryByRole("button", {name: "強制解除"})).toBeNull();
 	expect(
 		await screen.findByText(/未保存の変更を破棄して表示を解除しますか/),
 	).toBeTruthy();

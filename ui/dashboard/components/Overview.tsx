@@ -926,20 +926,6 @@ export function Overview({
 									Connection: {race.connection} · E{race.participantsRevision}
 								</small>
 							</button>
-							<button
-								type='button'
-								className='force-unwatch'
-								disabled={forceReleasing}
-								onClick={() => {
-									setForceError(null);
-									setForceTarget({
-										url: race.url,
-										label: race.race?.raceId ?? race.url,
-									});
-								}}
-							>
-								強制解除
-							</button>
 						</li>
 					))}
 				</ul>
@@ -984,7 +970,24 @@ export function Overview({
 				</div>
 			</aside>
 			<section className='panel'>
-				<h2>レース詳細</h2>
+				<div className='toolbar'>
+					<h2>レース詳細</h2>
+					{liveMonitored && (
+						<button
+							type='button'
+							disabled={forceReleasing}
+							onClick={() => {
+								setForceError(null);
+								setForceTarget({
+									url: liveMonitored.url,
+									label: liveMonitored.race?.raceId ?? liveMonitored.url,
+								});
+							}}
+						>
+							強制解除
+						</button>
+					)}
+				</div>
 				{error && <Callout tone='error'>{error}</Callout>}
 				{registrationError && (
 					<Callout tone='error'>{registrationError}</Callout>

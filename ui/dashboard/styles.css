@@ -210,11 +210,6 @@ button.active,
 	color: var(--muted);
 }
 
-.list .force-unwatch {
-	width: auto;
-	margin-top: 6px;
-}
-
 .event-log ol {
 	list-style: none;
 	margin: 0;
