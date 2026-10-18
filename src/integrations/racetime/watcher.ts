@@ -1,5 +1,5 @@
 import type {RaceState} from "@nanahuse/racetime-protocol";
-import type {RaceTimeClient} from "./client";
+import {parseRaceDetailForRace, type RaceTimeClient} from "./client";
 import {RaceTimeAbortedError} from "./errors";
 import {mapRace} from "./mapper";
 import {type CanonicalRaceUrl, resolveWebSocketUrl} from "./url";
@@ -18,6 +18,7 @@ export type WatcherOptions = {
 	onUpdate: (state: TransportState) => void;
 	backoffMs?: readonly number[];
 	connectTimeoutMs?: number;
+	onInvalidMessage?: (error: unknown) => void;
 };
 
 export type TransportState = Pick<
@@ -34,8 +35,6 @@ export class RaceWatcher {
 	private retryTimer?: ReturnType<typeof setTimeout>;
 	private connectTimer?: ReturnType<typeof setTimeout>;
 	private attempt = 0;
-	private refreshing = false;
-	private pending = false;
 
 	constructor(private readonly options: WatcherOptions) {
 		this.state = {
@@ -71,8 +70,6 @@ export class RaceWatcher {
 		this.epoch++;
 		this.controller?.abort();
 		this.controller = null;
-		this.refreshing = false;
-		this.pending = false;
 		clearTimeout(this.connectTimer);
 		const socket = this.socket;
 		this.socket = null;
@@ -101,20 +98,10 @@ export class RaceWatcher {
 		}, delay);
 	}
 
-	private refresh(): void {
-		if (this.stopped || this.retryTimer) return;
-		if (this.refreshing) {
-			this.pending = true;
-			return;
-		}
-		void this.load(false);
-	}
-
 	private async load(connect: boolean, initial = false): Promise<void> {
 		const epoch = this.epoch;
 		const controller = new AbortController();
 		this.controller = controller;
-		this.refreshing = true;
 		try {
 			const dto = await this.options.client.fetchRaceDetail(
 				this.options.canonical,
@@ -130,7 +117,6 @@ export class RaceWatcher {
 			if (!this.state.race || dto.version >= this.state.race.version) {
 				this.state.race = mapRace(dto, this.state.url);
 			}
-			this.state.error = null;
 			this.emit();
 			if (connect) {
 				try {
@@ -138,7 +124,7 @@ export class RaceWatcher {
 				} catch (error) {
 					this.retry(error);
 				}
-			} else if (this.state.connection === "connected") this.attempt = 0;
+			}
 		} catch (error) {
 			if (initial) {
 				this.stop();
@@ -148,11 +134,6 @@ export class RaceWatcher {
 		} finally {
 			if (epoch === this.epoch) {
 				this.controller = null;
-				this.refreshing = false;
-				if (this.pending) {
-					this.pending = false;
-					this.refresh();
-				}
 			}
 		}
 	}
@@ -171,11 +152,10 @@ export class RaceWatcher {
 		socket.onopen = () => {
 			if (!current()) return;
 			clearTimeout(this.connectTimer);
+			this.attempt = 0;
 			this.state.connection = "connected";
 			this.state.error = null;
 			this.emit();
-			// Cover updates between the HTTP snapshot and WebSocket subscription.
-			this.refresh();
 		};
 		socket.onmessage = ({data}) => {
 			if (!current() || typeof data !== "string") return;
@@ -186,12 +166,41 @@ export class RaceWatcher {
 				return;
 			}
 			if (
-				typeof message === "object" &&
-				message !== null &&
-				"type" in message &&
-				message.type === "race.data"
+				typeof message !== "object" ||
+				message === null ||
+				!("type" in message) ||
+				message.type !== "race.data"
 			)
-				this.refresh();
+				return;
+			try {
+				if (
+					!("version" in message) ||
+					typeof message.version !== "number" ||
+					!Number.isSafeInteger(message.version) ||
+					message.version < 0 ||
+					!("race" in message)
+				)
+					throw new Error("Invalid race.data envelope.");
+				const dto = parseRaceDetailForRace(
+					message.race,
+					this.options.canonical,
+				);
+				if (message.version !== dto.version)
+					throw new Error("race.data version does not match race.version.");
+				if (this.state.race && dto.version < this.state.race.version) return;
+				const race = mapRace(dto, this.state.url);
+				if (
+					this.state.race &&
+					dto.version === this.state.race.version &&
+					JSON.stringify(race) === JSON.stringify(this.state.race)
+				)
+					return;
+				this.state.race = race;
+				this.state.error = null;
+				this.emit();
+			} catch (error) {
+				this.options.onInvalidMessage?.(error);
+			}
 		};
 		socket.onclose = () => {
 			if (current()) this.retry(new Error("WebSocket disconnected"));

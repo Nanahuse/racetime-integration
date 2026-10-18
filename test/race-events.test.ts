@@ -3,7 +3,7 @@ import {ParticipantResolver} from "../src/integrations/players";
 import {HttpRaceTimeClient} from "../src/integrations/racetime/client";
 import type {RaceChangeEvent} from "../src/race-events";
 import {RaceService} from "../src/service";
-import {deferred, FakeSocket, flush, payload, url} from "./fixtures";
+import {FakeSocket, flush, payload, url} from "./fixtures";
 
 const services: RaceService[] = [];
 afterEach(() => {
@@ -72,7 +72,7 @@ async function setup(initial = payload(1, "race", "open")) {
 	await vi.advanceTimersByTimeAsync(0);
 	const change = async (patch: Partial<typeof raw>) => {
 		raw = {...raw, version: raw.version + 1, ...patch};
-		sockets.at(-1)!.message('{"type":"race.data"}');
+		sockets.at(-1)!.raceData(raw);
 		await vi.advanceTimersByTimeAsync(0);
 		await flush();
 	};
@@ -119,25 +119,20 @@ it.each([false, true])(
 			entrants: [finished()],
 		});
 		const failedEvent: RaceChangeEvent = {
-			type: "raceStartScheduled",
+			type: "raceStarted",
 			payload: {
 				raceId: "game/race",
 				url,
 				raceVersion: 2,
 				startedAt: "2026-01-01T00:00:15Z",
-				previousStartedAt: null,
 			},
 		};
 		expect(notify.mock.calls.map(([event]) => event.type)).toEqual([
-			"raceStartScheduled",
 			"raceStarted",
 			"entrantFinished",
 		]);
 		expect(onNotifyError).toHaveBeenCalledExactlyOnceWith(error, failedEvent);
-		expect(events().map(({type}) => type)).toEqual([
-			"raceStarted",
-			"entrantFinished",
-		]);
+		expect(events().map(({type}) => type)).toEqual(["entrantFinished"]);
 		expect(service.getWatch(watch.watchId)).toMatchObject({
 			connection: "connected",
 			error: null,
@@ -153,7 +148,7 @@ it.each([false, true])(
 		expect(fetchImpl).toHaveBeenCalledTimes(fetched);
 		expect(sockets).toHaveLength(1);
 		expect(sockets[0]!.close).not.toHaveBeenCalled();
-		expect(notify).toHaveBeenCalledTimes(3);
+		expect(notify).toHaveBeenCalledTimes(2);
 		await change({entrants: [unfinished()]});
 		expect(events().at(-1)).toEqual({
 			type: "entrantFinishUndone",
@@ -181,44 +176,50 @@ it.each(["open", "pending", "in_progress", "finished", "cancelled"])(
 	},
 );
 
-it("notifies schedule creation and changes in pending, but not clearing the schedule", async () => {
-	const {change, events, notifications, service} = await setup();
-	await change({
-		status: {value: "pending"},
-		started_at: "2026-01-01T09:00:15.123456789+09:00",
-	});
-	await change({started_at: "2026-01-01T00:00:30Z"});
-	await change({started_at: null});
-	expect(events()).toEqual([
-		{
-			type: "raceStartScheduled",
-			payload: {
-				raceId: "game/race",
-				url,
-				raceVersion: 2,
-				startedAt: "2026-01-01T00:00:15.123456789Z",
-				previousStartedAt: null,
+it.each(["open", "invitational"])(
+	"notifies %s schedule creation and changes in pending, but not clearing the schedule",
+	async (initialStatus) => {
+		const {change, events, notifications, service} = await setup({
+			...payload(1, "race", initialStatus),
+			started_at: null,
+		});
+		await change({
+			status: {value: "pending"},
+			started_at: "2026-01-01T09:00:15.123456789+09:00",
+		});
+		await change({started_at: "2026-01-01T00:00:30Z"});
+		await change({started_at: null});
+		expect(events()).toEqual([
+			{
+				type: "raceStartScheduled",
+				payload: {
+					raceId: "game/race",
+					url,
+					raceVersion: 2,
+					startedAt: "2026-01-01T00:00:15.123456789Z",
+					previousStartedAt: null,
+				},
 			},
-		},
-		{
-			type: "raceStartScheduled",
-			payload: {
-				raceId: "game/race",
-				url,
-				raceVersion: 3,
-				startedAt: "2026-01-01T00:00:30Z",
-				previousStartedAt: "2026-01-01T00:00:15.123456789Z",
+			{
+				type: "raceStartScheduled",
+				payload: {
+					raceId: "game/race",
+					url,
+					raceVersion: 3,
+					startedAt: "2026-01-01T00:00:30Z",
+					previousStartedAt: "2026-01-01T00:00:15.123456789Z",
+				},
 			},
-		},
-	]);
-	for (const {event, state, published} of notifications) {
-		expect(state?.race?.version).toBe(event.payload.raceVersion);
-		expect(published.races[0]?.race).toEqual(state?.race);
-	}
-	expect(service.get(url)?.revision).toBeGreaterThan(
-		service.get(url)!.race!.version,
-	);
-});
+		]);
+		for (const {event, state, published} of notifications) {
+			expect(state?.race?.version).toBe(event.payload.raceVersion);
+			expect(published.races[0]?.race).toEqual(state?.race);
+		}
+		expect(service.get(url)?.revision).toBeGreaterThan(
+			service.get(url)!.race!.version,
+		);
+	},
+);
 
 it.each(["open", "invitational", "pending"])(
 	"notifies %s to in_progress once per shared session",
@@ -267,7 +268,7 @@ it("requires a start timestamp and remembers a start observed without one", asyn
 		status: {value: "in_progress"},
 		started_at: "2026-01-01T00:00:15Z",
 	});
-	expect(events().map(({type}) => type)).toEqual(["raceStartScheduled"]);
+	expect(events()).toEqual([]);
 });
 
 it.each(["not_ready", "in_progress"])(
@@ -456,23 +457,21 @@ it("detects a finish first observed in the HTTP reconnect snapshot", async () =>
 	expect(events().map(({type}) => type)).toEqual(["entrantFinished"]);
 });
 
-it("discards delayed replies after the last watch is released and reinitializes a new session", async () => {
+it("ignores messages from a released socket and reinitializes a new session", async () => {
 	const {service, watch, fetchImpl, sockets, change, events} = await setup({
 		...payload(1, "race", "in_progress"),
 		entrants: [unfinished()],
 	});
-	const pending = deferred<Response>();
-	fetchImpl.mockReturnValueOnce(pending.promise);
-	sockets[0]!.message('{"type":"race.data"}');
+	const releasedSocket = sockets[0]!;
 	service.unwatch(watch.watchId);
 	fetchImpl.mockResolvedValueOnce(
 		Response.json({...payload(10, "race", "pending"), entrants: [finished()]}),
 	);
 	await service.watch(url);
-	pending.resolve(Response.json({...payload(99), entrants: [finished()]}));
-	await vi.advanceTimersByTimeAsync(0);
 	expect(service.get(url)?.race?.version).toBe(10);
 	expect(events()).toEqual([]);
+	releasedSocket.raceData(payload(99, "race", "finished"));
+	expect(service.get(url)?.race?.version).toBe(10);
 	fetchImpl.mockResolvedValueOnce(
 		Response.json({...payload(10, "race", "pending"), entrants: [finished()]}),
 	);

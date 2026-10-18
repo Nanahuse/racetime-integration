@@ -49,6 +49,10 @@ export class RaceService {
 			event: RaceChangeEvent,
 		) => void = () => {},
 		allowedOrigins: readonly string[] = DEFAULT_ALLOWED_RACE_ORIGINS,
+		private readonly onInvalidRaceData: (
+			url: string,
+			error: unknown,
+		) => void = () => {},
 	) {
 		this.allowedOrigins = normalizeAllowedRaceOrigins(allowedOrigins);
 	}
@@ -110,6 +114,8 @@ export class RaceService {
 				client: this.client,
 				canonical,
 				socketFactory: this.socketFactory,
+				onInvalidMessage: (error) =>
+					this.onInvalidRaceData(canonical.canonicalUrl, error),
 				onUpdate: (state) =>
 					this.update(canonical.canonicalUrl, watcher, state),
 			});

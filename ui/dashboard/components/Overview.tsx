@@ -32,7 +32,6 @@ type EventLogEntry = {
 	id: number;
 	receivedAt: string;
 	event: keyof RaceTimeEvents;
-	raceId: string;
 	details: string[];
 };
 type EventLogsByRace = Record<string, EventLogEntry[]>;
@@ -73,7 +72,6 @@ function eventDetails<K extends keyof RaceTimeEvents>(
 	return {
 		receivedAt: new Date().toISOString(),
 		event,
-		raceId: (data as RaceTimeEvents[K]).raceId,
 		details,
 	};
 }
@@ -1035,7 +1033,6 @@ export function Overview({
 												{formatRaceClock(entry.receivedAt)}
 											</time>
 											<span>{entry.event}</span>
-											<span>{entry.raceId}</span>
 											{entry.details.map((detail, index) => (
 												<span key={`${entry.id}-${index}`}>{detail}</span>
 											))}

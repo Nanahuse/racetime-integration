@@ -214,7 +214,7 @@ export function parseRaceDetail(payload: unknown): RaceTimeRaceDto {
 	}
 
 	return {
-		version: requireNumber(root, "version", "race.version"),
+		version: requireCount(root, "version"),
 		name: requireString(root, "name", "race.name"),
 		slug: requireString(root, "slug", "race.slug"),
 		status: requireString(status, "value", "race.status.value"),
@@ -240,6 +240,22 @@ export function parseRaceDetail(payload: unknown): RaceTimeRaceDto {
 		goal: requireString(goal, "name", "race.goal.name"),
 		entrants: root.entrants.map((entry, index) => parseEntrant(entry, index)),
 	};
+}
+
+export function parseRaceDetailForRace(
+	payload: unknown,
+	canonical: CanonicalRaceUrl,
+): RaceTimeRaceDto {
+	const dto = parseRaceDetail(payload);
+	if (
+		dto.categorySlug !== canonical.categorySlug ||
+		dto.slug !== canonical.raceSlug
+	) {
+		throw new RaceTimePayloadError(
+			"Race Detail identity does not match the requested race.",
+		);
+	}
+	return dto;
 }
 
 function isAbortLike(error: unknown): boolean {
@@ -301,16 +317,7 @@ export class HttpRaceTimeClient implements RaceTimeClient {
 					"Race Detail response was not valid JSON.",
 				);
 			}
-			const dto = parseRaceDetail(payload);
-			if (
-				dto.categorySlug !== canonical.categorySlug ||
-				dto.slug !== canonical.raceSlug
-			) {
-				throw new RaceTimePayloadError(
-					"Race Detail identity does not match the requested race.",
-				);
-			}
-			return dto;
+			return parseRaceDetailForRace(payload, canonical);
 		} catch (error) {
 			if (error instanceof RaceTimeError) {
 				throw error;

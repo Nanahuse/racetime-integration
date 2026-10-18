@@ -235,7 +235,8 @@ it("subscribes to the five RaceTime events and renders them in receive order", (
 			.getByRole("heading", {name: "イベントログ"})
 			.parentElement?.querySelectorAll("li");
 	expect(rowsFor()).toHaveLength(1);
-	expect(rowsFor()?.[0]?.textContent).toContain("game/race-001");
+	expect(rowsFor()?.[0]?.textContent).toContain("raceStartScheduled");
+	expect(rowsFor()?.[0]?.textContent).not.toContain("game/race-001");
 	emit("racetime.v4.raceStarted", {
 		url: race.url,
 		raceId: "game/race-001",
@@ -329,13 +330,13 @@ it("keeps the newest 100 events independently for each race", () => {
 			.parentElement?.querySelectorAll("li");
 	const gameRows = rowsFor();
 	expect(gameRows).toHaveLength(100);
-	expect(gameRows?.[0]?.textContent).toContain("game-1");
-	expect(gameRows?.[99]?.textContent).toContain("game-100");
+	expect(gameRows?.[0]?.textContent).toContain("raceStarted");
+	expect(gameRows?.[0]?.textContent).not.toContain("game-1");
 	fireEvent.click(screen.getByRole("button", {name: /other\/race2/}));
 	const otherRows = rowsFor();
 	expect(otherRows).toHaveLength(100);
-	expect(otherRows?.[0]?.textContent).toContain("other-1");
-	expect(otherRows?.[99]?.textContent).toContain("other-100");
+	expect(otherRows?.[0]?.textContent).toContain("raceStarted");
+	expect(otherRows?.[0]?.textContent).not.toContain("other-1");
 });
 
 it("separates event history by URL when Race IDs match across origins", () => {

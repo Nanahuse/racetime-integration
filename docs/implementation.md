@@ -12,7 +12,7 @@ RaceTime DTOの日時・期間はTemporal値で保持し、`mapRace` でUTC日�
 
 SRC時間は取得境界でDurationとして検証・シリアライズし、PB比較は既存どおり `Temporal.Duration.compare` を使用する。SRC記録日は共通のPlainDate解析で検証する。Leaderboard/PBの `fetchedAt` は `Temporal.Now.instant()` を共通関数で文字列化し、5分キャッシュの期限もInstantで保持・比較する。公開文字列を返す既存のSpeedrunClientインターフェースは維持し、サービスごとの重複DTOは追加しない。PB照合、アカウント集約、公式順位、同時要求共有、refresh・staleの扱いは維持する。Leaderboard処理では表示名の解決だけを行い、個人PB取得は `getSpeedrunPlayerBests` に分離する。
 
-単発取得・監視は同じ `mapRace` を使う。直接API・NodeCGメッセージ・Replicantはいずれも同じISO文字列のモデルを公開するため、監視状態の比較・structuredCloneにTemporal値は入らない。WebSocketのrace.dataによる再取得、version処理、バックオフ、監視共有、古い応答の破棄、最終正常スナップショット保持、Player解決は変更しない。毎秒のHTTP取得・Replicant更新は追加しない。
+単発取得・監視は同じ `mapRace` を使う。直接API・NodeCGメッセージ・Replicantはいずれも同じISO文字列のモデルを公開するため、監視状態の比較・structuredCloneにTemporal値は入らない。監視の初回取得と再接続はHTTPを使い、接続後の状態更新は検証済みのWebSocket `race.data.race` を直接採用する。HTTPキャッシュに依存せず、version比較で古いデータを破棄する。バックオフ、監視共有、古い接続の破棄、最終正常スナップショット保持、Player解決を維持する。毎秒のHTTP取得・Replicant更新は追加しない。
 
 Overviewは監視中レースの `RaceFields`、接続状態、参加者解決状況を表示し、URL入力から監視を追加する。`getRace` で既存監視を確認し、未監視の場合だけ `watchRace` を開始する。RPC完了とReplicant反映を分離し、Race情報がReplicantに現れた後に世代管理付きで自動選択する。手動選択、別URLの追加、監視停止は古い選択予約を無効化し、Mappingの未保存変更・保存中は既存の切り替え保護を適用する。詳細から「監視を停止」を実行すると、確認後に `forceUnwatchRace` でそのRaceTimeの共有監視セッション全体を停止する。イベントログはレース詳細のRaceTime情報直後に表示する。Overview表示中に受信したRaceTimeイベントをイベントペイロードのURLごとに受信順で最大100件保持し、詳細には表示中のレースに属する履歴だけを描画する。選択前に受信したイベントも該当URLの履歴に追加し、レースを切り替えても各履歴を維持する。表示対象は `monitoredDisplay.url` に合わせ、Mapping切り替え保護中も詳細とイベントログを同じレースに保つ。監視停止では履歴を消去せず、Overviewのアンマウント時に購読解除と共に履歴を破棄する。日時は `formatRaceInstant` が利用環境のローカルタイムゾーンで表示し、nullは「未設定」、Durationは既存の経過時間表示、infoはReactの通常テキストとして扱う。選択した監視レースの参加者下に順位・プレイヤー名・記録時間・日付を持つ条件別Leaderboardを表示する。PBは参加者一覧に表示し、Leaderboard APIからは追加取得しない。自動取得は既存の5分キャッシュを利用し、RaceTimeの通常更新では再取得しない。Mapping保存・削除成功時はLeaderboardと参加者PBを再解決し、取得中は古いMappingの結果を隠す。公開APIの `fetchRace` は引き続き単発取得を提供するが、Dashboardには単発取得操作を設けない。Player Manager登録、参加者操作、マッピング編集は監視レース表示で維持する。
 
@@ -22,9 +22,9 @@ RaceTime接続先は `Settings.allowedRaceOrigins` で管理する。初期値�
 
 開始済み判定はURLごとの共有セッションにnullable booleanとして保持し、最初の有効なRaceから初期化する。開始後は再開やpendingへの戻りでも保持し、最後のwatchId解除でセッションと共に破棄する。基準スナップショットは既存のsession.state.raceを使用し、イベント用の複製や履歴は保持しない。再接続も同じ基準と比較し、RaceWatcherによるversion・接続世代・監視停止の検証は変更しない。
 
-ExtensionはProtocolのeventMessageNameでNodeCG.sendMessageを呼ぶ。同期例外とPromise拒否を捕捉してloggerへ記録し、送信完了を待たずに処理を続ける。送信失敗はレース採用・公開や監視の再取得／再接続に影響せず、再送も行わない。新しいRPC・WebSocket・タイマー・ポーリング・永続化は追加していない。API_VERSION=4、racetime.v4.*、RacesState.schemaVersion=1、既存操作とレスポンス型、CIのタグ発行方式を維持する。
+ExtensionはProtocolのeventMessageNameでNodeCG.sendMessageを呼ぶ。同期例外とPromise拒否を捕捉してloggerへ記録し、送信完了を待たずに処理を続ける。送信失敗はレース採用・公開や監視の再接続に影響せず、再送も行わない。不正なRaceTime WebSocketレースデータは監視を停止せず破棄し、NodeCGログへ記録する。API_VERSION=4、racetime.v4.*、RacesState.schemaVersion=1、既存操作とレスポンス型、CIのタグ発行方式を維持する。
 
-- RaceTime: HTTP取得、WebSocket通知での再取得、再接続、レースIDと結果の正規化。`finish_time` は共通の `parseRaceDuration` で `Temporal.Duration` に解析し、未検証の期間文字列を取得境界より内側へ渡さない。
+- RaceTime: 初回・再接続時のHTTP取得、WebSocket `race.data` の検証と直接採用、再接続、レースIDと結果の正規化。`finish_time` は共通の `parseRaceDuration` で `Temporal.Duration` に解析し、未検証の期間文字列を取得境界より内側へ渡さない。
 - RaceService: 単発取得のHTTP取得・Player解決、URLごとの共有監視、初回成功後の購読成立、失敗時の解放、Revision管理。
 - Player Manager: 公開 `list` でDirectoryを取得し、Playerに属するRaceTime Account（`service === "racetime"`、`identity.userId`）をPrimary/Secondaryの区別なく検索する。`find` は使わない。RaceTime側でPlayerを作成・更新せず、公開 `resolveDisplayName` で表示名を確定し、`player-manager.v3.directoryChanged` で再解決する。
 - Game Mappings: RaceTimeゲーム（categorySlugが一意キー）とSRCゲームをGameMappingsシートで対応付ける。
@@ -46,7 +46,8 @@ watchRaceの成功条件は初回HTTP取得成功。WebSocket接続完了やPlay
 
 - HTTPとWebSocketハンドシェイクは各10秒でタイムアウト。
 - 初回成功後の切断は1/2/5/10/30秒のバックオフで復帰。HTTP再同期成功までバックオフをリセットしない。
-- race.dataをHTTP再取得の通知として扱い、進行中取得中の通知を集約。接続開始時にも再取得して購読の隙間を補う。
+- 初回・再接続時にHTTPスナップショットを取得し、接続後は `race.data` に含まれるレースデータを検証して採用する。HTTPキャッシュを状態更新判定に使わない。接続成功時にバックオフ試行回数をリセットする。
+- `raceStartScheduled` は未開始の `pending` 状態で開始予定時刻が設定・変更されたときに発火し、`raceStarted` は未開始状態から `in_progress` に遷移したときに発火する。初回スナップショットはベースラインとして扱う。
 - 古い接続世代・低いRaceTime version・解除後の応答は公開しない。
 - Player解決は公開 `list` の1スナップショットから行い、directoryChangedを集約して前の世代を破棄する。15秒の期限。同一RaceTime IDが複数Playerに属する場合は任意選択せず解決失敗として扱う。
 - 正常な `directoryChanged` はRevisionの大小に関わらず再解決の契機とする（v3は同一Revisionで内容が変わり得る）。
@@ -76,6 +77,8 @@ Player Manager v3のPlayerは複数Accountを持ち、各Accountは `service` �
 保存済み `racetime-settings` が不正な場合（例: `gameMappingsSheet` 欠落）、Extensionはマウントを失敗させず、既定設定（`revision: 0`、`spreadsheetId: null`、`gameMappingsSheet: "GameMappings"`、`categoryMappingsSheet: "CategoryMappings"`、`maxResolvedMappings: 20`）へ初期化して永続化し、NodeCG loggerへ警告を記録して起動を継続する。`maxResolvedMappings` を持たない既存の永続化済み設定は、他項目とrevisionを変更せずに20を補完して読み込む（欠落だけを理由に設定全体をリセットしない）。フィールドが存在して値が不正な場合は通常の設定検証で拒否する。bundleConfigが有効なら現在の初期値生成規則を維持する。設定形式の不正（`invalid_input`）以外の例外は再スローする。この復旧はSpreadsheetの内容を変更しない。
 
 ## Dashboard
+
+イベントログは受信時刻・イベント名・詳細を表示し、Race IDは重複表示しない。イベント履歴はイベントペイロードのURLごとに最大100件保持する。
 
 - `dashboardPanels` に `racetime-integration`（title `RaceTime Integration`、fullbleed）を定義し、Vite + React + TypeScriptでビルドする。出力は `dashboard/`（CIのbuildで生成）。
 - Overview: `racetime-races` Replicantを一覧の正として表示し、Race ID、RaceTime status、Connection、参加者Revisionを確認できる。URLで監視を追加し、RPC完了後にReplicantへRace情報が反映されたら自動選択する。選択予約は世代管理し、手動選択・別URL追加・監視停止の操作を優先する。監視一覧で選んだRaceの詳細に、RaceTime情報、イベントログ、Speedrun.com Mapping、参加者とPB、条件別Leaderboard、監視停止操作を表示する。イベントログは詳細のRaceTime情報直後に置き、イベント購読をOverviewのマウントからアンマウントまで維持する。受信したイベントはペイロードのURLごとに最大100件保持し、表示中の `monitoredDisplay.url` に一致する履歴だけを描画する。選択前・レース切り替え後も各履歴を保ち、監視停止でも消去しない。Overviewのアンマウント時に履歴を破棄する。監視停止は確認後 `forceUnwatchRace` を呼び出し、他バンドルを含む共有監視セッション全体に適用される。RaceTimeの通常状態更新ではLeaderboardを再取得せず、Mapping保存・削除後はLeaderboardと参加者PBを再解決する。公開APIの `fetchRace` は引き続き単発取得を提供し、DashboardのURL操作は監視追加を行う。Player Managerの登録は公開APIのbeginRegistrationで得たURLへ遷移し、編集はProtocolの `playerEditUrl` を使う。未保存Mapping、保存中の編集、レース切り替えは既存の保護を維持する。

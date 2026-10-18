@@ -10,7 +10,15 @@ import {ParticipantResolver} from "../src/integrations/players";
 import {RaceTimeHttpError} from "../src/integrations/racetime/errors";
 import {MappingService} from "../src/mappings";
 import {RaceService} from "../src/service";
-import {deferred, dto, FakeSocket, flush, mapping, url} from "./fixtures";
+import {
+	deferred,
+	dto,
+	FakeSocket,
+	flush,
+	mapping,
+	payload,
+	url,
+} from "./fixtures";
 
 afterEach(() => vi.useRealTimers());
 
@@ -408,21 +416,15 @@ it("force-releases pending initial watches without affecting a replacement sessi
 	service.dispose();
 });
 
-it("ignores HTTP refreshes completed after force-release and permits a fresh watch", async () => {
-	const {service, client, sockets, publish} = setup();
+it("ignores messages from a force-released socket and permits a fresh watch", async () => {
+	const {service, sockets, publish} = setup();
 	const old = await service.watch(url);
-	sockets[0]!.open();
-	await flush();
-	const pending = deferred<ReturnType<typeof dto>>();
-	client.fetchRaceDetail.mockReturnValueOnce(pending.promise);
-	sockets[0]!.message('{"type":"race.data"}');
+	const oldSocket = sockets[0]!;
 	service.forceUnwatch(url);
-	client.fetchRaceDetail.mockResolvedValueOnce(dto(5));
 	const replacement = await service.watch(url);
-	pending.resolve(dto(99));
-	await flush();
+	oldSocket.raceData(payload(99));
 	expect(service.getWatch(old.watchId)).toBeNull();
-	expect(service.getWatch(replacement.watchId)?.race?.version).toBe(5);
+	expect(service.getWatch(replacement.watchId)?.race?.version).toBe(1);
 	expect(publish.mock.lastCall?.[0]).toEqual(service.snapshot());
 	expect(service.snapshot().races).toHaveLength(1);
 	service.dispose();
@@ -600,15 +602,14 @@ it("coalesces directory events and discards outdated resolutions and post-releas
 	expect(publish).toHaveBeenCalledTimes(count);
 });
 it("keeps race and participant revisions independent for result-only updates", async () => {
-	const {service, client, sockets, request} = setup();
+	const {service, sockets, request} = setup();
 	await service.watch(url);
 	await flush();
 	sockets[0]!.open();
 	await flush();
 	const before = service.get(url)!;
 	const count = request.mock.calls.length;
-	client.fetchRaceDetail.mockResolvedValueOnce(dto(2));
-	sockets[0]!.message('{"type":"race.data"}');
+	sockets[0]!.raceData(payload(2));
 	await flush();
 	const after = service.get(url)!;
 	expect(after.raceRevision).toBeGreaterThan(before.raceRevision);

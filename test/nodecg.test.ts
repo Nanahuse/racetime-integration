@@ -254,7 +254,7 @@ it("publishes identical ISO race models through direct requests, messages and Re
 		);
 		expect(fetchMessage).toMatchObject({ok: true, data: {race: initial}});
 		sockets[0]!.open();
-		await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(4));
+		await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(3));
 		await flush();
 		const updatedPayload = {
 			...payload(2, "race", "finished"),
@@ -271,7 +271,7 @@ it("publishes identical ISO race models through direct requests, messages and Re
 			],
 		};
 		fetchImpl.mockImplementation(async () => Response.json(updatedPayload));
-		sockets[0]!.message('{"type":"race.data"}');
+		sockets[0]!.raceData(updatedPayload);
 		await vi.waitFor(async () =>
 			expect(await api.request("getRace", {url})).toMatchObject({
 				ok: true,
@@ -302,13 +302,11 @@ it("publishes identical ISO race models through direct requests, messages and Re
 		fetchImpl.mockImplementation(async () =>
 			Response.json({...updatedPayload, opened_at: "invalid"}),
 		);
-		sockets[0]!.message('{"type":"race.data"}');
-		await vi.waitFor(async () =>
-			expect(await api.request("getRace", {url})).toMatchObject({
-				ok: true,
-				data: {connection: "reconnecting"},
-			}),
-		);
+		sockets[0]!.raceData({...updatedPayload, opened_at: "invalid"});
+		expect(await api.request("getRace", {url})).toMatchObject({
+			ok: true,
+			data: {connection: "connected", error: null},
+		});
 		await assertPublished(race);
 		expect(await api.request("fetchRace", {url})).toMatchObject({
 			ok: false,
