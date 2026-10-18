@@ -10,11 +10,11 @@ Protocolの `datetime.ts` に `parseRaceInstant` / `serializeRaceInstant` と `p
 
 RaceTime DTOの日時・期間はTemporal値で保持し、`mapRace` でUTC日時／Duration文字列へ変換する。新しい必須項目の欠落、型不一致、不正日時・期間、負数・安全な整数でない人数は `invalid_payload`。nullを許す日時もキーは必須とし、開始・終了・中止・完走日時の推測補完は行わない。`Entrant.finishedAt` と `RaceResult.finishedAt` は同じ日時、`finishTime` / `time` は同じ経過時間を表す。ranked・recordable・recordedは独立して保持し、人数は配列から再計算しない。
 
-SRC時間は取得境界でDurationとして検証・シリアライズし、PB比較は既存どおり `Temporal.Duration.compare` を使用する。SRC記録日は共通のPlainDate解析で検証する。Leaderboard/PBの `fetchedAt` は `Temporal.Now.instant()` を共通関数で文字列化し、5分キャッシュの期限もInstantで保持・比較する。公開文字列を返す既存のSpeedrunClientインターフェースは維持し、サービスごとの重複DTOは追加しない。PB照合、アカウント集約、公式順位、同時要求共有、refresh・staleの扱いは維持する。
+SRC時間は取得境界でDurationとして検証・シリアライズし、PB比較は既存どおり `Temporal.Duration.compare` を使用する。SRC記録日は共通のPlainDate解析で検証する。Leaderboard/PBの `fetchedAt` は `Temporal.Now.instant()` を共通関数で文字列化し、5分キャッシュの期限もInstantで保持・比較する。公開文字列を返す既存のSpeedrunClientインターフェースは維持し、サービスごとの重複DTOは追加しない。PB照合、アカウント集約、公式順位、同時要求共有、refresh・staleの扱いは維持する。Leaderboard処理では表示名の解決だけを行い、個人PB取得は `getSpeedrunPlayerBests` に分離する。
 
 単発取得・監視は同じ `mapRace` を使う。直接API・NodeCGメッセージ・Replicantはいずれも同じISO文字列のモデルを公開するため、監視状態の比較・structuredCloneにTemporal値は入らない。WebSocketのrace.dataによる再取得、version処理、バックオフ、監視共有、古い応答の破棄、最終正常スナップショット保持、Player解決は変更しない。毎秒のHTTP取得・Replicant更新は追加しない。
 
-Overviewの `RaceFields` を単発取得・監視で共有し、新しい詳細とAPI提供の人数を表示する。参加者の完走日時も結果欄に追加した。日時は `formatRaceInstant` が利用環境のローカルタイムゾーンで表示し、nullは「未設定」、Durationは既存の経過時間表示、infoはReactの通常テキストとして扱う。Rankingsの最終取得日時も共通の日時表示を使う。PB表示・参加者操作・マッピング編集・レース切り替えは維持する。
+Overviewの `RaceFields` を単発取得・監視で共有し、新しい詳細とAPI提供の人数を表示する。参加者の完走日時も結果欄に追加した。日時は `formatRaceInstant` が利用環境のローカルタイムゾーンで表示し、nullは「未設定」、Durationは既存の経過時間表示、infoはReactの通常テキストとして扱う。レース選択またはURLによる単発取得で、参加者の下に順位・プレイヤー名・記録時間・日付を持つ条件別Leaderboardを表示する。PBは参加者一覧に表示し、Leaderboard APIからは追加取得しない。自動取得は既存の5分キャッシュを利用し、RaceTimeの通常更新では再取得しない。Mapping保存・削除成功時はLeaderboardと参加者PBを再解決し、取得中は古いMappingの結果を隠す。PB表示・参加者操作・マッピング編集・レース切り替えは維持する。
 
 0.7.0では監視レースの状態変化イベントを追加した。イベント名・公開型・通知条件・購読方法は[Protocolのイベント契約](../packages/racetime-protocol/README.md#レース状態変化イベント)にまとめる。`race-events.ts` はHTTP・NodeCGに依存せず、採用前後のRaceと開始済み判定からイベントと次の判定を返す。RaceService.updateは有効な共有セッションの採用前スナップショットを比較し、既存のRevision更新・Replicant公開の後でExtensionのコールバックへ通知する。初回Raceは比較基準のみを確立し、fetchRaceやPlayer再解決は検出処理を通らない。
 
@@ -34,7 +34,7 @@ ExtensionはProtocolのeventMessageNameでNodeCG.sendMessageを呼ぶ。同期�
 - Speedrun.com: ゲーム・カテゴリ・Level・Variables・Platform・Region・Timing Methodの選択肢に加えて、Leaderboardと個人PBを取得する。LeaderboardはSRC v1の `top` と条件フィルターを使い、同順位を含む全RunをSRC順位のまま返す。Run内プレイヤー参照はLeaderboard直下のembedded player一覧へIDで結び付け、guestも保持する。PBはユーザーごとに `game` を指定したPersonal Bests APIを全ページ取得し、Game/Category/Levelと `obsoletes: true` のVariable値で照合する。`top` は指定せず、SRCの公式Primary Timeと `place` をそのまま使う。`obsoletes: false` のVariable、Platform、Region、Emulator、Timing MethodはPB照合に使わない。Player ManagerのPrimary/Secondaryアカウントから該当する公式PBを集約し、一部取得失敗は部分結果で確定しない。SRC HTTP要求は4件まで並列化し、5分キャッシュ、同時要求共有、条件別refresh、stale応答をExtension内で管理する。Any展開時のLeaderboard取得状態とstale結果はMappingごとに返す。失敗応答は正常値としてキャッシュしない。カテゴリ所属ゲームは既存どおりカテゴリ詳細 `links` の `rel: "game"` から解決する。
 - Protocol: 上記契約の型・定数・メッセージ名。Leaderboard/PBは既存 `racetime.v4.*` に操作を追加し、API_VERSIONとMESSAGE_PREFIXを維持する。完走時間とSRC時間は公開では検証済みISO 8601期間文字列、比較は `Temporal.Duration` を利用する。`parseRaceDuration` / `serializeRaceDuration` と `Temporal` を公開する。
 - Spreadsheet初期化: `initializeSpreadsheet` で指定Spreadsheetへ `GameMappings`/`CategoryMappings` ワークシートを準備する。
-- Dashboard: `RaceTime Integration` パネル（fullbleed）。Overview / Rankings / Mappings / Settingsを公開Protocol経由で操作し、Replicantは参照専用とする。OverviewのPB要求は参加者とレース情報の表示とは独立し、SRC障害はRaceTime表示に波及しない。
+- Dashboard: `RaceTime Integration` パネル（fullbleed）。Overview / Mappings / Settingsを公開Protocol経由で操作し、Replicantは参照専用とする。OverviewのPB・Leaderboard要求は参加者とレース情報の表示とは独立し、SRC障害はRaceTime表示に波及しない。
 
 watchRaceの成功条件は初回HTTP取得成功。WebSocket接続完了やPlayer解決完了は別の状態として公開する。接続不良を受けても既存Activeの判断に使えるRaceを返す。初回HTTP失敗時には参照も再試行も残さない。fetchRaceは同じHTTP取得と `mapRace` 正規化で1回だけ取得し、watchRaceと同じParticipantResolverで参加者を解決して `ResolvedRace`（race / participants / resolution）を返す。watchId・WebSocket・監視セッションを生成せず、既存の監視状態やReplicantを変更しない。Player Manager取得失敗時もレース情報は保持し、参加者をunavailable・resolutionをerrorとして返す。`mapRace` は解析済みの `Temporal.Duration` を `serializeRaceDuration` でISO 8601期間文字列へ戻すため、公開データやReplicantに `Temporal.Duration` は混入しない。`Entrant.finishTime` と `RaceResult.time` は同じ期間を表し、記録なしは `null` とする。
 

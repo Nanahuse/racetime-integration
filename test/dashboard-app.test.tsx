@@ -120,6 +120,14 @@ it("shows Idle when no races are monitored", async () => {
 	expect(await screen.findByText("Idle")).toBeTruthy();
 });
 
+it("offers Overview, Mappings, and Settings tabs", async () => {
+	render(<App />);
+	expect(await screen.findByRole("button", {name: "Overview"})).toBeTruthy();
+	expect(screen.getByRole("button", {name: "Mappings"})).toBeTruthy();
+	expect(screen.getByRole("button", {name: "Settings"})).toBeTruthy();
+	expect(screen.queryByRole("button", {name: "Rankings"})).toBeNull();
+});
+
 it("asks before discarding unsaved edits when switching tabs", async () => {
 	render(<App />);
 	fireEvent.click(screen.getByRole("button", {name: "Mappings"}));

@@ -19,6 +19,7 @@ import {
 	type RaceMappingTarget,
 	targetKeyOf,
 } from "./Mappings";
+import {RaceLeaderboard} from "./RaceLeaderboard";
 
 function counts(participants: readonly Participant[]) {
 	const matched = participants.filter((p) => p.status === "matched").length;
@@ -374,6 +375,7 @@ export function Overview({
 	const [fetchNotice, setFetchNotice] = useState<string | null>(null);
 	const [fetching, setFetching] = useState(false);
 	const [mappingBusy, setMappingBusy] = useState(false);
+	const [mappingRevision, setMappingRevision] = useState(0);
 	const [mappingDirty, setMappingDirty] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [forceTarget, setForceTarget] = useState<{
@@ -449,6 +451,7 @@ export function Overview({
 	>([]);
 	const [bestsLoading, setBestsLoading] = useState(false);
 	const [bestsError, setBestsError] = useState<string | null>(null);
+	const [bestsMappingRevision, setBestsMappingRevision] = useState(-1);
 	const [bestsRefreshToken, setBestsRefreshToken] = useState(0);
 	const lastBestsRefreshToken = useRef(0);
 	useEffect(() => {
@@ -462,9 +465,11 @@ export function Overview({
 			setParticipantBests([]);
 			setBestsLoading(false);
 			setBestsError(null);
+			setBestsMappingRevision(mappingRevision);
 			return;
 		}
 		let active = true;
+		setBestsMappingRevision(mappingRevision);
 		setBestsLoading(true);
 		setBestsError(null);
 		void request("getSpeedrunPlayerBests", {
@@ -506,12 +511,19 @@ export function Overview({
 		return () => {
 			active = false;
 		};
-	}, [targetCategorySlug, targetGoal, playerQueryKey, bestsRefreshToken]);
+	}, [
+		targetCategorySlug,
+		targetGoal,
+		playerQueryKey,
+		bestsRefreshToken,
+		mappingRevision,
+	]);
 	useEffect(() => {
 		lastBestsRefreshToken.current = bestsRefreshToken;
 	}, [bestsRefreshToken]);
 	const targetKeyRef = useRef<string | null>(null);
 	targetKeyRef.current = targetKey;
+	const bestsMappingCurrent = bestsMappingRevision === mappingRevision;
 
 	const reportMapping = useCallback(
 		(state: EditorState) => {
@@ -910,6 +922,7 @@ export function Overview({
 								mode='race'
 								target={target}
 								onStateChange={reportMapping}
+								onMappingChange={() => setMappingRevision((value) => value + 1)}
 							/>
 						)}
 						<h3>参加者</h3>
@@ -918,11 +931,18 @@ export function Overview({
 							race={monitoredDisplay.race}
 							onRegister={(participant) => void register(participant)}
 							registerDisabled={false}
-							bests={participantBests}
-							bestsLoading={bestsLoading}
-							bestsError={bestsError}
+							bests={bestsMappingCurrent ? participantBests : []}
+							bestsLoading={bestsLoading || !bestsMappingCurrent}
+							bestsError={bestsMappingCurrent ? bestsError : null}
 							onRefreshBests={() => setBestsRefreshToken((value) => value + 1)}
 						/>
+						{target && (
+							<RaceLeaderboard
+								categorySlug={target.categorySlug}
+								goal={target.goal}
+								mappingRevision={mappingRevision}
+							/>
+						)}
 					</>
 				) : fetched ? (
 					<>
@@ -933,6 +953,7 @@ export function Overview({
 								mode='race'
 								target={target}
 								onStateChange={reportMapping}
+								onMappingChange={() => setMappingRevision((value) => value + 1)}
 							/>
 						)}
 						<h3>参加者</h3>
@@ -941,11 +962,18 @@ export function Overview({
 							race={fetched.race}
 							onRegister={(participant) => void register(participant)}
 							registerDisabled={fetching}
-							bests={participantBests}
-							bestsLoading={bestsLoading}
-							bestsError={bestsError}
+							bests={bestsMappingCurrent ? participantBests : []}
+							bestsLoading={bestsLoading || !bestsMappingCurrent}
+							bestsError={bestsMappingCurrent ? bestsError : null}
 							onRefreshBests={() => setBestsRefreshToken((value) => value + 1)}
 						/>
+						{target && (
+							<RaceLeaderboard
+								categorySlug={target.categorySlug}
+								goal={target.goal}
+								mappingRevision={mappingRevision}
+							/>
+						)}
 						<div className='formrow'>
 							<button
 								type='button'

@@ -76,6 +76,7 @@ export type MappingWorkspaceProps =
 			mode: "race";
 			target: RaceMappingTarget;
 			onStateChange?: (state: EditorState) => void;
+			onMappingChange?: () => void;
 	  };
 
 function blankGame(): GameMapping {
@@ -325,6 +326,8 @@ export function Mappings({
 
 export function MappingWorkspace(props: MappingWorkspaceProps) {
 	const {mode, onStateChange} = props;
+	const onMappingChange =
+		props.mode === "race" ? props.onMappingChange : undefined;
 	const target = props.mode === "race" ? props.target : null;
 
 	const [games, setGames] = useState<GameMappingRecord[]>([]);
@@ -710,6 +713,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 				comparison: null,
 			});
 			setMessage("Game Mappingを保存しました。");
+			onMappingChange?.();
 			await refreshLists();
 		} catch (cause) {
 			await handleSaveFailure(cause);
@@ -735,6 +739,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 			setConfirmDelete(null);
 			startGameSession(null);
 			if (mode === "race") startCategorySession(null);
+			onMappingChange?.();
 			await refreshLists();
 			setMessage("Game Mappingを削除しました。");
 		} catch (cause) {
@@ -770,6 +775,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 				comparison: null,
 			});
 			setMessage("Category Mappingを保存しました。");
+			onMappingChange?.();
 			await refreshLists();
 		} catch (cause) {
 			await handleSaveFailure(cause);
@@ -801,6 +807,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 			setConfirmDelete(null);
 			if (mode === "race") startCategorySession(null);
 			else setCategorySession(null);
+			onMappingChange?.();
 			await refreshLists();
 		} catch (cause) {
 			setConfirmDelete(null);

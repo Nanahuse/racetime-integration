@@ -26,7 +26,7 @@ Player Managerと同じ構成で、PRとmainへのpush時に`Check`を実行し�
 
 NodeCGの `bundles/racetime-integration` に配置して `pnpm install --frozen-lockfile`、`pnpm build` を実行します。同じNodeCGに `player-manager` >=3.0.0 を配置してください。bundleDependenciesで読込み順を指定しています。
 
-DashboardにはOverview / Rankings / Mappings / Settingsがあります。Rankingsでは保存済みMappingから条件別Leaderboardを表示し、OverviewではRaceTime参加者のPBを確認できます。NodeCGの外部バンドルもDashboardと同じ `RaceTimeAPI.request()` を利用できます。
+DashboardにはOverview / Mappings / Settingsがあります。Overviewで選択したレースのRaceTime情報、Speedrun.com Mapping、参加者とPB、条件別Leaderboardを表示します。レースを選択またはURLで単発取得するとLeaderboardを自動取得し、手動再取得もできます。Leaderboardには順位・プレイヤー名・記録時間・日付を表示し、PBは参加者一覧で確認できます。Leaderboard取得時に追加のPB照会は行いません。Mappingの保存・削除後はLeaderboardと参加者PBの両方を再解決します。NodeCGの外部バンドルもDashboardと同じ `RaceTimeAPI.request()` を利用できます。
 
 ## Google Spreadsheet
 
@@ -43,9 +43,9 @@ DashboardにはOverview / Rankings / Mappings / Settingsがあります。Rankin
 
 設定には `maxResolvedMappings`（Any展開の最大件数、初期値20）も含まれます。DashboardのSettings画面（表示名「Any展開の最大件数」）から1以上の整数で変更・保存できます。この値を持たない旧設定は、他の項目とrevisionを変更せずに20を補完して読み込みます。
 
-`leaderboardTop`（初期値20）はLeaderboardの取得順位上限です。Settings画面の「リーダーボード取得順位数」から1以上の安全な整数で変更できます。SRCが同順位として返したRunはすべて表示します。旧設定ではrevisionを変えずに20を補完します。Rankingsタブと公開APIはExtensionの共通5分キャッシュを使い、手動再取得もできます。
+`leaderboardTop`（初期値20）はLeaderboardの取得順位上限です。Settings画面の「リーダーボード取得順位数」から1以上の安全な整数で変更できます。SRCが同順位として返したRunはすべて表示します。旧設定ではrevisionを変えずに20を補完します。OverviewのLeaderboardと公開APIはExtensionの共通5分キャッシュを使います。
 
-公開APIの `getSpeedrunLeaderboards` と `getSpeedrunPlayerBests` は、RaceTimeのcategorySlug/goalから保存済みMappingを解決します。`Any` は具体条件へ展開され、LeaderboardとPBは条件ごとに分かれます。PBはSRC Personal Bests APIが返す公式記録です。Game、Category、Levelと `obsoletes: true` のVariable値で照合し、SRCが返すPrimary Timeと順位をそのまま使います。`obsoletes: false` のVariableやPlatform、Region、Emulator、Timing MethodはPB照合に使いません。PB検索は `leaderboardTop` に依存しません。PB状態は `found` / `not_found` / `unlinked` / `error` です。複数SRCアカウントでは公式PBから最速を選び、一部の取得に失敗した場合は部分結果だけで確定しません。
+公開APIの `getSpeedrunLeaderboards` と `getSpeedrunPlayerBests` は、RaceTimeのcategorySlug/goalから保存済みMappingを解決します。`Any` は具体条件へ展開され、LeaderboardとPBは条件ごとに分かれます。Leaderboard応答にはPlayer Managerの表示名を反映しますが、プレイヤーごとのPBは付加しません。PBは別の `getSpeedrunPlayerBests` 操作でSRC Personal Bests APIから取得する公式記録です。Game、Category、Levelと `obsoletes: true` のVariable値で照合し、SRCが返すPrimary Timeと順位をそのまま使います。`obsoletes: false` のVariableやPlatform、Region、Emulator、Timing MethodはPB照合に使いません。PB検索は `leaderboardTop` に依存しません。PB状態は `found` / `not_found` / `unlinked` / `error` です。複数SRCアカウントでは公式PBから最速を選び、一部の取得に失敗した場合は部分結果だけで確定しません。
 
 `Any` が複数Mappingへ展開されたときは、LeaderboardをMapping単位で返します。一部の取得が失敗しても他のMappingの成功結果を保持し、失敗Mappingに正常キャッシュがある場合は `stale: true` を付けて返します。再取得は対象条件のキャッシュだけを更新し、失敗結果は正常値としてキャッシュしません。
 

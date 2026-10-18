@@ -248,59 +248,23 @@ export class SpeedrunRecordService {
 		const displayNames = await this.players
 			.speedrunDisplayNames(userIds)
 			.catch(() => new Map<string, string>());
-		const leaderboards = await Promise.all(
-			results.map(async ({value, stale}, index) => {
-				const mapping = resolution.mappings[index]!;
-				const sourceIds =
-					value.state === "error"
-						? []
-						: [
-								...new Set(
-									value.entries.flatMap(({run}) =>
-										run.players.flatMap((player) =>
-											player.userId ? [player.userId] : [],
-										),
-									),
-								),
-							];
-				const bests = new Map(
-					await Promise.all(
-						sourceIds.map(
-							async (userId) =>
-								[
-									userId,
-									await this.bestForSrcUser(
-										userId,
-										value.mapping,
-										resolution.obsoletesVariableIds,
-										refresh,
-									),
-								] as const,
-						),
-					),
-				);
-				return {
-					...value,
-					mapping,
-					entries: value.entries.map((entry) => ({
-						...entry,
-						run: {
-							...entry.run,
-							players: entry.run.players.map((player) => ({
-								...player,
-								...(player.userId && displayNames.has(player.userId)
-									? {displayName: displayNames.get(player.userId)}
-									: {}),
-								...(player.userId && bests.has(player.userId)
-									? {personalBest: bests.get(player.userId)}
-									: {}),
-							})),
-						},
+		const leaderboards = results.map(({value, stale}, index) => ({
+			...value,
+			mapping: resolution.mappings[index]!,
+			stale,
+			entries: value.entries.map((entry) => ({
+				...entry,
+				run: {
+					...entry.run,
+					players: entry.run.players.map((player) => ({
+						...player,
+						...(player.userId && displayNames.has(player.userId)
+							? {displayName: displayNames.get(player.userId)}
+							: {}),
 					})),
-					stale: stale || sourceIds.some((id) => bests.get(id)?.stale === true),
-				};
-			}),
-		);
+				},
+			})),
+		}));
 		return {
 			status: "resolved" as const,
 			mappings: resolution.mappings,
