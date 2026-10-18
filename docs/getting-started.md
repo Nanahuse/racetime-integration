@@ -123,7 +123,10 @@ RaceTimeのカテゴリ・GoalとSpeedrun.comのゲーム・カテゴリを対�
 
 ### うまくいかないとき
 
-- 保存時に接続できない（`spreadsheet_unavailable`）: Google Sheets APIが有効か、`GOOGLE_APPLICATION_CREDENTIALS`がNodeCGプロセスに渡っているか、対象Spreadsheetへの編集権限があるかを確認してください。
+- 保存時に接続できない（`spreadsheet_unavailable`）: 認証方式に応じて確認します。
+  - サービスアカウント: `GOOGLE_APPLICATION_CREDENTIALS`がNodeCGの起動プロセスから参照できるか、対象Spreadsheetへの編集権限があるかを確認してください。
+  - ユーザーアカウント: `gcloud auth application-default login`で`https://www.googleapis.com/auth/spreadsheets`スコープを付与したか、対象Spreadsheetへのアクセス権があるかを確認してください。この方式では`GOOGLE_APPLICATION_CREDENTIALS`を設定しないでください。
+  - いずれの場合も、Google Sheets APIが有効になっているかを確認してください。
 - シート形式が不正（`invalid_sheet`）: 既存シートに想定と異なる内容があると初期化が中止されます。シートを空にするか、想定どおりのヘッダーにそろえてから、もう一度初期化してください。
 - LeaderboardやPBが取得できない: マッピングが未登録の場合はLeaderboardとPBを取得できません。まずマッピングを登録してください。
 

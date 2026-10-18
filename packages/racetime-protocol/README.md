@@ -8,17 +8,24 @@ APIバージョンは4で、旧バージョンとの互換実装は提供しま�
 
 利用するバンドルでは2種類の依存を設定します。
 
-1. **NodeCGのバンドル依存**: manifestに`bundleDependencies`を書き、racetime-integrationより後に読み込まれるようにします。racetime-integrationのExtensionが起動している必要があります。
+1. **NodeCGのバンドル依存**: `package.json`の`nodecg.bundleDependencies`にracetime-integrationを書き、racetime-integrationより後に読み込まれるようにします。racetime-integrationのExtensionが起動している必要があります。
 
    ```json
    {
-     "bundleDependencies": {
-       "racetime-integration": "^0.7.0"
+     "nodecg": {
+       "compatibleRange": "^2.8.0",
+       "bundleDependencies": {
+         "racetime-integration": "^0.7.0"
+       }
      }
    }
    ```
 
-2. **Protocolパッケージの依存**: 型・定数・メッセージ名をimportするために、`@nanahuse/racetime-protocol`を依存に加えます。
+2. **Protocolパッケージの依存**: 型・定数・メッセージ名をimportするために、`@nanahuse/racetime-protocol`を依存に加えます。このパッケージは現時点ではレジストリへ公開していません。このリポジトリで次のコマンドを実行し、作成されたtarballを依存に指定して利用します。レジストリへ公開した後は、バージョンを指定してインストールできます。
+
+   ```sh
+   pnpm --filter @nanahuse/racetime-protocol pack
+   ```
 
 Extensionでは`BUNDLE_NAME`でracetime-integrationの拡張を取得し、`RaceTimeAPI.request()`を呼びます。すべての応答は`Response<T>`です。
 
@@ -100,11 +107,13 @@ const stop = await startWatching("https://racetime.gg/ootr/your-race", (state) =
   if (state.race) console.log(state.race.status, state.connection);
 });
 
-// 監視が不要になったら解放する。watchIdの解除は返り値が行う。
-await stop();
+// 監視が必要な間はstopを呼ばない。アプリケーションの終了時に、購読解除とunwatchRaceをまとめて実行する。
+nodecg.once("serverStopping", () => {
+  void stop();
+});
 ```
 
-`unwatchRace`へ渡すのは、この関数が取得した`watchId`だけです。同じレースを共有しているほかの監視は解除しません。
+`startWatching`の直後に`stop`を呼ぶと、状態を観測する前に監視が終了します。終了処理は、アプリケーションの終了イベントや明示的な停止操作に結び付けます。`unwatchRace`へ渡すのは、この関数が取得した`watchId`だけです。同じレースを共有しているほかの監視は解除しません。
 
 ### イベントを受信する
 
