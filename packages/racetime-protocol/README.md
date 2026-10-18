@@ -51,39 +51,60 @@ if (response.ok) {
 
 ### レースを継続監視する
 
-`watchRace`で監視を開始し、`racetime-races` Replicantで最新状態を受け取り、終了時に`unwatchRace`で解放します。Replicantは非永続なので、NodeCGの再起動後は再購読してください。
+`watchRace`で監視を開始し、`racetime-races` Replicantで最新状態を受け取り、不要になったら購読解除と`unwatchRace`で解放します。Replicantは非永続なので、NodeCGの再起動後は再購読が必要です。
+
+次の例では、監視の開始と終了を1つの関数にまとめ、終了用の関数を返します。呼び出し側は監視が不要になった時点で返り値を呼びます。
 
 ```ts
 import {
   BUNDLE_NAME,
   RACES_REPLICANT,
   type RaceState,
+  type RacesState,
   type RaceTimeAPI,
 } from "@nanahuse/racetime-protocol";
 
 const api = nodecg.extensions[BUNDLE_NAME] as RaceTimeAPI;
-const url = "https://racetime.gg/ootr/your-race";
 
-const started = await api.request("watchRace", {url});
-if (!started.ok) throw new Error(started.error.message);
-const {watchId} = started.data;
+async function startWatching(
+  url: string,
+  onState: (state: RaceState) => void,
+): Promise<() => Promise<void>> {
+  const started = await api.request("watchRace", {url});
+  if (!started.ok)
+    throw new Error(`${started.error.code}: ${started.error.message}`);
 
-const races = nodecg.Replicant(RACES_REPLICANT, BUNDLE_NAME, {
-  defaultValue: {schemaVersion: 1, races: []},
-});
-const onRacesChanged = (state: {races: RaceState[]} | undefined) => {
-  // urlは正規化済みの値です。watchRaceへ渡したURLと表記が異なる場合があります。
-  const entry = state?.races.find((race) => race.url === url);
-  if (entry?.race) console.log(entry.race.status, entry.connection);
-};
-races.on("change", onRacesChanged);
+  const {watchId} = started.data;
+  // 入力URLは表記が異なる場合があるため、正規化済みのURLで照合する。
+  const canonicalUrl = started.data.state.url;
 
-// 終了時
-races.removeListener("change", onRacesChanged);
-await api.request("unwatchRace", {watchId});
+  const races = nodecg.Replicant<RacesState>(RACES_REPLICANT, BUNDLE_NAME, {
+    defaultValue: {schemaVersion: 1, races: []},
+  });
+  const handleRaces = (state: RacesState | undefined) => {
+    const entry = state?.races.find((race) => race.url === canonicalUrl);
+    if (entry) onState(entry);
+  };
+  races.on("change", handleRaces);
+  handleRaces(races.value);
+
+  return async () => {
+    races.removeListener("change", handleRaces);
+    await api.request("unwatchRace", {watchId});
+  };
+}
 ```
 
-監視を開始してすぐ解除すると、状態を観測する前に監視が終了します。情報が必要な間は`watchId`を保持してください。
+```ts
+const stop = await startWatching("https://racetime.gg/ootr/your-race", (state) => {
+  if (state.race) console.log(state.race.status, state.connection);
+});
+
+// 監視が不要になったら解放する。watchIdの解除は返り値が行う。
+await stop();
+```
+
+`unwatchRace`へ渡すのは、この関数が取得した`watchId`だけです。同じレースを共有しているほかの監視は解除しません。
 
 ### イベントを受信する
 

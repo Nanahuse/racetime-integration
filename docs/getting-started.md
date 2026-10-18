@@ -87,14 +87,28 @@ Google CloudのプロジェクトでGoogle Sheets APIを有効にします。
 
 ### 2. 認証情報を用意する
 
-racetime-integrationはApplication Default Credentials（ADC）でGoogleへ認証します。スコープは`https://www.googleapis.com/auth/spreadsheets`です。資格情報ファイルを指定する専用の設定はありません。次のどちらかで用意します。
+racetime-integrationは[Application Default Credentials](https://docs.cloud.google.com/docs/authentication/application-default-credentials)（ADC）でGoogleへ認証します。必要なスコープは`https://www.googleapis.com/auth/spreadsheets`です。資格情報ファイルを指定する専用の設定はなく、ADCの標準的な方法で用意します。
 
-- サービスアカウント: サービスアカウントを作成してJSON鍵をダウンロードし、`GOOGLE_APPLICATION_CREDENTIALS`にそのJSONのパスを設定します。サービスアカウントのメールアドレスに、対象Spreadsheetの編集権限を付与してください。
-- ユーザーアカウント: `gcloud auth application-default login`を実行し、利用するアカウントでログインします。
+**サービスアカウントを使う場合**
 
-`GOOGLE_APPLICATION_CREDENTIALS`は、NodeCGを起動するプロセスから見える必要があります。NodeCGをサービスや別ユーザーで起動している場合は、その環境に合わせて設定してください。
+1. Google Cloudでサービスアカウントを作成し、JSON鍵をダウンロードします。
+2. `GOOGLE_APPLICATION_CREDENTIALS`にJSON鍵のファイルパスを設定します。この環境変数は、NodeCGを起動するプロセスから参照できる必要があります。NodeCGをサービスや別ユーザーで起動している場合は、その環境に合わせて設定してください。
+3. サービスアカウントのメールアドレスに、対象Spreadsheetの編集権限を付与します。
+4. JSON鍵は認証情報そのものです。Gitへコミットしないでください。
 
-詳細は[Application Default Credentials](https://docs.cloud.google.com/docs/authentication/application-default-credentials)を参照してください。
+**ユーザーアカウントを使う場合**
+
+`gcloud auth application-default login`でログインします。このコマンドが既定で要求するスコープは`openid`、`userinfo.email`、`https://www.googleapis.com/auth/cloud-platform`、`https://www.googleapis.com/auth/sqlservice.login`です。`cloud-platform`はGoogle Cloudのスコープで、Google Sheetsへのアクセスに必要なSheets用スコープは含まれません。
+
+Sheetsを扱うには、Sheets用のスコープを`--scopes`で明示します。Google Cloud外のサービス（SheetsやDrive）のスコープを要求する場合、GoogleはOAuthクライアントIDを作成し、`--client-id-file`で渡す方法を案内しています。
+
+```sh
+gcloud auth application-default login \
+  --scopes=https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/cloud-platform \
+  --client-id-file=clientid.json
+```
+
+`clientid.json`は、Google Cloud Consoleで作成したOAuthクライアント（デスクトップアプリ）のクライアントIDです。`--scopes`と`--client-id-file`の詳細は[gcloud auth application-default loginのリファレンス](https://docs.cloud.google.com/sdk/gcloud/reference/auth/application-default/login)を、ADCの仕組みは[ADCのドキュメント](https://docs.cloud.google.com/docs/authentication/application-default-credentials)を参照してください。
 
 ### 3. Spreadsheetを準備する
 

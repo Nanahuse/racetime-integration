@@ -1,28 +1,33 @@
 # racetime-integration
 
-NodeCG向けのRaceTime連携バンドルです。RaceTime.ggのレース情報を取得・監視してNodeCG内で共有し、ほかのバンドルから利用できるようにします。同じレースの監視は複数の利用者で共有でき、参加者はPlayer Manager v3で解決します。
+NodeCG向けのRaceTime連携バンドルです。RaceTime.ggのレース情報の取得・監視・共有を中心に、Player Managerによる参加者の解決、Google Sheetsによるマッピング管理、Speedrun.comのLeaderboard・PBの取得を担当します。同じレースの監視は複数の利用者で共有できます。
 
 ## できること
 
 - DashboardでRaceTimeのレースを監視し、開始予定・進行状況・タイマー・イベントを確認できます。
 - 未登録の参加者をPlayer Managerのプレイヤーに紐付けて、レースの参加者を確認できます。
 - ほかのNodeCGバンドルが公開API・Replicant・イベントを通じて同じレース情報を利用できます。
-- 追加機能として、Speedrun.comの条件別Leaderboardと参加者の自己ベスト（PB）を取得できます。
+- RaceTimeとSpeedrun.comの対応付け（マッピング）を登録し、条件別Leaderboardと参加者の自己ベスト（PB）を取得できます。
 
 ## システム内での位置付け
 
 | 層 | 役割 |
 | --- | --- |
 | RaceTime.gg | レース・参加者・進行状況・結果の提供元 |
-| racetime-integration | レース情報の取得・監視・共有、参加者の解決 |
+| racetime-integration | レース情報の取得・監視・共有、参加者の解決、マッピング管理、Speedrun.com記録の取得 |
 | Dashboard | 監視・確認・設定を行う画面 |
 | 外部NodeCGバンドル | 公開API・Replicant・イベントを利用する利用者 |
 
-参加者の解決にはPlayer Managerを、記録の対応付けと取得にはGoogle SheetsとSpeedrun.comを使います。この2つは任意で、設定しなくてもレースの監視と参加者の解決は利用できます。
+## 依存と任意機能
+
+- Player Manager 3.xは必須のバンドル依存です。RaceTimeの参加者をプレイヤーへ解決するために使います。
+- Google Sheetsによるマッピング管理は任意機能です。
+- Speedrun.comのLeaderboardとPBの取得は任意機能です。取得するには、先にマッピングを登録する必要があります。
+- Google Sheetsを設定しなくても、RaceTimeの監視とPlayer Managerによる参加者解決は利用できます。
 
 ## 役割の範囲
 
-このバンドルはレース情報の取得と共有までを担当します。配信レイアウトの生成や、RaceTime上でのレース進行の操作は行いません。これらはほかのバンドルやRaceTime側で行ってください。
+このバンドルは、配信レイアウトの生成や、RaceTime上でのレース進行の操作は行いません。これらはほかのバンドルやRaceTime側で行ってください。
 
 ## 動作要件
 
