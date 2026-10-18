@@ -182,8 +182,8 @@ it("keeps the five-minute PB cache and marks the last good snapshot stale after 
 	expect(expired.stale).toBe(true);
 });
 
-it("attaches player-manager names and PBs to leaderboard players without changing SRC place", async () => {
-	const {service} = setup();
+it("resolves leaderboard player names without changing SRC place or fetching PBs", async () => {
+	const {service, speedrun, players} = setup();
 	const response = await service.leaderboards("race-game", "Any%");
 	expect(response.status).toBe("resolved");
 	if (response.status !== "resolved") return;
@@ -194,11 +194,25 @@ it("attaches player-manager names and PBs to leaderboard players without changin
 				{
 					userId: "u1",
 					displayName: "Display Name",
-					personalBest: {state: "found", run: {runId: "u1-pb"}},
 				},
 			],
 		},
 	});
+	expect(response.leaderboards?.[0]?.entries[0]?.run.time).toBe("PT40S");
+	expect(response.leaderboards?.[0]?.entries[0]?.place).toBe(1);
+	expect(speedrun.getUserPersonalBests).not.toHaveBeenCalled();
+	expect(players.speedrunDisplayNames).toHaveBeenCalledWith(["u1"]);
+});
+
+it("keeps a leaderboard successful when the PB endpoint is unavailable", async () => {
+	const {service, speedrun} = setup();
+	speedrun.getUserPersonalBests.mockRejectedValue(new Error("offline"));
+	const result = await service.leaderboards("race-game", "Any%");
+	expect(result.status).toBe("resolved");
+	if (result.status !== "resolved") return;
+	expect(result.leaderboards?.[0]?.state).toBe("ready");
+	expect(result.stale).toBe(false);
+	expect(speedrun.getUserPersonalBests).not.toHaveBeenCalled();
 });
 
 it("finds an official PB outside the configured leaderboard top", async () => {

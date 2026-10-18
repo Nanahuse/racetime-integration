@@ -10,6 +10,7 @@ type Result = {
 	boards: SpeedrunLeaderboard[];
 	state: string;
 	error: string | null;
+	stale: boolean;
 };
 
 export function RaceLeaderboard({
@@ -22,16 +23,17 @@ export function RaceLeaderboard({
 	mappingRevision: number;
 }) {
 	const key = `${categorySlug}\u0000${goal}`;
+	const displayKey = `${key}\u0000${mappingRevision}`;
 	const [result, setResult] = useState<Result | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [requestRevision, setRequestRevision] = useState(0);
 	const refreshNext = useRef<string | null>(null);
-	const requestId = `${key}\u0000${mappingRevision}\u0000${requestRevision}`;
-	const visible = result?.key === key ? result : null;
+	const requestId = `${displayKey}\u0000${requestRevision}`;
+	const visible = result?.key === displayKey ? result : null;
 
 	useEffect(() => {
 		let active = true;
-		const refresh = refreshNext.current === key;
+		const refresh = refreshNext.current === displayKey;
 		refreshNext.current = null;
 		setLoading(true);
 		void request("getSpeedrunLeaderboards", {
@@ -43,39 +45,53 @@ export function RaceLeaderboard({
 				if (!active) return;
 				if (response.status === "unregistered") {
 					setResult({
-						key,
+						key: displayKey,
 						requestId,
 						boards: [],
 						state: "マッピング未登録",
 						error: null,
+						stale: false,
 					});
 				} else if (response.status === "inconsistent") {
 					setResult({
-						key,
+						key: displayKey,
 						requestId,
 						boards: [],
 						state: "マッピング不整合",
 						error: response.message,
+						stale: false,
 					});
 				} else {
 					setResult({
-						key,
+						key: displayKey,
 						requestId,
 						boards: response.leaderboards ?? [],
 						state: response.stale ? "古いキャッシュを表示中" : "取得済み",
 						error: null,
+						stale: response.stale ?? false,
 					});
 				}
 			})
 			.catch((cause) => {
 				if (active)
-					setResult({
-						key,
-						requestId,
-						boards: [],
-						state: "通信エラー",
-						error: errorMessage(cause),
-					});
+					setResult((current) =>
+						current?.key === displayKey
+							? {
+									...current,
+									requestId,
+									state: "再取得に失敗しました",
+									error: errorMessage(cause),
+									stale: current.boards.length > 0,
+								}
+							: {
+									key: displayKey,
+									requestId,
+									boards: [],
+									state: "通信エラー",
+									error: errorMessage(cause),
+									stale: false,
+								},
+					);
 			})
 			.finally(() => {
 				if (active) {
@@ -85,7 +101,7 @@ export function RaceLeaderboard({
 		return () => {
 			active = false;
 		};
-	}, [categorySlug, goal, key, requestId]);
+	}, [categorySlug, goal, displayKey, requestId]);
 
 	return (
 		<section className='race-leaderboard'>
@@ -96,7 +112,7 @@ export function RaceLeaderboard({
 					aria-label='Leaderboard再取得'
 					disabled={loading}
 					onClick={() => {
-						refreshNext.current = key;
+						refreshNext.current = displayKey;
 						setRequestRevision((current) => current + 1);
 					}}
 				>
@@ -105,7 +121,12 @@ export function RaceLeaderboard({
 			</div>
 			{loading && <p className='muted'>Leaderboardを取得中…</p>}
 			{visible?.state && <p className='muted'>{visible.state}</p>}
-			{visible?.error && <Callout tone='error'>{visible.error}</Callout>}
+			{visible?.error && (
+				<Callout tone='error'>
+					{visible.error}
+					{visible.stale && " · 古いLeaderboardを表示中"}
+				</Callout>
+			)}
 			{visible?.state === "取得済み" && visible.boards.length === 0 && (
 				<p className='muted'>該当する記録はありません。</p>
 			)}
@@ -151,11 +172,6 @@ export function RaceLeaderboard({
 														key={`${player.userId ?? "guest"}-${player.name}-${index}`}
 													>
 														{player.displayName ?? player.name}
-														{player.personalBest && (
-															<small className='muted'>
-																{` · PB ${player.personalBest.state === "found" && player.personalBest.run ? `${formatRaceTime(player.personalBest.run.time)}${player.personalBest.place === null ? "" : ` · ${player.personalBest.place}位`}` : player.personalBest.state === "not_found" ? "記録なし" : player.personalBest.state === "error" ? `取得失敗: ${player.personalBest.message ?? "詳細なし"}` : "未連携"}${player.personalBest.stale ? " · 古いデータ" : ""}`}
-															</small>
-														)}
 														{index + 1 < run.players.length ? ", " : ""}
 													</span>
 												))}

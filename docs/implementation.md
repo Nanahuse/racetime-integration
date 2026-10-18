@@ -10,11 +10,11 @@ Protocolの `datetime.ts` に `parseRaceInstant` / `serializeRaceInstant` と `p
 
 RaceTime DTOの日時・期間はTemporal値で保持し、`mapRace` でUTC日時／Duration文字列へ変換する。新しい必須項目の欠落、型不一致、不正日時・期間、負数・安全な整数でない人数は `invalid_payload`。nullを許す日時もキーは必須とし、開始・終了・中止・完走日時の推測補完は行わない。`Entrant.finishedAt` と `RaceResult.finishedAt` は同じ日時、`finishTime` / `time` は同じ経過時間を表す。ranked・recordable・recordedは独立して保持し、人数は配列から再計算しない。
 
-SRC時間は取得境界でDurationとして検証・シリアライズし、PB比較は既存どおり `Temporal.Duration.compare` を使用する。SRC記録日は共通のPlainDate解析で検証する。Leaderboard/PBの `fetchedAt` は `Temporal.Now.instant()` を共通関数で文字列化し、5分キャッシュの期限もInstantで保持・比較する。公開文字列を返す既存のSpeedrunClientインターフェースは維持し、サービスごとの重複DTOは追加しない。PB照合、アカウント集約、公式順位、同時要求共有、refresh・staleの扱いは維持する。
+SRC時間は取得境界でDurationとして検証・シリアライズし、PB比較は既存どおり `Temporal.Duration.compare` を使用する。SRC記録日は共通のPlainDate解析で検証する。Leaderboard/PBの `fetchedAt` は `Temporal.Now.instant()` を共通関数で文字列化し、5分キャッシュの期限もInstantで保持・比較する。公開文字列を返す既存のSpeedrunClientインターフェースは維持し、サービスごとの重複DTOは追加しない。PB照合、アカウント集約、公式順位、同時要求共有、refresh・staleの扱いは維持する。Leaderboard処理では表示名の解決だけを行い、個人PB取得は `getSpeedrunPlayerBests` に分離する。
 
 単発取得・監視は同じ `mapRace` を使う。直接API・NodeCGメッセージ・Replicantはいずれも同じISO文字列のモデルを公開するため、監視状態の比較・structuredCloneにTemporal値は入らない。WebSocketのrace.dataによる再取得、version処理、バックオフ、監視共有、古い応答の破棄、最終正常スナップショット保持、Player解決は変更しない。毎秒のHTTP取得・Replicant更新は追加しない。
 
-Overviewの `RaceFields` を単発取得・監視で共有し、新しい詳細とAPI提供の人数を表示する。参加者の完走日時も結果欄に追加した。日時は `formatRaceInstant` が利用環境のローカルタイムゾーンで表示し、nullは「未設定」、Durationは既存の経過時間表示、infoはReactの通常テキストとして扱う。レース選択またはURLによる単発取得で、参加者の下に条件別Leaderboardを表示する。自動取得は既存の5分キャッシュを利用し、RaceTimeの通常更新では再取得しない。Mapping保存・削除成功時はOverviewで再解決する。PB表示・参加者操作・マッピング編集・レース切り替えは維持する。
+Overviewの `RaceFields` を単発取得・監視で共有し、新しい詳細とAPI提供の人数を表示する。参加者の完走日時も結果欄に追加した。日時は `formatRaceInstant` が利用環境のローカルタイムゾーンで表示し、nullは「未設定」、Durationは既存の経過時間表示、infoはReactの通常テキストとして扱う。レース選択またはURLによる単発取得で、参加者の下に順位・プレイヤー名・記録時間・日付を持つ条件別Leaderboardを表示する。PBは参加者一覧に表示し、Leaderboard APIからは追加取得しない。自動取得は既存の5分キャッシュを利用し、RaceTimeの通常更新では再取得しない。Mapping保存・削除成功時はLeaderboardと参加者PBを再解決し、取得中は古いMappingの結果を隠す。PB表示・参加者操作・マッピング編集・レース切り替えは維持する。
 
 0.7.0では監視レースの状態変化イベントを追加した。イベント名・公開型・通知条件・購読方法は[Protocolのイベント契約](../packages/racetime-protocol/README.md#レース状態変化イベント)にまとめる。`race-events.ts` はHTTP・NodeCGに依存せず、採用前後のRaceと開始済み判定からイベントと次の判定を返す。RaceService.updateは有効な共有セッションの採用前スナップショットを比較し、既存のRevision更新・Replicant公開の後でExtensionのコールバックへ通知する。初回Raceは比較基準のみを確立し、fetchRaceやPlayer再解決は検出処理を通らない。
 

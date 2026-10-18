@@ -955,10 +955,20 @@ it("registers Game then Category mappings from Overview", async () => {
 	const savedGames: GameMappingRecord[] = [];
 	const savedCategories: CategoryMappingRecord[] = [];
 	let leaderboardRequests = 0;
+	const bestRequests: Array<{
+		categorySlug: string;
+		goal: string;
+		playerIds: string[];
+		refresh: boolean;
+	}> = [];
 	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
 		const operation = name.replace("racetime.v4.", "");
 		if (operation === "getSpeedrunLeaderboards") {
 			leaderboardRequests += 1;
+			return {ok: true, data: {status: "unregistered", mappings: []}};
+		}
+		if (operation === "getSpeedrunPlayerBests") {
+			bestRequests.push(data as (typeof bestRequests)[number]);
 			return {ok: true, data: {status: "unregistered", mappings: []}};
 		}
 		if (operation === "saveGameMapping") {
@@ -973,6 +983,10 @@ it("registers Game then Category mappings from Overview", async () => {
 			savedCategories.splice(0, savedCategories.length, record);
 			return {ok: true, data: {record, action: "created", settingsRevision: 0}};
 		}
+		if (operation === "deleteCategoryMapping") {
+			savedCategories.splice(0, savedCategories.length);
+			return {ok: true, data: {deleted: true, settingsRevision: 0}};
+		}
 		if (operation === "listGameMappings")
 			return {ok: true, data: {records: savedGames, settingsRevision: 0}};
 		if (operation === "listCategoryMappings")
@@ -985,6 +999,8 @@ it("registers Game then Category mappings from Overview", async () => {
 	});
 	fireEvent.click(screen.getByRole("button", {name: "取得"}));
 	await waitFor(() => expect(leaderboardRequests).toBe(1));
+	await waitFor(() => expect(bestRequests).toHaveLength(1));
+	expect(bestRequests[0]?.refresh).toBe(false);
 
 	expect(await screen.findByText("Speedrun.com マッピング")).toBeTruthy();
 	expect(await screen.findAllByText("未登録")).toHaveLength(2);
@@ -1007,6 +1023,8 @@ it("registers Game then Category mappings from Overview", async () => {
 	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
 	expect(await screen.findByText("Game Mappingを保存しました。")).toBeTruthy();
 	await waitFor(() => expect(leaderboardRequests).toBe(2));
+	await waitFor(() => expect(bestRequests).toHaveLength(2));
+	expect(bestRequests[1]?.refresh).toBe(false);
 
 	const categorySelect = (await screen.findByLabelText(
 		"SRC Category（必須）",
@@ -1028,8 +1046,26 @@ it("registers Game then Category mappings from Overview", async () => {
 		await screen.findByText("Category Mappingを保存しました。"),
 	).toBeTruthy();
 	await waitFor(() => expect(leaderboardRequests).toBe(3));
+	await waitFor(() => expect(bestRequests).toHaveLength(3));
+	expect(bestRequests[2]?.refresh).toBe(false);
 	expect(screen.getByText("登録済み: SRC Game")).toBeTruthy();
 	expect(screen.getByText("登録済み: Any%")).toBeTruthy();
+	fireEvent.click(
+		within(document.querySelector("form.category-editor")!).getByRole(
+			"button",
+			{
+				name: "削除",
+			},
+		),
+	);
+	fireEvent.click(screen.getByRole("button", {name: "削除を確定"}));
+	await waitFor(() => expect(leaderboardRequests).toBe(4));
+	await waitFor(() => expect(bestRequests).toHaveLength(4));
+	expect(bestRequests[3]?.refresh).toBe(false);
+	expect(await screen.findAllByText("未登録")).toHaveLength(1);
+	fireEvent.click(screen.getByRole("button", {name: "PBを再取得"}));
+	await waitFor(() => expect(bestRequests).toHaveLength(5));
+	expect(bestRequests[4]?.refresh).toBe(true);
 });
 
 it("shows existing mappings and updates with the saved revision", async () => {

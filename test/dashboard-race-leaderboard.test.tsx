@@ -98,7 +98,7 @@ function response(
 	};
 }
 
-it("requests the selected category and shows the board, PB, time, and date", async () => {
+it("requests the selected category and shows only rank, name, time, and date", async () => {
 	sendMessage.mockResolvedValue(response("Any%"));
 	render(
 		<RaceLeaderboard
@@ -117,7 +117,8 @@ it("requests the selected category and shows the board, PB, time, and date", asy
 		},
 	);
 	expect(screen.getByText("Player Manager name", {exact: false})).toBeTruthy();
-	expect(screen.getByText(/PB 0:00:55 · 2位/)).toBeTruthy();
+	expect(screen.queryByText(/PB/)).toBeNull();
+	expect(screen.queryByText(/記録なし|取得失敗|未連携/)).toBeNull();
 	expect(
 		screen.getByRole("link", {name: "0:01:00"}).getAttribute("href"),
 	).toContain("Any%");
@@ -182,6 +183,52 @@ it("uses cached automatic requests and refreshes only on request", async () => {
 		goal: "Any%",
 		refresh: true,
 	});
+});
+
+it("hides results after a mapping change and keeps same-mapping results after refresh failure", async () => {
+	const pending = deferred<unknown>();
+	const changedPending = deferred<unknown>();
+	sendMessage
+		.mockResolvedValueOnce(response("Any%"))
+		.mockReturnValueOnce(pending.promise);
+	const view = render(
+		<RaceLeaderboard
+			categorySlug='game'
+			goal='Any%'
+			mappingRevision={0}
+		/>,
+	);
+	await screen.findByText("Game / Any%");
+	fireEvent.click(screen.getByRole("button", {name: "Leaderboard再取得"}));
+	await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+	expect(screen.getByText("Game / Any%")).toBeTruthy();
+	await act(async () => pending.reject(new Error("refresh offline")));
+	expect(screen.getByText("Game / Any%")).toBeTruthy();
+	expect(screen.getByText(/古いLeaderboardを表示中/)).toBeTruthy();
+	expect(screen.getByText(/refresh offline/)).toBeTruthy();
+	await waitFor(() =>
+		expect(
+			(
+				screen.getByRole("button", {
+					name: "Leaderboard再取得",
+				}) as HTMLButtonElement
+			).disabled,
+		).toBe(false),
+	);
+
+	const changed = response("Any%");
+	changed.data.leaderboards[0]!.mapping.label = "New Mapping";
+	sendMessage.mockReturnValueOnce(changedPending.promise);
+	view.rerender(
+		<RaceLeaderboard
+			categorySlug='game'
+			goal='Any%'
+			mappingRevision={1}
+		/>,
+	);
+	expect(screen.queryByText("Game / Any%")).toBeNull();
+	await act(async () => changedPending.resolve(changed));
+	await screen.findByText("Game / New Mapping");
 });
 
 it("shows empty boards and individual mapping errors", async () => {

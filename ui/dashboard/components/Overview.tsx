@@ -451,6 +451,7 @@ export function Overview({
 	>([]);
 	const [bestsLoading, setBestsLoading] = useState(false);
 	const [bestsError, setBestsError] = useState<string | null>(null);
+	const [bestsMappingRevision, setBestsMappingRevision] = useState(-1);
 	const [bestsRefreshToken, setBestsRefreshToken] = useState(0);
 	const lastBestsRefreshToken = useRef(0);
 	useEffect(() => {
@@ -464,9 +465,11 @@ export function Overview({
 			setParticipantBests([]);
 			setBestsLoading(false);
 			setBestsError(null);
+			setBestsMappingRevision(mappingRevision);
 			return;
 		}
 		let active = true;
+		setBestsMappingRevision(mappingRevision);
 		setBestsLoading(true);
 		setBestsError(null);
 		void request("getSpeedrunPlayerBests", {
@@ -508,12 +511,19 @@ export function Overview({
 		return () => {
 			active = false;
 		};
-	}, [targetCategorySlug, targetGoal, playerQueryKey, bestsRefreshToken]);
+	}, [
+		targetCategorySlug,
+		targetGoal,
+		playerQueryKey,
+		bestsRefreshToken,
+		mappingRevision,
+	]);
 	useEffect(() => {
 		lastBestsRefreshToken.current = bestsRefreshToken;
 	}, [bestsRefreshToken]);
 	const targetKeyRef = useRef<string | null>(null);
 	targetKeyRef.current = targetKey;
+	const bestsMappingCurrent = bestsMappingRevision === mappingRevision;
 
 	const reportMapping = useCallback(
 		(state: EditorState) => {
@@ -921,9 +931,9 @@ export function Overview({
 							race={monitoredDisplay.race}
 							onRegister={(participant) => void register(participant)}
 							registerDisabled={false}
-							bests={participantBests}
-							bestsLoading={bestsLoading}
-							bestsError={bestsError}
+							bests={bestsMappingCurrent ? participantBests : []}
+							bestsLoading={bestsLoading || !bestsMappingCurrent}
+							bestsError={bestsMappingCurrent ? bestsError : null}
 							onRefreshBests={() => setBestsRefreshToken((value) => value + 1)}
 						/>
 						{target && (
@@ -952,9 +962,9 @@ export function Overview({
 							race={fetched.race}
 							onRegister={(participant) => void register(participant)}
 							registerDisabled={fetching}
-							bests={participantBests}
-							bestsLoading={bestsLoading}
-							bestsError={bestsError}
+							bests={bestsMappingCurrent ? participantBests : []}
+							bestsLoading={bestsLoading || !bestsMappingCurrent}
+							bestsError={bestsMappingCurrent ? bestsError : null}
 							onRefreshBests={() => setBestsRefreshToken((value) => value + 1)}
 						/>
 						{target && (

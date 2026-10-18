@@ -103,7 +103,7 @@ if (watched.ok) {
 
 全関数はnullを保持し、不正値は例外にします。日時の解析には明示的なUTCオフセット（Zまたは±HH:MM）が必要です。日付の解析は `YYYY-MM-DD`（ISO拡張年も可）のみを受け付け、日時から日付を暗黙抽出しません。日時・期間のシリアライズはナノ秒までの小数秒を丸めません。
 
-`SpeedrunRun.time`（Leaderboard・PB）は同じDuration形式、`SpeedrunRun.date` は検証済みの日付文字列またはnull、各種 `fetchedAt` はUTC日時文字列（型が許可する場合はnull）です。PBの公式Primary Timeと順位、複数アカウントの最速選択、キャッシュ・stale判定の意味は変わりません。
+`SpeedrunRun.time`（Leaderboard・PB）は同じDuration形式、`SpeedrunRun.date` は検証済みの日付文字列またはnull、各種 `fetchedAt` はUTC日時文字列（型が許可する場合はnull）です。`SpeedrunRun.players[].personalBest` はオプション型のままですが、`getSpeedrunLeaderboards` の応答では返しません。Leaderboard応答はPlayer Managerの表示名を反映し、PBは `getSpeedrunPlayerBests` で取得します。PBの公式Primary Timeと順位、複数アカウントの最速選択、キャッシュ・stale判定の意味は変わりません。
 
 ### 完走時間（期間）
 
@@ -229,7 +229,7 @@ nodecg.listenFor(
 
 両操作は `categorySlug` と `goal` から既存Mappingを解決し、`Any` を `maxResolvedMappings` の範囲内で具体的な条件へ展開します。条件ごとに独立した結果を返し、`mapping.key` で識別します。未登録は `unregistered`、MappingとSRC定義の不一致は `inconsistent`、SRC通信失敗は `Response` のerrorになります。
 
-`getSpeedrunLeaderboards` は設定 `leaderboardTop` をSRCの `top` に渡します。SRCの `place` を維持し、同順位のRunをすべて返します。RunはID、URL、検証済みISO 8601時間、日付、ユーザー/ゲスト情報を含みます。Timing Method指定時はその時間、未指定時はSRC Primary Timeを使用します。各Mappingの `state` は `ready` / `not_found` / `error` で、取得失敗時は `message` を含みます。Any展開ではMappingごとに状態と `stale` を返すため、一部の失敗が他の成功結果を失わせません。
+`getSpeedrunLeaderboards` は設定 `leaderboardTop` をSRCの `top` に渡します。SRCの `place` を維持し、同順位のRunをすべて返します。RunはID、URL、検証済みISO 8601時間、日付、ユーザー/ゲスト情報を含み、Player Managerの解決済み表示名があれば `displayName` に含みます。Leaderboard取得では各プレイヤーのPB照会を行わず、オプションの `personalBest` は付加しません。Timing Method指定時はその時間、未指定時はSRC Primary Timeを使用します。各Mappingの `state` は `ready` / `not_found` / `error` で、取得失敗時は `message` を含みます。Any展開ではMappingごとに状態と `stale` を返すため、一部の失敗が他の成功結果を失わせません。
 
 `getSpeedrunPlayerBests` は `playerIds` のPlayer Manager Player IDごとに、Primary/Secondaryの全SRCアカウントを検索します。PBはSRC Personal Bests APIが返す公式記録です。APIが一括で返す全PBを取得し、Game/Category/Levelと `obsoletes: true` のVariable値で照合します。`obsoletes: false` のVariable、Platform、Region、Emulator、Timing MethodはPB照合に使わず、記録時間はSRCのPrimary Time、順位は公式 `place` を返します。Personal Best APIは `game` のみで取得し、`max`、`offset`、`top`、`leaderboardTop` に依存しません。`Any` は具体値へ展開され、区分ごとに別のPBを返します。SRC順位などのRun情報は `run` に、順位は `place` に含まれます。PB状態は `found` / `not_found` / `unlinked` / `error` です。一致PBがなければ `not_found`、取得失敗やPB区分を特定できない場合は `error` です。複数アカウントの一部が失敗した場合は他のアカウントの部分結果だけでPBを確定しません。
 
