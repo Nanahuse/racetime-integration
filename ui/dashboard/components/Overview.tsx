@@ -15,7 +15,9 @@ import {errorMessage, request} from "../api/client";
 import {getNodeCG} from "../api/nodecg-client";
 import {beginRegistration, playerEditUrl} from "../api/player-manager";
 import type {EditorState} from "../model/editor";
+import {useAccountProfileUrl} from "../model/profile-url";
 import {
+	formatFinishTime,
 	formatRaceClock,
 	formatRaceInstant,
 	formatRaceTime,
@@ -57,7 +59,7 @@ function eventDetails<K extends keyof RaceTimeEvents>(
 			break;
 		case "entrantFinished": {
 			const result = (data as RaceTimeEvents["entrantFinished"]).result;
-			details = [result.userId, formatRaceTime(result.time)];
+			details = [result.userId, formatFinishTime(result.time)];
 			break;
 		}
 		case "entrantFinishUndone":
@@ -228,6 +230,74 @@ function ParticipantActions({
 	return null;
 }
 
+const ACCOUNT_PROFILE_ERROR_LABELS: Record<string, string> = {
+	lookup_failed: "プロフィールURLを取得できませんでした。",
+	rate_limited:
+		"外部サービスのレート制限中です。時間をおいて再試行してください。",
+	account_not_found: "対象のアカウントが見つかりません。",
+	communication: "Player Managerとの通信に失敗しました。",
+};
+
+function accountProfileErrorLabel(code: string | null): string {
+	return (
+		(code ? ACCOUNT_PROFILE_ERROR_LABELS[code] : undefined) ??
+		"プロフィールURLを取得できませんでした。"
+	);
+}
+
+function AccountLink({
+	label,
+	name,
+	accountId,
+}: {
+	label: string;
+	name: string | null;
+	accountId: string | null;
+}) {
+	const {state, retry} = useAccountProfileUrl(name ? accountId : null);
+	if (!name) return <div>{label}: —</div>;
+	if (state?.state === "ready" && state.url)
+		return (
+			<div>
+				{label}:{" "}
+				<a
+					className='link'
+					href={state.url}
+					target='_blank'
+					rel='noopener noreferrer'
+				>
+					{name}
+				</a>
+			</div>
+		);
+	return (
+		<div>
+			{label}: <span>{name}</span>
+			{state?.state === "loading" && (
+				<small className='muted'> リンク取得中</small>
+			)}
+			{state?.state === "error" && (
+				<>
+					<button
+						type='button'
+						className='retry-link'
+						title={state.error ?? undefined}
+						onClick={retry}
+					>
+						再試行
+					</button>
+					<small
+						className='muted'
+						title={state.error ?? undefined}
+					>
+						{accountProfileErrorLabel(state.errorCode)}
+					</small>
+				</>
+			)}
+		</div>
+	);
+}
+
 function Participants({
 	participants,
 	race,
@@ -305,8 +375,20 @@ function Participants({
 									)}
 								</td>
 								<td>
-									<div>SRC: {participant.player?.speedrunCom?.name ?? "—"}</div>
-									<div>Twitch: {participant.player?.twitch?.login ?? "—"}</div>
+									<AccountLink
+										label='SRC'
+										name={participant.player?.speedrunCom?.name ?? null}
+										accountId={
+											participant.player?.primaryAccountIds?.speedrunCom ?? null
+										}
+									/>
+									<AccountLink
+										label='Twitch'
+										name={participant.player?.twitch?.login ?? null}
+										accountId={
+											participant.player?.primaryAccountIds?.twitch ?? null
+										}
+									/>
 								</td>
 								<td>
 									{participant.playerId ? (
@@ -370,7 +452,7 @@ function Participants({
 											<div>
 												{result.place === null ? "—" : `${result.place}位`}
 											</div>
-											<div>{formatRaceTime(result.time)}</div>
+											<div>{formatFinishTime(result.time)}</div>
 											<div>
 												完走日時: {formatRaceInstant(result.finishedAt)}
 											</div>
@@ -953,7 +1035,7 @@ export function Overview({
 							disabled={addingWatch || urlInput.trim() === ""}
 							onClick={() => void addWatch()}
 						>
-							{addingWatch ? "追加中…" : "監視を追加"}
+							{addingWatch ? "追加中…" : "追加"}
 						</button>
 					</div>
 				</div>

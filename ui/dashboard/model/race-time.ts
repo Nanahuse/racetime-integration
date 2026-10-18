@@ -49,3 +49,22 @@ export function formatRaceTime(time: string | null): string {
 	const seconds = `${duration.seconds}`.padStart(2, "0");
 	return `${duration.hours}:${minutes}:${seconds}${fraction(duration)}`;
 }
+
+/**
+ * Formats a finish time to one decimal place. Rounding happens on the
+ * duration itself so 59.95s correctly becomes 1:00:00.0.
+ */
+export function formatFinishTime(time: string | null): string {
+	const parsed = parseRaceDuration(time);
+	if (parsed === null) return "—";
+	const duration = parsed.round({
+		largestUnit: "hour",
+		smallestUnit: "millisecond",
+		roundingIncrement: 100,
+		roundingMode: "halfExpand",
+	});
+	const minutes = `${duration.minutes}`.padStart(2, "0");
+	const seconds = `${duration.seconds}`.padStart(2, "0");
+	const tenths = Math.floor(duration.milliseconds / 100);
+	return `${duration.hours}:${minutes}:${seconds}.${tenths}`;
+}

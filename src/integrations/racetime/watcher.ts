@@ -1,4 +1,4 @@
-import type {RaceState} from "@nanahuse/racetime-protocol";
+import {parseRaceInstant, type RaceState} from "@nanahuse/racetime-protocol";
 import {parseRaceDetailForRace, type RaceTimeClient} from "./client";
 import {RaceTimeAbortedError} from "./errors";
 import {mapRace} from "./mapper";
@@ -25,15 +25,21 @@ export type TransportState = Pick<
 	RaceState,
 	"url" | "race" | "connection" | "error"
 >;
+
+const FINISHED_CONNECTION_GRACE_MS = 5 * 60 * 1000;
+
 export class RaceWatcher {
 	private state: TransportState;
 	private stopped = false;
+	private closed = false;
 	private starting?: Promise<void>;
 	private epoch = 0;
 	private socket: Socket | null = null;
 	private controller: AbortController | null = null;
 	private retryTimer?: ReturnType<typeof setTimeout>;
 	private connectTimer?: ReturnType<typeof setTimeout>;
+	private closeTimer?: ReturnType<typeof setTimeout>;
+	private finishObservedAt: number | null = null;
 	private attempt = 0;
 
 	constructor(private readonly options: WatcherOptions) {
@@ -60,6 +66,58 @@ export class RaceWatcher {
 		this.stopped = true;
 		this.invalidate();
 		clearTimeout(this.retryTimer);
+		clearTimeout(this.closeTimer);
+	}
+
+	private now(): number {
+		return Date.now();
+	}
+
+	private finishDeadline(): number | null {
+		const race = this.state.race;
+		if (race?.status !== "finished") return null;
+		const endedAt = parseRaceInstant(race.endedAt)?.epochMilliseconds;
+		const base = endedAt ?? this.finishObservedAt;
+		return base === null ? null : base + FINISHED_CONNECTION_GRACE_MS;
+	}
+
+	private scheduleFinishClose(): void {
+		clearTimeout(this.closeTimer);
+		this.closeTimer = undefined;
+		if (this.closed || this.stopped) return;
+		const deadline = this.finishDeadline();
+		if (deadline === null) return;
+		const remaining = deadline - this.now();
+		if (remaining <= 0) {
+			this.closeAfterFinish();
+			return;
+		}
+		this.closeTimer = setTimeout(() => {
+			this.closeTimer = undefined;
+			this.closeAfterFinish();
+		}, remaining);
+	}
+
+	private closeAfterFinish(): void {
+		if (this.closed || this.stopped) return;
+		this.closed = true;
+		clearTimeout(this.closeTimer);
+		clearTimeout(this.retryTimer);
+		this.closeTimer = undefined;
+		this.retryTimer = undefined;
+		this.invalidate();
+		this.state.connection = "closed";
+		this.state.error = null;
+		this.emit();
+	}
+
+	private observeRace(): void {
+		if (this.state.race?.status === "finished") {
+			if (this.finishObservedAt === null) this.finishObservedAt = this.now();
+		} else {
+			this.finishObservedAt = null;
+		}
+		this.scheduleFinishClose();
 	}
 
 	private emit(): void {
@@ -84,7 +142,12 @@ export class RaceWatcher {
 	}
 
 	private retry(error: unknown): void {
-		if (this.stopped || this.retryTimer) return;
+		if (this.stopped || this.closed || this.retryTimer) return;
+		const deadline = this.finishDeadline();
+		if (deadline !== null && this.now() >= deadline) {
+			this.closeAfterFinish();
+			return;
+		}
 		this.invalidate();
 		this.state.connection = "reconnecting";
 		this.state.error = error instanceof Error ? error.message : String(error);
@@ -94,11 +157,22 @@ export class RaceWatcher {
 			backoff[Math.min(this.attempt++, backoff.length - 1)] ?? 30000;
 		this.retryTimer = setTimeout(() => {
 			this.retryTimer = undefined;
+			if (this.stopped || this.closed) return;
+			const at = this.finishDeadline();
+			if (at !== null && this.now() >= at) {
+				this.closeAfterFinish();
+				return;
+			}
 			void this.load(true);
 		}, delay);
 	}
 
 	private async load(connect: boolean, initial = false): Promise<void> {
+		if (this.stopped || this.closed) {
+			if (initial)
+				throw new RaceTimeAbortedError("Watcher stopped during initial fetch");
+			return;
+		}
 		const epoch = this.epoch;
 		const controller = new AbortController();
 		this.controller = controller;
@@ -107,7 +181,7 @@ export class RaceWatcher {
 				this.options.canonical,
 				controller.signal,
 			);
-			if (this.stopped || epoch !== this.epoch) {
+			if (this.stopped || this.closed || epoch !== this.epoch) {
 				if (initial)
 					throw new RaceTimeAbortedError(
 						"Watcher stopped during initial fetch",
@@ -118,7 +192,8 @@ export class RaceWatcher {
 				this.state.race = mapRace(dto, this.state.url);
 			}
 			this.emit();
-			if (connect) {
+			this.observeRace();
+			if (connect && !this.closed) {
 				try {
 					this.connect(dto.websocketUrl);
 				} catch (error) {
@@ -130,7 +205,8 @@ export class RaceWatcher {
 				this.stop();
 				throw error;
 			}
-			if (!this.stopped && epoch === this.epoch) this.retry(error);
+			if (!this.stopped && !this.closed && epoch === this.epoch)
+				this.retry(error);
 		} finally {
 			if (epoch === this.epoch) {
 				this.controller = null;
@@ -139,6 +215,7 @@ export class RaceWatcher {
 	}
 
 	private connect(raw: string): void {
+		if (this.stopped || this.closed) return;
 		const socket = this.options.socketFactory(
 			resolveWebSocketUrl(raw, this.options.canonical.canonicalUrl),
 		);
@@ -198,6 +275,7 @@ export class RaceWatcher {
 				this.state.race = race;
 				this.state.error = null;
 				this.emit();
+				this.observeRace();
 			} catch (error) {
 				this.options.onInvalidMessage?.(error);
 			}

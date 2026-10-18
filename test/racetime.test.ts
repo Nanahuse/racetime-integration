@@ -322,6 +322,144 @@ describe("HTTP boundary", () => {
 		await aborted;
 		expect(vi.getTimerCount()).toBe(0);
 	});
+	describe("finished race connection lifecycle", () => {
+		const watcherFor = (detail: ReturnType<typeof dto>) => {
+			const client = {fetchRaceDetail: vi.fn(async () => detail)};
+			const sockets: FakeSocket[] = [];
+			const watcher = new RaceWatcher({
+				client,
+				canonical: canonicalizeRaceUrl(url),
+				socketFactory: () => {
+					const socket = new FakeSocket();
+					sockets.push(socket);
+					return socket;
+				},
+				onUpdate: vi.fn(),
+				backoffMs: [30000],
+				connectTimeoutMs: 100,
+			});
+			return {watcher, sockets, client};
+		};
+		it("keeps the connection for five minutes after the race ends, then closes it", async () => {
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date("2026-01-01T02:00:00Z"));
+			const {watcher, sockets} = watcherFor(dto(1, "race", "finished"));
+			await watcher.start();
+			await flush();
+			expect(sockets).toHaveLength(1);
+			sockets[0]!.open();
+			await flush();
+			expect(watcher.snapshot().connection).toBe("connected");
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000 - 1);
+			expect(sockets[0]!.close).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(1);
+			expect(sockets[0]!.close).toHaveBeenCalledOnce();
+			expect(watcher.snapshot()).toMatchObject({
+				connection: "closed",
+				error: null,
+				race: {status: "finished"},
+			});
+			await vi.advanceTimersByTimeAsync(60000);
+			expect(sockets).toHaveLength(1);
+			expect(vi.getTimerCount()).toBe(0);
+			watcher.stop();
+		});
+		it("fetches an already-finished race without opening a WebSocket", async () => {
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date("2026-01-01T03:00:00Z"));
+			const {watcher, sockets} = watcherFor(dto(1, "race", "finished"));
+			await watcher.start();
+			await flush();
+			expect(sockets).toHaveLength(0);
+			expect(watcher.snapshot()).toMatchObject({
+				connection: "closed",
+				error: null,
+				race: {status: "finished"},
+			});
+			expect(vi.getTimerCount()).toBe(0);
+			watcher.stop();
+		});
+		it("clears the pending close and resets the finish time when a finished race resumes", async () => {
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date("2026-01-01T02:00:00Z"));
+			const {watcher, sockets} = watcherFor(dto(1, "race", "in_progress"));
+			await watcher.start();
+			await flush();
+			sockets[0]!.open();
+			await flush();
+			sockets[0]!.raceData({...payload(2, "race", "finished"), ended_at: null});
+			await flush();
+			expect(watcher.snapshot().race?.status).toBe("finished");
+			await vi.advanceTimersByTimeAsync(60_000);
+			expect(watcher.snapshot().connection).toBe("connected");
+
+			sockets[0]!.raceData({
+				...payload(3, "race", "in_progress"),
+				ended_at: null,
+			});
+			await flush();
+			expect(watcher.snapshot().race?.status).toBe("in_progress");
+			await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+			expect(watcher.snapshot().connection).toBe("connected");
+			expect(sockets[0]!.close).not.toHaveBeenCalled();
+
+			sockets[0]!.raceData({...payload(4, "race", "finished"), ended_at: null});
+			await flush();
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000 - 1);
+			expect(watcher.snapshot().connection).toBe("connected");
+			await vi.advanceTimersByTimeAsync(1);
+			expect(watcher.snapshot().connection).toBe("closed");
+			expect(sockets[0]!.close).toHaveBeenCalledOnce();
+			watcher.stop();
+		});
+		it("prefers endedAt over the first observed finish time", async () => {
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date("2026-01-01T02:00:00Z"));
+			const {watcher, sockets} = watcherFor(dto(1, "race", "in_progress"));
+			await watcher.start();
+			await flush();
+			sockets[0]!.open();
+			await flush();
+			sockets[0]!.raceData({
+				...payload(2, "race", "finished"),
+				ended_at: "2026-01-01T02:10:00Z",
+			});
+			await flush();
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+			expect(watcher.snapshot().connection).toBe("connected");
+			await vi.advanceTimersByTimeAsync(9 * 60 * 1000);
+			expect(watcher.snapshot().connection).toBe("connected");
+			await vi.advanceTimersByTimeAsync(60 * 1000);
+			expect(watcher.snapshot().connection).toBe("closed");
+			expect(sockets[0]!.close).toHaveBeenCalledOnce();
+			watcher.stop();
+		});
+		it("cancels a pending reconnect when the grace period elapses", async () => {
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date("2026-01-01T02:00:00Z"));
+			const initial = dto(1, "race", "in_progress");
+			const {watcher, sockets, client} = watcherFor(initial);
+			await watcher.start();
+			await flush();
+			sockets[0]!.open();
+			await flush();
+			client.fetchRaceDetail.mockResolvedValue(initial);
+			sockets[0]!.raceData({
+				...payload(2, "race", "finished"),
+				ended_at: "2026-01-01T01:55:10Z",
+			});
+			await flush();
+			expect(watcher.snapshot().race?.status).toBe("finished");
+			sockets[0]!.fail();
+			await vi.advanceTimersByTimeAsync(10_000);
+			expect(watcher.snapshot().connection).toBe("closed");
+			expect(sockets).toHaveLength(1);
+			await vi.advanceTimersByTimeAsync(60000);
+			expect(sockets).toHaveLength(1);
+			expect(vi.getTimerCount()).toBe(0);
+			watcher.stop();
+		});
+	});
 });
 
 describe("WebSocket monitoring", () => {

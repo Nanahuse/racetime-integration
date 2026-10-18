@@ -180,6 +180,16 @@ button.active,
 	color: var(--accent);
 }
 
+.retry-link {
+	padding: 0 4px;
+	margin-left: 4px;
+	border: none;
+	background: none;
+	color: var(--accent);
+	font-size: inherit;
+	text-decoration: underline;
+}
+
 .muted {
 	color: var(--muted);
 }

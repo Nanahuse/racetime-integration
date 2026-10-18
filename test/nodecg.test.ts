@@ -256,8 +256,12 @@ it("publishes identical ISO race models through direct requests, messages and Re
 		sockets[0]!.open();
 		await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(3));
 		await flush();
+		const finishedAt = new Date(Math.floor((Date.now() + 60_000) / 1000) * 1000)
+			.toISOString()
+			.replace(".000Z", "Z");
 		const updatedPayload = {
 			...payload(2, "race", "finished"),
+			ended_at: finishedAt,
 			info: "Updated details",
 			recorded: true,
 			recordable: true,
@@ -284,7 +288,7 @@ it("publishes identical ISO race models through direct requests, messages and Re
 		const race = updated.data.race;
 		expect(race).toMatchObject({
 			info: "Updated details",
-			endedAt: "2026-01-01T02:00:00Z",
+			endedAt: finishedAt,
 			recorded: true,
 			recordable: true,
 			timeLimitAutoComplete: true,
