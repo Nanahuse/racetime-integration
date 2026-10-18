@@ -15,6 +15,7 @@ import {
 	type Socket,
 	type TransportState,
 } from "./integrations/racetime/watcher";
+import {detectRaceEvents, type RaceChangeEvent} from "./race-events";
 
 type Session = {
 	watcher: RaceWatcher;
@@ -26,6 +27,7 @@ type Session = {
 	requested: boolean;
 	resolving: Promise<void> | null;
 	controller: AbortController | null;
+	hasStarted: boolean | null;
 };
 export class RaceService {
 	private readonly sessions = new Map<string, Session>();
@@ -36,6 +38,11 @@ export class RaceService {
 		private readonly socketFactory: (url: string) => Socket,
 		private readonly players: ParticipantResolver,
 		private readonly publish: (state: RacesState) => void,
+		private readonly notify: (event: RaceChangeEvent) => void = () => {},
+		private readonly onNotifyError: (
+			error: unknown,
+			event: RaceChangeEvent,
+		) => void = () => {},
 	) {}
 
 	snapshot(): RacesState {
@@ -105,6 +112,7 @@ export class RaceService {
 				requested: false,
 				resolving: null,
 				controller: null,
+				hasStarted: null,
 			};
 			this.sessions.set(canonical.canonicalUrl, session);
 		}
@@ -137,14 +145,27 @@ export class RaceService {
 		const session = this.sessions.get(url);
 		if (session) {
 			session.watches.delete(watchId);
-			if (!session.watches.size) {
-				session.watcher.stop();
-				session.controller?.abort();
-				this.sessions.delete(url);
-				this.publish(this.snapshot());
-			}
+			if (!session.watches.size) this.releaseSession(session);
 		}
 		return true;
+	}
+
+	forceUnwatch(url: string): {released: boolean; releasedWatches: number} {
+		const canonical = canonicalizeRaceUrl(url);
+		const session = this.sessions.get(canonical.canonicalUrl);
+		if (!session) return {released: false, releasedWatches: 0};
+		const releasedWatches = session.watches.size;
+		this.releaseSession(session);
+		return {released: true, releasedWatches};
+	}
+
+	private releaseSession(session: Session): void {
+		for (const watchId of session.watches) this.watches.delete(watchId);
+		session.watches.clear();
+		session.watcher.stop();
+		session.controller?.abort();
+		this.sessions.delete(session.state.url);
+		this.publish(this.snapshot());
 	}
 
 	directoryChanged(revision: number): void {
@@ -223,6 +244,16 @@ export class RaceService {
 		if (!session || session.watcher !== watcher) return;
 		const changed =
 			JSON.stringify(state.race) !== JSON.stringify(session.state.race);
+		let events: RaceChangeEvent[] = [];
+		if (changed && state.race) {
+			const detected = detectRaceEvents(
+				session.state.race,
+				state.race,
+				session.hasStarted,
+			);
+			session.hasStarted = detected.hasStarted;
+			events = detected.events;
+		}
 		const identityKey = JSON.stringify(
 			state.race?.entrants.map(({userId}) => userId).sort() ?? [],
 		);
@@ -242,5 +273,16 @@ export class RaceService {
 			session.state.resolution.raceRevision = session.state.raceRevision;
 		}
 		this.emit(session);
+		for (const event of events) {
+			try {
+				this.notify(event);
+			} catch (error) {
+				try {
+					this.onNotifyError(error, event);
+				} catch {
+					// Error reporting must not affect race monitoring.
+				}
+			}
+		}
 	}
 }

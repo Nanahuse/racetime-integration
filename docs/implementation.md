@@ -16,6 +16,12 @@ SRC時間は取得境界でDurationとして検証・シリアライズし、PB�
 
 Overviewの `RaceFields` を単発取得・監視で共有し、新しい詳細とAPI提供の人数を表示する。参加者の完走日時も結果欄に追加した。日時は `formatRaceInstant` が利用環境のローカルタイムゾーンで表示し、nullは「未設定」、Durationは既存の経過時間表示、infoはReactの通常テキストとして扱う。Rankingsの最終取得日時も共通の日時表示を使う。PB表示・参加者操作・マッピング編集・レース切り替えは維持する。
 
+0.7.0では監視レースの状態変化イベントを追加した。イベント名・公開型・通知条件・購読方法は[Protocolのイベント契約](../packages/racetime-protocol/README.md#レース状態変化イベント)にまとめる。`race-events.ts` はHTTP・NodeCGに依存せず、採用前後のRaceと開始済み判定からイベントと次の判定を返す。RaceService.updateは有効な共有セッションの採用前スナップショットを比較し、既存のRevision更新・Replicant公開の後でExtensionのコールバックへ通知する。初回Raceは比較基準のみを確立し、fetchRaceやPlayer再解決は検出処理を通らない。
+
+開始済み判定はURLごとの共有セッションにnullable booleanとして保持し、最初の有効なRaceから初期化する。開始後は再開やpendingへの戻りでも保持し、最後のwatchId解除でセッションと共に破棄する。基準スナップショットは既存のsession.state.raceを使用し、イベント用の複製や履歴は保持しない。再接続も同じ基準と比較し、RaceWatcherによるversion・接続世代・監視停止の検証は変更しない。
+
+ExtensionはProtocolのeventMessageNameでNodeCG.sendMessageを呼ぶ。同期例外とPromise拒否を捕捉してloggerへ記録し、送信完了を待たずに処理を続ける。送信失敗はレース採用・公開や監視の再取得／再接続に影響せず、再送も行わない。新しいRPC・WebSocket・タイマー・ポーリング・永続化は追加していない。API_VERSION=4、racetime.v4.*、RacesState.schemaVersion=1、既存操作とレスポンス型、CIのタグ発行方式を維持する。
+
 - RaceTime: HTTP取得、WebSocket通知での再取得、再接続、レースIDと結果の正規化。`finish_time` は共通の `parseRaceDuration` で `Temporal.Duration` に解析し、未検証の期間文字列を取得境界より内側へ渡さない。
 - RaceService: 単発取得のHTTP取得・Player解決、URLごとの共有監視、初回成功後の購読成立、失敗時の解放、Revision管理。
 - Player Manager: 公開 `list` でDirectoryを取得し、Playerに属するRaceTime Account（`service === "racetime"`、`identity.userId`）をPrimary/Secondaryの区別なく検索する。`find` は使わない。RaceTime側でPlayerを作成・更新せず、公開 `resolveDisplayName` で表示名を確定し、`player-manager.v3.directoryChanged` で再解決する。
@@ -80,11 +86,15 @@ Player Manager v3のPlayerは複数Accountを持ち、各Accountは `service` �
 
 0.6.0の追加境界テストは、TimestampのUTC正規化・オフセット・null・ナノ秒精度・再解析の等価性、不正日付・タイムゾーンなし日時・不正Durationの拒否、開始前／進行中／終了／中止レース、新フィールドの必須性・型・人数の検証、完走経過時間と完走日時の区別、直接API／メッセージ／Replicantの一致、監視更新と不正応答時の正常スナップショット保持、Temporal非混入、SRCのLeaderboard／PBの時間・日付境界、複数アカウントPBのナノ秒比較・日単位の比較、5分キャッシュと期限切れ失敗時のstale、Dashboardのローカル日時・期間・null・説明のテキスト表示を対象にする。
 
-`pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm lint`、`pnpm test`（17ファイル349件）、`pnpm build` はすべて成功。依存関係の追加はなく、0.6.0へのpackage.json更新によるlockfileの変更も不要。
+0.7.0の追加テストは、イベントの初回抑制・予定作成／変更・開始・複数完走・取り消し／再完走・中止、開始済み判定の保持、順位／時間修正や新規完走者・参加者削除・接続状態・Player再解決・単発取得での通知抑制、共有監視の重複防止、古いversion／停止後の応答破棄、再接続時の未観測完走、解除後の基準再作成、状態公開後の通知、NodeCGの別バンドル名前空間での購読契約、正式結果とISO文字列、同期送信エラー・Promise拒否・送信保留中の正常監視を対象とする。
+
+`pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm lint`、`pnpm test`（19ファイル381件）、`pnpm build` と既存バージョン検証はすべて成功。依存関係の追加はなく、ルート・Protocolの0.7.0への更新によるlockfileの変更も不要。
 
 2026-10-17にRaceTimeの公開API `races/data` と `/kh2fmr/powerful-knuckles-9844/data` を読み取り、開始前レースの新フィールドを確認した。opened_atはUTC日時、started_at／ended_at／cancelled_at／finished_atはnull、start_delayは `P0DT00H00M15S`、time_limitは `P1DT00H00M00S`、記録関連と制限時間処理はboolean、人数は整数だった。実APIの進行中・終了・中止状態は未確認であり、状態別の取得はfixtureによる境界テストで検証した。
 
 未実施: 実NodeCG 2.8環境でのDashboard起動と公開APIとの実通信、実ADCによる対象Spreadsheetの読書き・初期化、実Speedrun.com API・実Player Manager v3を含む運用NodeCGでの通し確認、npmレジストリへのpublish。
+
+イベント配信も実NodeCGの別バンドル・Dashboard・Graphicへの実通信、実RaceTime WebSocketでの開始予定変更・完走取り消し・切断中の状態変化は未検証。NodeCGの公開sendMessage／listenFor契約に合わせたハーネスとHTTP／WebSocket fixtureで検証した。PR #7が未マージの間はそのブランチcodex/race-details-temporalを基点・PRベースとし、マージ後にmainへ変更する後続PRとして構成する。
 
 ## 既知の制限（今回のスコープ外）
 

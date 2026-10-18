@@ -20,7 +20,7 @@ pnpm build
 
 Player Managerと同じ構成で、PRとmainへのpush時に`Check`を実行します。Node.js 24 / pnpm 12.9.1とpnpmキャッシュを使い、固定lockfileでのインストール、バージョン検証、型チェック、lint、テスト、ビルドを行います。
 
-ルートとProtocolのpackage.jsonは同じ`MAJOR.MINOR.PATCH`に揃えて更新してください。現在のバージョンは`0.6.0`です。パッケージ版と公開APIの`API_VERSION`は別に管理します。mainへのpushで`Check`が成功すると、`Tag`がそのコミットのバージョンで注釈付きタグ`vX.Y.Z`を作成します。既存タグやmainが先へ進んだ実行はスキップし、最新リリースタグ以下の新規バージョンは拒否します。
+ルートとProtocolのpackage.jsonは同じ`MAJOR.MINOR.PATCH`に揃えて更新してください。現在のバージョンは`0.7.0`です。パッケージ版と公開APIの`API_VERSION`は別に管理します。mainへのpushで`Check`が成功すると、`Tag`がそのコミットのバージョンで注釈付きタグ`vX.Y.Z`を作成します。既存タグやmainが先へ進んだ実行はスキップし、最新リリースタグ以下の新規バージョンは拒否します。
 
 ## NodeCGへの配置
 
@@ -66,6 +66,8 @@ racetime_category_slug,racetime_category_name,racetime_goal,src_game_id,src_game
 ## 公開API
 
 [@nanahuse/racetime-protocol](packages/racetime-protocol/README.md)に全操作と契約を記載しています。
+
+監視中のレースの状態変化をNodeCGメッセージで通知します。イベント一覧・購読方法・通知条件は[Protocolのイベント契約](packages/racetime-protocol/README.md#レース状態変化イベント)を参照してください。
 
 - racetime.v4.*メッセージ、送信先racetime-integration
 - nodecg.extensions['racetime-integration'] のRaceTimeAPI

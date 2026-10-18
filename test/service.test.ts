@@ -281,6 +281,145 @@ function setup() {
 	);
 	return {service, client, sockets, publish, ...players};
 }
+
+it.each([1, 3])(
+	"force-releases all %s watches by canonical URL while preserving another race",
+	async (count) => {
+		const {service, client, sockets, publish} = setup();
+		const watches = await Promise.all(
+			Array.from({length: count}, () => service.watch(url)),
+		);
+		client.fetchRaceDetail.mockResolvedValueOnce(dto(1, "other"));
+		const other = await service.watch("https://racetime.gg/game/other");
+		await flush();
+		const otherBefore = service.getWatch(other.watchId);
+		expect(service.forceUnwatch(`${url}/?query=1#chat`)).toEqual({
+			released: true,
+			releasedWatches: count,
+		});
+		expect(service.get(url)).toBeNull();
+		for (const watch of watches) {
+			expect(service.getWatch(watch.watchId)).toBeNull();
+			expect(service.unwatch(watch.watchId)).toBe(false);
+		}
+		expect(service.snapshot().races.map((race) => race.url)).toEqual([
+			otherBefore!.url,
+		]);
+		expect(publish.mock.lastCall?.[0]).toEqual(service.snapshot());
+		expect(service.getWatch(other.watchId)).toEqual(otherBefore);
+		expect(sockets[0]!.close).toHaveBeenCalledOnce();
+		expect(sockets[1]!.close).not.toHaveBeenCalled();
+		expect(service.forceUnwatch(url)).toEqual({
+			released: false,
+			releasedWatches: 0,
+		});
+		const restarted = await service.watch(url);
+		expect(restarted.watchId).not.toBe(watches[0]!.watchId);
+		expect(service.getWatch(restarted.watchId)?.race).not.toBeNull();
+		service.dispose();
+	},
+);
+
+it.each(["connecting", "connected", "reconnecting"])(
+	"force-releases a %s race and stops pending reconnects",
+	async (connection) => {
+		const {service, sockets, client} = setup();
+		await service.watch(url);
+		if (connection === "connected") {
+			sockets[0]!.open();
+			await flush();
+		} else if (connection === "reconnecting") sockets[0]!.fail();
+		expect(service.get(url)?.connection).toBe(connection);
+		expect(service.forceUnwatch(url)).toEqual({
+			released: true,
+			releasedWatches: 1,
+		});
+		const fetched = client.fetchRaceDetail.mock.calls.length;
+		await vi.advanceTimersByTimeAsync(60000);
+		expect(service.get(url)).toBeNull();
+		expect(service.snapshot().races).toEqual([]);
+		expect(sockets).toHaveLength(1);
+		expect(client.fetchRaceDetail).toHaveBeenCalledTimes(fetched);
+		expect(vi.getTimerCount()).toBe(0);
+		service.dispose();
+	},
+);
+
+it("force-releases pending initial watches without affecting a replacement session", async () => {
+	const {service, client, sockets} = setup();
+	const pending = deferred<ReturnType<typeof dto>>();
+	client.fetchRaceDetail.mockReturnValueOnce(pending.promise);
+	const first = service.watch(url);
+	const second = service.watch(url);
+	const initialResults = Promise.allSettled([first, second]);
+	expect(service.forceUnwatch(url)).toEqual({
+		released: true,
+		releasedWatches: 2,
+	});
+	client.fetchRaceDetail.mockResolvedValueOnce(dto(5));
+	const replacement = await service.watch(url);
+	pending.resolve(dto(99));
+	expect((await initialResults).map((result) => result.status)).toEqual([
+		"rejected",
+		"rejected",
+	]);
+	expect(service.getWatch(replacement.watchId)?.race?.version).toBe(5);
+	expect(sockets).toHaveLength(1);
+	service.dispose();
+});
+
+it("ignores HTTP refreshes completed after force-release and permits a fresh watch", async () => {
+	const {service, client, sockets, publish} = setup();
+	const old = await service.watch(url);
+	sockets[0]!.open();
+	await flush();
+	const pending = deferred<ReturnType<typeof dto>>();
+	client.fetchRaceDetail.mockReturnValueOnce(pending.promise);
+	sockets[0]!.message('{"type":"race.data"}');
+	service.forceUnwatch(url);
+	client.fetchRaceDetail.mockResolvedValueOnce(dto(5));
+	const replacement = await service.watch(url);
+	pending.resolve(dto(99));
+	await flush();
+	expect(service.getWatch(old.watchId)).toBeNull();
+	expect(service.getWatch(replacement.watchId)?.race?.version).toBe(5);
+	expect(publish.mock.lastCall?.[0]).toEqual(service.snapshot());
+	expect(service.snapshot().races).toHaveLength(1);
+	service.dispose();
+});
+
+it("aborts Player resolution and ignores its late result after force-release", async () => {
+	const {service, api, publish} = setup();
+	const pending =
+		deferred<Awaited<ReturnType<ParticipantResolver["resolve"]>>>();
+	const players = new ParticipantResolver(() => api);
+	const resolution = vi
+		.spyOn(players, "resolve")
+		.mockReturnValueOnce(pending.promise);
+	const active = new RaceService(
+		{fetchRaceDetail: async () => dto()},
+		() => new FakeSocket(),
+		players,
+		publish,
+	);
+	try {
+		await active.watch(url);
+		const signal = resolution.mock.calls[0]![1];
+		expect(signal?.aborted).toBe(false);
+		active.forceUnwatch(url);
+		expect(signal?.aborted).toBe(true);
+		const published = publish.mock.calls.length;
+		pending.resolve({directoryRevision: 99, participants: []});
+		await flush();
+		expect(active.get(url)).toBeNull();
+		expect(active.snapshot().races).toEqual([]);
+		expect(publish).toHaveBeenCalledTimes(published);
+	} finally {
+		active.dispose();
+		service.dispose();
+	}
+});
+
 it("waits for initial HTTP success and shares the pending load between consumers", async () => {
 	const {service, client, sockets} = setup();
 	const pending = deferred<ReturnType<typeof dto>>();

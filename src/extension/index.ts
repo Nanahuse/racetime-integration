@@ -1,11 +1,12 @@
 import {
-	eventMessageName,
 	BUNDLE_NAME as PLAYER_BUNDLE,
 	type PlayerManagerAPI,
+	eventMessageName as playerEventMessageName,
 } from "@nanahuse/player-manager-protocol";
 import {
 	DEFAULT_LEADERBOARD_TOP,
 	DEFAULT_MAX_RESOLVED_MAPPINGS,
+	eventMessageName,
 	OPERATIONS,
 	operationMessageName,
 	RACES_REPLICANT,
@@ -46,6 +47,23 @@ export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 		players,
 		(value) => {
 			state.value = value;
+		},
+		(event) => {
+			const name = eventMessageName(event.type);
+			const report = (error: unknown) =>
+				nodecg.log.warn(
+					`Failed to send ${name}: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			try {
+				void Promise.resolve(nodecg.sendMessage(name, event.payload)).catch(
+					report,
+				);
+			} catch (error) {
+				report(error);
+			}
+		},
+		(error, event) => {
+			nodecg.log.warn(`Race event notification failed: ${event.type}`, error);
 		},
 	);
 	const defaultSettings: SettingsState = {
@@ -124,13 +142,13 @@ export default function (nodecg: NodeCG.ServerAPI): RaceTimeAPI {
 			races.directoryChanged(data.directoryRevision);
 	};
 	nodecg.listenFor(
-		eventMessageName("directoryChanged"),
+		playerEventMessageName("directoryChanged"),
 		PLAYER_BUNDLE,
 		directoryChanged,
 	);
 	nodecg.once("serverStopping", () => {
 		nodecg.unlisten(
-			eventMessageName("directoryChanged"),
+			playerEventMessageName("directoryChanged"),
 			PLAYER_BUNDLE,
 			directoryChanged,
 		);

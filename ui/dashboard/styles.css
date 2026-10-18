@@ -210,6 +210,11 @@ button.active,
 	color: var(--muted);
 }
 
+.list .force-unwatch {
+	width: auto;
+	margin-top: 6px;
+}
+
 .formrow {
 	display: flex;
 	gap: 8px;

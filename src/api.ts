@@ -309,6 +309,9 @@ export function createAPI(
 				case "unwatchRace":
 					value = {released: races.unwatch(text(data.watchId))};
 					break;
+				case "forceUnwatchRace":
+					value = races.forceUnwatch(text(data.url));
+					break;
 				case "getRace":
 					value = races.get(text(data.url));
 					break;

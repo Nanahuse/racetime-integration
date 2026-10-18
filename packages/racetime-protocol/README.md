@@ -2,7 +2,7 @@
 
 RaceTime Integration v4の公開型・定数・メッセージ名。ESM/CommonJSの両方に型宣言を含み、実行時依存は日時・期間・日付処理に使う `@js-temporal/polyfill` のみです（NodeCG・Google SDK・Player Managerへの実行時依存はありません）。
 
-利用バンドルのmanifestに `"bundleDependencies": {"racetime-integration": "^0.6.0"}` を指定してください。
+利用バンドルのmanifestに `"bundleDependencies": {"racetime-integration": "^0.7.0"}` を指定してください。
 
 ```ts
 import {BUNDLE_NAME, type RaceTimeAPI} from "@nanahuse/racetime-protocol";
@@ -24,6 +24,7 @@ if (watched.ok) {
 | fetchRace | `{url}` | `ResolvedRace`（単発HTTP取得＋Player解決。監視は開始しない） |
 | watchRace | `{url}` | `{watchId, state}`（初回HTTP成功後、race非null） |
 | unwatchRace | `{watchId}` | `{released}`（再実行時false） |
+| forceUnwatchRace | `{url}` | `{released, releasedWatches}`（指定レースの全watchIdを無効化） |
 | getWatch | `{watchId}` | `RaceState \| null` |
 | getRace | `{url}` | `RaceState \| null`（監視中） |
 | listRaces | `undefined` | `RacesState` |
@@ -51,6 +52,12 @@ if (watched.ok) {
 
 最後のwatchIdを解除すると監視と参加者解決の待機を停止します。利用側はwatchIdの所有期間と解除を管理してください。ブラウザの再読込だけでは解除されません。
 
+`forceUnwatchRace` は管理用の強制解除操作です。URLを既存の正規化規則で解決し、そのレースの監視セッションを同期的に破棄します。同じレースに紐付くすべてのwatchId（他バンドルが保持するものも含む）を無効化し、HTTP/WebSocket監視・再接続タイマー・実行中のPlayer解決を停止します。RaceTime上のレース自体は変更しません。他レースの監視も維持します。
+
+対象セッションが存在する場合は `{released: true, releasedWatches: 無効化したwatchId数}`、存在しない場合は `{released: false, releasedWatches: 0}` を返します。解除後のgetRace / getWatchはnull、無効化済みwatchIdのunwatchRaceは `{released: false}` となり、listRacesとracetime-races Replicantから対象が消えます。解除前の非同期応答が対象を復活させることはありません。
+
+強制解除はその時点のセッションを破棄する操作であり、そのURLの監視を禁止しません。他バンドルを含め、再びwatchRaceを呼べば新しいセッション・watchIdで監視できます。通常のunwatchRaceは従来どおり単一watchIdを解除します。Dashboardの監視一覧から確認ダイアログを経て実行でき、一覧とRaceTime status表示はReplicantの状態に追従します。
+
 `RACES_REPLICANT`（racetime-races、名前空間racetime-integration）は非永続の `RacesState` を公開します。再起動後は再購読が必要です。
 
 - `revision`: セッションの公開状態が更新されるたびに増加。
@@ -65,7 +72,7 @@ if (watched.ok) {
 
 ## レース詳細と時間情報
 
-`fetchRace`、`watchRace`、`getRace`、`getWatch`、`listRaces` と `racetime-races` Replicantは同じ `Race` モデルを使用します。直接 `RaceTimeAPI.request()` を呼んだ場合も、NodeCGメッセージと同じISO 8601文字列を返し、Temporalインスタンスを公開しません。パッケージ版は0.6.0、API_VERSION=4、`racetime.v4.*`、`RacesState.schemaVersion=1` は維持します。
+`fetchRace`、`watchRace`、`getRace`、`getWatch`、`listRaces` と `racetime-races` Replicantは同じ `Race` モデルを使用します。直接 `RaceTimeAPI.request()` を呼んだ場合も、NodeCGメッセージと同じISO 8601文字列を返し、Temporalインスタンスを公開しません。パッケージ版は0.7.0、API_VERSION=4、`racetime.v4.*`、`RacesState.schemaVersion=1` は維持します。
 
 | Raceフィールド | 意味・公開形式 |
 | --- | --- |
@@ -120,6 +127,57 @@ if (time) {
   console.log(Temporal.Duration.compare(time, parseRaceDuration("PT1H")!));
 }
 ```
+
+## レース状態変化イベント
+
+0.7.0から、共有監視セッションが正常に採用した前後の `Race` の差分をNodeCG Message APIで通知します。RaceTime上でのコマンド実行そのものを保証するイベントではありません。イベント名は `eventMessageName(event)` で構築し、ペイロードの型は `RaceTimeEvents[event]` です。RPCの操作一覧には追加しません。
+
+すべてのペイロードに `raceId: string`、`url: string`（正規化済みURL）、`raceVersion: number` を含みます。`raceVersion` は今回採用した `Race.version` であり、`RaceState.revision` ではありません。
+
+| イベント | 追加のペイロード | 発火条件 |
+| --- | --- | --- |
+| `raceStartScheduled` | `startedAt: string`, `previousStartedAt: string \| null` | startedAtがnull→日時、または日時A→日時Bへ変化。pendingの開始予定も対象。日時→nullは通知しない |
+| `raceStarted` | `startedAt: string` | open / invitational / pending→in_progressでstartedAtが存在し、このセッションで開始済みと観測していない場合 |
+| `entrantFinished` | `result: FinishedRaceResult` | 前回も存在したuserIdがdone以外→doneへ変化し、finishTime・finishedAtが両方存在する場合 |
+| `entrantFinishUndone` | `userId: string` | 前回done→今回done以外へ変化し、前回のfinishTimeが存在し、今回はnullになった場合 |
+| `raceCancelled` | `cancelledAt: string` | cancelled以外→cancelledへ変化し、cancelledAtが存在する場合 |
+
+`FinishedRaceResult` は `RaceResult & {status: "finished"; time: string; finishedAt: string}` です。`entrantFinished.result` は今回の `Race.results` の対応する結果で、順位・時間・完走日時は正式なスナップショットの値を使用します。既にdoneの参加者の順位・時間の修正、新たに一覧に現れた完走済み参加者、一覧からの参加者削除では完走／取り消しを通知しません。一度取り消された参加者が再完走すると新しい完走通知を送ります。同じ更新で複数人が完走した場合は各1件を送ります。
+
+他のNodeCGバンドルからは、送信元の名前空間 `BUNDLE_NAME` を指定して購読します。
+
+```ts
+import {
+  BUNDLE_NAME,
+  eventMessageName,
+  type RaceTimeEvents,
+} from "@nanahuse/racetime-protocol";
+
+nodecg.listenFor(
+  eventMessageName("entrantFinished"),
+  BUNDLE_NAME,
+  (event: RaceTimeEvents["entrantFinished"]) => {
+    console.log(
+      event.raceId,
+      event.result.userId,
+      event.result.time,
+      event.result.finishedAt,
+    );
+  },
+);
+```
+
+日時は既存APIと同じUTCのISO 8601文字列、完走経過時間はISO 8601 Duration文字列です。演算には `parseRaceInstant` / `parseRaceDuration` を使用してください。イベント受信時刻を開始時刻や完走時刻として使用しないでください。ペイロードはJSON互換データのみです。
+
+初回取得ではpending・in_progress・finished・cancelledでも通知せず、比較基準のみを確立します。初回のin_progress / finishedは開始済みと判定します。一度開始したセッションはfinished→in_progressによる再開やpendingへの戻りがあっても開始済み判定を保持し、raceStartedを再通知しません。
+
+再接続時は最後に採用した正常スナップショットとの差分を検出します。切断中の完走を復帰時に初めて観測した場合は通知しますが、同じ状態、古いRace.version、古い接続世代・停止後の応答は通知しません。接続状態のみの変化、Player再解決、participantsRevision更新、単発のfetchRaceも対象外です。
+
+同じURLの複数watchIdは1つのセッションを共有し、イベントをwatchIdごとに重複生成しません。最後のwatchIdを解除すると基準スナップショットと開始済み判定を破棄し、再監視は初回取得からやり直します。
+
+レース状態を公開した後にイベントを送信します。同期送信エラーとPromise拒否はNodeCG loggerに記録し、レースの採用・公開・監視を失敗させません。送信完了を待たず、失敗によるHTTP再取得・再接続・自動再送は行いません。イベント履歴・永続キュー・配信保証はありません。観測の間に発生して元に戻った変化は検出できない場合があり、全変更履歴を再現するものではありません。
+
+利用側はイベント購読と現在状態の取得を組み合わせてください。接続時の初期状態や完全なレース情報にはwatchRaceの戻り値、getRace / getWatch / listRaces、またはracetime-races Replicantを使用します。
 
 ## 単発取得
 
