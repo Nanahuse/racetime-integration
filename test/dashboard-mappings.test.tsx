@@ -198,6 +198,9 @@ async function openNewCategory() {
 	await act(async () => {
 		fireEvent.click(button);
 	});
+	fireEvent.change(screen.getByLabelText("SRC Game（必須）"), {
+		target: {value: "g1"},
+	});
 	await waitFor(() =>
 		expect(
 			(screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement)
@@ -1147,3 +1150,83 @@ it("lists every Goal alias with its SRC game and category name", async () => {
 	).toBeTruthy();
 	expect(screen.getAllByText("Game One", {selector: "strong"})).toHaveLength(1);
 });
+
+it.each([
+	{mode: "manage", multiple: false},
+	{mode: "manage", multiple: true},
+	{mode: "race", multiple: false},
+	{mode: "race", multiple: true},
+] as const)(
+	"requires explicit SRC game selection for a new Goal in $mode with multiple=$multiple",
+	async ({mode, multiple}) => {
+		games = multiple ? [gameRecord, secondGame] : [gameRecord];
+		await openMappingMode(mode);
+		if (mode === "manage")
+			fireEvent.click(screen.getByRole("button", {name: /新規 Goal/}));
+		const gameSelect = () =>
+			screen.getByLabelText("SRC Game（必須）") as HTMLSelectElement;
+		const categorySelect = () =>
+			screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement;
+		expect(gameSelect().value).toBe("");
+		expect(categorySelect().disabled).toBe(true);
+		expect(
+			sendMessage.mock.calls.filter(
+				([name]) => name === "racetime.v5.getSpeedrunGameOptions",
+			),
+		).toHaveLength(0);
+		fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+		expect(
+			await screen.findByText("Game Mappingを保存しました。"),
+		).toBeTruthy();
+		expect(gameSelect().value).toBe("");
+		expect(categorySelect().disabled).toBe(true);
+		fireEvent.click(
+			screen.getByRole("button", {name: multiple ? "Second SRC" : "SRC Game"}),
+		);
+		expect(gameSelect().value).toBe("");
+		expect(categorySelect().disabled).toBe(true);
+		const gameId = multiple ? "g2" : "g1";
+		fireEvent.change(gameSelect(), {target: {value: gameId}});
+		await waitFor(() => expect(categorySelect().disabled).toBe(false));
+		expect(sendMessage).toHaveBeenCalledWith(
+			"racetime.v5.getSpeedrunGameOptions",
+			{gameId},
+		);
+		fireEvent.change(categorySelect(), {target: {value: "c1"}});
+		await screen.findByText("このカテゴリにVariablesはありません。");
+		fireEvent.click(screen.getByRole("button", {name: "SRC Game"}));
+		expect(gameSelect().value).toBe(gameId);
+		expect(categorySelect().value).toBe("c1");
+		expect(screen.queryByText(/未保存の変更があります/)).toBeNull();
+	},
+);
+
+it.each(["manage", "race"] as const)(
+	"uses the saved Goal's SRC game independently of the Game Mapping being edited in %s",
+	async (mode) => {
+		games = [gameRecord, secondGame];
+		categories = [
+			{
+				...childRecord,
+				mapping: {
+					...childRecord.mapping,
+					speedrunCom: {...childRecord.mapping.speedrunCom, gameId: "g2"},
+				},
+			},
+		];
+		await openMappingMode(mode);
+		if (mode === "manage")
+			fireEvent.click(screen.getByRole("button", {name: /Any%.*Second SRC/}));
+		const gameSelect = () =>
+			screen.getByLabelText("SRC Game（必須）") as HTMLSelectElement;
+		const categorySelect = () =>
+			screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement;
+		expect(gameSelect().value).toBe("g2");
+		await waitFor(() => expect(categorySelect().disabled).toBe(false));
+		expect(categorySelect().value).toBe("c1");
+		fireEvent.click(screen.getByRole("button", {name: "Second SRC"}));
+		fireEvent.click(screen.getByRole("button", {name: "SRC Game"}));
+		expect(gameSelect().value).toBe("g2");
+		expect(categorySelect().value).toBe("c1");
+	},
+);

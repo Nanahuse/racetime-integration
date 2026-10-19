@@ -1062,6 +1062,18 @@ async function openMappingEditor() {
 	fireEvent.click(screen.getByRole("button", {name: "編集"}));
 }
 
+async function chooseCategoryGame(gameId = "g1") {
+	fireEvent.change(screen.getByLabelText("SRC Game（必須）"), {
+		target: {value: gameId},
+	});
+	await waitFor(() =>
+		expect(
+			(screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement)
+				.disabled,
+		).toBe(false),
+	);
+}
+
 const updatedRace: Race = {...race, category: {...race.category, goal: "100%"}};
 const updatedRaceState: RaceState = {...raceState, race: updatedRace};
 
@@ -1213,6 +1225,7 @@ it("registers Game then Category mappings from Overview", async () => {
 	await waitFor(() => expect(bestRequests).toHaveLength(2));
 	expect(bestRequests[1]?.refresh).toBe(false);
 
+	await chooseCategoryGame();
 	const categorySelect = (await screen.findByLabelText(
 		"SRC Category（必須）",
 	)) as HTMLSelectElement;
@@ -2336,7 +2349,14 @@ it("keeps editing after Game Mapping save and closes after Category Mapping save
 	await editMappingDraft();
 	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
 	expect(await screen.findByText("Game Mappingを保存しました。")).toBeTruthy();
-	expect(screen.getByLabelText("SRC Category（必須）")).toBeTruthy();
+	expect(
+		(screen.getByLabelText("SRC Game（必須）") as HTMLSelectElement).value,
+	).toBe("");
+	expect(
+		(screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement)
+			.disabled,
+	).toBe(true);
+	await chooseCategoryGame();
 	await act(async () =>
 		fireEvent.change(screen.getByLabelText("SRC Category（必須）"), {
 			target: {value: "c1"},
@@ -2580,6 +2600,7 @@ it("keeps Category save notification after closing even when the follow-up reloa
 	render(<Overview races={races} />);
 	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
 	await openMappingEditor();
+	await chooseCategoryGame();
 	await waitFor(() =>
 		expect(
 			(screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement)

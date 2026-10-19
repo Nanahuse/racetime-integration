@@ -467,10 +467,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		void refreshLists().catch((cause) => setListsError(errorMessage(cause)));
 	}, [refreshLists]);
 
-	const activeGameId =
-		categorySession?.draft.speedrunCom.gameId ||
-		gameSession?.draft.speedrunCom.gameId ||
-		"";
+	const activeGameId = categorySession?.draft.speedrunCom.gameId ?? "";
 	useEffect(() => {
 		if (requestedOptions.current === activeGameId) return;
 		requestedOptions.current = activeGameId;
@@ -516,11 +513,6 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 			mode === "race" && target
 				? categoryForTarget(target)
 				: blankCategory(slug);
-		empty.speedrunCom.gameId =
-			gameSession?.baseline?.speedrunCom.gameId ??
-			games.find((record) => record.mapping.racetime.categorySlug === slug)
-				?.mapping.speedrunCom.gameId ??
-			"";
 		return {
 			status: "normal",
 			baseline: record?.mapping ?? null,
@@ -534,15 +526,18 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		};
 	};
 
-	const startGameSession = (record: GameMappingRecord | null) => {
+	const startGameSession = (
+		record: GameMappingRecord | null,
+		keepCategory = false,
+	) => {
 		searchGen.current++;
-		if (mode === "race" && target)
+		if (!keepCategory && mode === "race" && target)
 			setCategorySession(
 				makeCategorySession(
 					findCategoryByKey(categories, target.categorySlug, target.goal),
 				),
 			);
-		else setCategorySession(null);
+		else if (!keepCategory) setCategorySession(null);
 		setSrcResults([]);
 		setSrcQuery("");
 		setMessage(null);
@@ -551,7 +546,15 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 	};
 
 	const selectGame = (record: GameMappingRecord | null) => {
-		guard(() => startGameSession(record));
+		const sameRaceTimeGame =
+			record !== null &&
+			record.mapping.racetime.categorySlug ===
+				gameSession?.draft.racetime.categorySlug;
+		const action = () => startGameSession(record, sameRaceTimeGame);
+		if (sameRaceTimeGame) {
+			if (gameDirty) setPendingAction(() => action);
+			else action();
+		} else guard(action);
 	};
 
 	const gameCategories = categories.filter(
@@ -769,27 +772,6 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 				];
 			});
 			setListSettingsRevision(result.settingsRevision);
-			setCategorySession((session) =>
-				session && !session.draft.speedrunCom.gameId
-					? {
-							...session,
-							draft: {
-								...session.draft,
-								speedrunCom: {
-									...session.draft.speedrunCom,
-									gameId: result.record.mapping.speedrunCom.gameId,
-								},
-							},
-							emptyDraft: {
-								...session.emptyDraft,
-								speedrunCom: {
-									...session.emptyDraft.speedrunCom,
-									gameId: result.record.mapping.speedrunCom.gameId,
-								},
-							},
-						}
-					: session,
-			);
 			setMessage("Game Mappingを保存しました。");
 			onMappingChange?.();
 			saved = true;
