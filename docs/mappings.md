@@ -17,17 +17,25 @@ RaceTimeではカテゴリとGoal、Speedrun.comではゲームとカテゴリ�
 
 ## Game MappingとCategory Mapping
 
-- Game Mapping: RaceTimeのカテゴリ（`categorySlug`）とSpeedrun.comのゲームを対応付けます。`racetime_category_slug`が一意キーです。
-- Category Mapping: RaceTimeのGoal（`categorySlug` + `goal`）をSpeedrun.comのカテゴリに対応付けます。`categorySlug` + `goal`が一意キーで、親となるGame Mappingが必須です。SRCのゲームIDとゲーム名はCategory Mappingに重複して保存しません。
+- Game Mapping: RaceTimeのカテゴリ（`categorySlug`）とSpeedrun.comのゲームを対応付けます。`racetime_category_slug` + `src_game_id`が一意キーです。同じRaceTimeゲームに複数のSRCゲームを登録でき、同じSRCゲームを別のRaceTimeゲームから参照することもできます。
+- Category Mapping: RaceTimeのGoal（`categorySlug` + `goal`）をSpeedrun.comのカテゴリに対応付けます。`categorySlug` + `goal`が一意キーで、親となるGame Mappingが必須です。SRCゲームIDは必須です。ゲーム名は保存せず、同じRaceTimeゲームに登録されたGame Mappingから取得します。
 
 登録はDashboardのMappingsタブ、またはOverviewのマッピング欄から行います。操作は[Dashboardの使い方](dashboard.md#mappingsタブ)を参照してください。
 
 Category Mappingを保存するときは、SRCカテゴリが親Game MappingのSRCゲームに属するかをサーバー側で確認します。属さない場合は`category_not_in_game`エラーになります。
 
+同じSRCカテゴリ・条件を複数のGoalから参照できます。たとえば「Any%」と「Any Percent」は別のGoalとして登録し、どちらにも同じSRCゲーム・カテゴリを指定できます。Goalの自動正規化や、SRC条件に対する逆方向の一意制約はありません。
+
+登録済みのGame MappingではslugとSRCゲームIDを変更できません。別のSRCゲームは新しい対応として追加します。削除時に確認するのは、そのslugとSRCゲームIDを参照するCategory Mappingだけです。他のSRCゲームに属するGoalは削除を妨げません。
+
+Category MappingのSRCゲームは変更できます。変更後のカテゴリ・Level・Variableなどは選び直してください。保存時には親の存在、カテゴリの所属、選択値をサーバー側で検証します。
+
 ## 登録後に取得できるもの
 
 - Leaderboard: 登録した各条件でSRCのLeaderboardを取得します。取得順位の上限は設定`leaderboardTop`です。SRCが同順位として返したRunはすべて返します。Timing Methodを指定した場合はその時間、指定しない場合はSRCのPrimary Timeを使います。
 - PB（自己ベスト）: SRCが返す公式記録を使います。Game、Category、Levelと`obsoletes === true`のVariable値で照合し、SRCのPrimary Timeと順位をそのまま使います。`obsoletes === false`のVariable、Platform、Region、Emulator、Timing Methodは照合に使いません。
+
+取得するのはGoalが指定するSRCゲームの記録だけです。同じSRC条件へ解決されるGoal間では条件別キャッシュを共有します。
 
 複数のSRCアカウントを持つプレイヤーでは、該当する公式PBの中から最速を選びます。一部の取得に失敗した場合は、部分結果だけで確定しません。
 
@@ -61,7 +69,7 @@ Category Mappingを保存するときは、SRCカテゴリが親Game MappingのS
 登録したマッピングは`categorySlug`と`goal`から具体的な問い合わせ条件へ解決されます。`resolveCategoryMapping`は次のいずれかを返します。
 
 - `resolved`: 解決できた具体的な問い合わせ条件の配列。
-- `unregistered`: Game MappingまたはCategory Mappingが未登録。
+- `unregistered`: Category Mappingが未登録。
 - `inconsistent`: Category Mappingはあるが親Game Mappingがない、または保存済みの`Any`が現在のSRC定義と整合しない。
 
 結果に`Any`は残りません。
@@ -79,21 +87,27 @@ racetime_category_slug,racetime_category_name,src_game_id,src_game_name,updated_
 `CategoryMappings`の列は次のとおりです。
 
 ```text
-racetime_category_slug,racetime_goal,src_category_id,src_category_name,src_level_id,src_variables,src_platform_id,src_region_id,src_emulator,src_timing_method,updated_at
+racetime_category_slug,racetime_goal,src_game_id,src_category_id,src_category_name,src_level_id,src_variables,src_platform_id,src_region_id,src_emulator,src_timing_method,updated_at
 ```
 
 列はヘッダー名で照合するため、順序は自由です。ただし重複した列名は検証エラーになります。キーとなる列は次のとおりです。
 
-- Game Mappingのキー: `racetime_category_slug`
+- Game Mappingのキー: `racetime_category_slug` + `src_game_id`
 - Category Mappingのキー: `racetime_category_slug` + `racetime_goal`
 
 `src_variables`はJSONオブジェクトで、Variable IDをキーに、Value IDを表す文字列または`Any`を表す`{"mode":"any"}`を持ちます。`src_emulator`は`true` / `false` / 空欄、`src_timing_method`は`realtime` / `realtime_noloads` / `ingame` / 空欄です。
+
+### 既存Spreadsheetの更新
+
+v5ではCategoryMappingsの必須列に`src_game_id`を追加しました。既存シートは手動で列を追加し、各行に対応するSRCゲームIDを入力してください。列や値がない旧形式は検証エラーになります。
+
+自動移行、旧形式の互換読み込み、ゲームIDの推測や補完は行いません。「Spreadsheetを初期化」も旧シートを書き換えず、検証エラーを返します。
 
 ## 保存の競合
 
 一覧・検索で得た`revision`と`settingsRevision`を、保存・削除時に送信します。これにより、古い画面からの上書きや、別のSpreadsheetへの誤書込みを拒否します。`expectedRevision: null`は新規登録専用です。
 
-Game MappingとCategory MappingのRevisionは独立して管理します。接続先のSpreadsheetが変わった後の古いリクエストは`settings_changed`になります。
+Game MappingのRevisionは複合キーごと、Category MappingのRevisionはslugとGoalごとに管理します。別のSRCゲームの対応だけが更新されても、そのGame MappingのRevisionは変わりません。接続先のSpreadsheetが変わった後の古いリクエストは`settings_changed`になります。
 
 ## 既知の制約
 

@@ -209,7 +209,7 @@ it("subscribes to the five RaceTime events and renders them in receive order", (
 	for (const [name, bundle] of listenFor.mock.calls) {
 		expect(bundle).toBe("racetime-integration");
 		expect(name).toMatch(
-			/^racetime\.v4\.(raceStartScheduled|raceStarted|entrantFinished|entrantFinishUndone|raceCancelled)$/,
+			/^racetime\.v5\.(raceStartScheduled|raceStarted|entrantFinished|entrantFinishUndone|raceCancelled)$/,
 		);
 	}
 	const emit = (event: string, data: unknown) => {
@@ -218,7 +218,7 @@ it("subscribes to the five RaceTime events and renders them in receive order", (
 			throw new Error(`missing ${event} handler`);
 		act(() => handler(data));
 	};
-	emit("racetime.v4.raceStartScheduled", {
+	emit("racetime.v5.raceStartScheduled", {
 		url: race.url,
 		raceId: "game/race-001",
 		startedAt: "2026-01-01T00:12:00Z",
@@ -239,22 +239,22 @@ it("subscribes to the five RaceTime events and renders them in receive order", (
 	expect(rowsFor()).toHaveLength(1);
 	expect(rowsFor()?.[0]?.textContent).toContain("raceStartScheduled");
 	expect(rowsFor()?.[0]?.textContent).not.toContain("game/race-001");
-	emit("racetime.v4.raceStarted", {
+	emit("racetime.v5.raceStarted", {
 		url: race.url,
 		raceId: "game/race-001",
 		startedAt: "2026-01-01T00:12:00Z",
 	});
-	emit("racetime.v4.entrantFinished", {
+	emit("racetime.v5.entrantFinished", {
 		url: raceTwo.url,
 		raceId: "other/race-002",
 		result: {userId: "runner1", time: "PT45M12S"},
 	});
-	emit("racetime.v4.entrantFinishUndone", {
+	emit("racetime.v5.entrantFinishUndone", {
 		url: race.url,
 		raceId: "game/race-001",
 		userId: "runner1",
 	});
-	emit("racetime.v4.raceCancelled", {
+	emit("racetime.v5.raceCancelled", {
 		url: race.url,
 		raceId: "game/race-001",
 		cancelledAt: "2026-01-01T00:47:03Z",
@@ -267,12 +267,12 @@ it("subscribes to the five RaceTime events and renders them in receive order", (
 	expect(rows?.[3]?.textContent).toContain("raceCancelled");
 	expect(rows?.[0]?.textContent).not.toContain("runner1");
 	expect(rows?.[0]?.textContent).not.toContain("other/race-002");
-	emit("racetime.v4.raceStarted", {
+	emit("racetime.v5.raceStarted", {
 		url: raceTwo.url,
 		raceId: "other/race-002",
 		startedAt: "2026-01-01T00:12:00Z",
 	});
-	emit("racetime.v4.entrantFinishUndone", {
+	emit("racetime.v5.entrantFinishUndone", {
 		url: raceTwo.url,
 		raceId: "other/race-002",
 		userId: "runner2",
@@ -308,7 +308,7 @@ it("keeps the newest 100 events independently for each race", () => {
 	render(<Overview races={racesTwo} />);
 	expect(screen.queryByRole("heading", {name: "イベントログ"})).toBeNull();
 	const handler = listenFor.mock.calls.find(
-		(call) => call[0] === "racetime.v4.raceStarted",
+		(call) => call[0] === "racetime.v5.raceStarted",
 	)?.[2];
 	if (typeof handler !== "function")
 		throw new Error("missing raceStarted handler");
@@ -355,7 +355,7 @@ it("separates event history by URL when Race IDs match across origins", () => {
 		<Overview races={{schemaVersion: 1, races: [raceState, localState]}} />,
 	);
 	const handler = listenFor.mock.calls.find(
-		(call) => call[0] === "racetime.v4.entrantFinished",
+		(call) => call[0] === "racetime.v5.entrantFinished",
 	)?.[2];
 	if (typeof handler !== "function")
 		throw new Error("missing entrantFinished handler");
@@ -395,8 +395,8 @@ it("separates event history by URL when Race IDs match across origins", () => {
 
 it("adds an unmonitored URL once and selects it after the Replicant updates", async () => {
 	sendMessage.mockImplementation(async (name: string) => {
-		if (name === "racetime.v4.getRace") return {ok: true, data: null};
-		if (name === "racetime.v4.watchRace")
+		if (name === "racetime.v5.getRace") return {ok: true, data: null};
+		if (name === "racetime.v5.watchRace")
 			return {ok: true, data: {watchId: "watch-1", state: raceState}};
 		throw new Error(`unexpected operation ${name}`);
 	});
@@ -407,8 +407,8 @@ it("adds an unmonitored URL once and selects it after the Replicant updates", as
 	fireEvent.click(screen.getByRole("button", {name: "追加"}));
 	await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
 	expect(sendMessage.mock.calls.map((call) => call[0])).toEqual([
-		"racetime.v4.getRace",
-		"racetime.v4.watchRace",
+		"racetime.v5.getRace",
+		"racetime.v5.watchRace",
 	]);
 	await waitFor(() =>
 		expect(screen.getByRole("button", {name: "追加"})).toBeTruthy(),
@@ -426,8 +426,8 @@ it("adds an unmonitored URL once and selects it after the Replicant updates", as
 it("lets a new URL be added while an earlier Replicant update is pending", async () => {
 	const base = mappingHandler({});
 	sendMessage.mockImplementation((name: string, data?: unknown) => {
-		if (name === "racetime.v4.getRace") return {ok: true, data: null};
-		if (name === "racetime.v4.watchRace") {
+		if (name === "racetime.v5.getRace") return {ok: true, data: null};
+		if (name === "racetime.v5.watchRace") {
 			const url = (data as {url: string}).url;
 			const state = url === raceB.url ? raceStateB : raceStateTwo;
 			return {ok: true, data: {watchId: `watch-${url}`, state}};
@@ -449,7 +449,7 @@ it("lets a new URL be added while an earlier Replicant update is pending", async
 	await waitFor(() =>
 		expect(
 			sendMessage.mock.calls.filter(
-				([name]) => name === "racetime.v4.watchRace",
+				([name]) => name === "racetime.v5.watchRace",
 			),
 		).toHaveLength(2),
 	);
@@ -468,8 +468,8 @@ it("keeps an explicit race selection ahead of a pending automatic selection", as
 	const base = mappingHandler({});
 	const pendingWatch = deferred<unknown>();
 	sendMessage.mockImplementation((name: string, data?: unknown) => {
-		if (name === "racetime.v4.getRace") return {ok: true, data: null};
-		if (name === "racetime.v4.watchRace") return pendingWatch.promise;
+		if (name === "racetime.v5.getRace") return {ok: true, data: null};
+		if (name === "racetime.v5.watchRace") return pendingWatch.promise;
 		return base(name, data);
 	});
 	const view = render(<Overview races={racesTwo} />);
@@ -480,7 +480,7 @@ it("keeps an explicit race selection ahead of a pending automatic selection", as
 	fireEvent.click(screen.getByRole("button", {name: "追加"}));
 	await waitFor(() =>
 		expect(
-			sendMessage.mock.calls.some(([name]) => name === "racetime.v4.watchRace"),
+			sendMessage.mock.calls.some(([name]) => name === "racetime.v5.watchRace"),
 		).toBe(true),
 	);
 	fireEvent.click(screen.getByRole("button", {name: /other\/race2/}));
@@ -515,8 +515,8 @@ it("keeps the Mapping editor and save in place while an added race is reflected"
 		},
 	});
 	sendMessage.mockImplementation((name: string, data?: unknown) => {
-		if (name === "racetime.v4.getRace") return {ok: true, data: null};
-		if (name === "racetime.v4.watchRace")
+		if (name === "racetime.v5.getRace") return {ok: true, data: null};
+		if (name === "racetime.v5.watchRace")
 			return {ok: true, data: {watchId: "watch-2", state: raceStateTwo}};
 		return base(name, data);
 	});
@@ -555,10 +555,10 @@ it("keeps the Mapping editor and save in place while an added race is reflected"
 it("invalidates a pending automatic selection when monitoring is stopped", async () => {
 	const base = mappingHandler({});
 	sendMessage.mockImplementation((name: string, data?: unknown) => {
-		if (name === "racetime.v4.getRace") return {ok: true, data: null};
-		if (name === "racetime.v4.watchRace")
+		if (name === "racetime.v5.getRace") return {ok: true, data: null};
+		if (name === "racetime.v5.watchRace")
 			return {ok: true, data: {watchId: "watch-b", state: raceStateB}};
-		if (name === "racetime.v4.forceUnwatchRace")
+		if (name === "racetime.v5.forceUnwatchRace")
 			return {ok: true, data: {released: true, releasedWatches: 1}};
 		return base(name, data);
 	});
@@ -570,7 +570,7 @@ it("invalidates a pending automatic selection when monitoring is stopped", async
 	fireEvent.click(screen.getByRole("button", {name: "追加"}));
 	await waitFor(() =>
 		expect(
-			sendMessage.mock.calls.some(([name]) => name === "racetime.v4.watchRace"),
+			sendMessage.mock.calls.some(([name]) => name === "racetime.v5.watchRace"),
 		).toBe(true),
 	);
 	await waitFor(() =>
@@ -596,14 +596,14 @@ it("selects an existing monitored URL without creating another watch", async () 
 	});
 	fireEvent.click(screen.getByRole("button", {name: "追加"}));
 	await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
-	expect(sendMessage).toHaveBeenCalledWith("racetime.v4.getRace", {
+	expect(sendMessage).toHaveBeenCalledWith("racetime.v5.getRace", {
 		url: race.url,
 	});
 	view.rerender(<Overview races={races} />);
 	expect(await screen.findByText("Game / Any%")).toBeTruthy();
 	expect(
 		sendMessage.mock.calls.filter(
-			(call) => call[0] === "racetime.v4.watchRace",
+			(call) => call[0] === "racetime.v5.watchRace",
 		),
 	).toHaveLength(0);
 });
@@ -612,7 +612,7 @@ it("does not stay busy when an existing race is removed before its lookup comple
 	const pendingLookup = deferred<unknown>();
 	const base = mappingHandler({});
 	sendMessage.mockImplementation((name: string, data?: unknown) =>
-		name === "racetime.v4.getRace" ? pendingLookup.promise : base(name, data),
+		name === "racetime.v5.getRace" ? pendingLookup.promise : base(name, data),
 	);
 	const view = render(<Overview races={races} />);
 	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
@@ -625,7 +625,7 @@ it("does not stay busy when an existing race is removed before its lookup comple
 		expect(screen.getByRole("button", {name: "追加"})).toBeTruthy(),
 	);
 	expect(
-		sendMessage.mock.calls.filter(([name]) => name === "racetime.v4.watchRace"),
+		sendMessage.mock.calls.filter(([name]) => name === "racetime.v5.watchRace"),
 	).toHaveLength(0);
 	expect(screen.getByText("レースを選択してください。")).toBeTruthy();
 });
@@ -659,8 +659,8 @@ it("prevents duplicate URL additions and preserves the current view on failure",
 it("keeps a URL monitor when switching away is canceled for a dirty mapping", async () => {
 	const base = mappingHandler({games: [], categories: []});
 	sendMessage.mockImplementation((name: string, data?: unknown) => {
-		if (name === "racetime.v4.getRace") return {ok: true, data: null};
-		if (name === "racetime.v4.watchRace")
+		if (name === "racetime.v5.getRace") return {ok: true, data: null};
+		if (name === "racetime.v5.watchRace")
 			return {ok: true, data: {watchId: "watch-2", state: raceStateTwo}};
 		return base(name, data);
 	});
@@ -674,7 +674,7 @@ it("keeps a URL monitor when switching away is canceled for a dirty mapping", as
 	});
 	fireEvent.click(screen.getByRole("button", {name: "追加"}));
 	await waitFor(() =>
-		expect(sendMessage).toHaveBeenCalledWith("racetime.v4.watchRace", {
+		expect(sendMessage).toHaveBeenCalledWith("racetime.v5.watchRace", {
 			url: raceTwo.url,
 		}),
 	);
@@ -719,7 +719,7 @@ it("shows force-release only for the selected monitored race and cancels without
 	expect(screen.queryByRole("dialog")).toBeNull();
 	expect(
 		sendMessage.mock.calls.filter(
-			([name]) => name === "racetime.v4.forceUnwatchRace",
+			([name]) => name === "racetime.v5.forceUnwatchRace",
 		),
 	).toHaveLength(0);
 });
@@ -744,7 +744,7 @@ it.each([true, false])(
 		fireEvent.click(screen.getByRole("button", {name: "監視を停止"}));
 		expect(
 			sendMessage.mock.calls.filter(
-				([name]) => name === "racetime.v4.forceUnwatchRace",
+				([name]) => name === "racetime.v5.forceUnwatchRace",
 			),
 		).toHaveLength(0);
 		expect(
@@ -758,9 +758,9 @@ it.each([true, false])(
 		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 		expect(
 			sendMessage.mock.calls.filter(
-				([name]) => name === "racetime.v4.forceUnwatchRace",
+				([name]) => name === "racetime.v5.forceUnwatchRace",
 			),
-		).toEqual([["racetime.v4.forceUnwatchRace", {url: otherRace.url}]]);
+		).toEqual([["racetime.v5.forceUnwatchRace", {url: otherRace.url}]]);
 		expect(screen.getByRole("button", {name: /game\/other/})).toBeTruthy();
 		view.rerender(<Overview races={races} />);
 		expect(screen.queryByRole("button", {name: /game\/other/})).toBeNull();
@@ -784,9 +784,9 @@ it("prevents duplicate monitor-stop submissions while the RPC is pending", async
 	expect(confirm.textContent).toBe("停止中…");
 	expect(
 		sendMessage.mock.calls.filter(
-			([name]) => name === "racetime.v4.forceUnwatchRace",
+			([name]) => name === "racetime.v5.forceUnwatchRace",
 		),
-	).toEqual([["racetime.v4.forceUnwatchRace", {url: race.url}]]);
+	).toEqual([["racetime.v5.forceUnwatchRace", {url: race.url}]]);
 	await act(async () =>
 		pending.resolve({ok: true, data: {released: true, releasedWatches: 1}}),
 	);
@@ -798,7 +798,7 @@ it("shows monitor-stop errors without removing the race and allows retry", async
 	let failNext = true;
 	const base = mappingHandler({});
 	sendMessage.mockImplementation((name: string, data?: unknown) => {
-		if (name === "racetime.v4.forceUnwatchRace") {
+		if (name === "racetime.v5.forceUnwatchRace") {
 			if (failNext) {
 				failNext = false;
 				return {
@@ -828,7 +828,7 @@ it("shows monitor-stop errors without removing the race and allows retry", async
 	await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 	expect(
 		sendMessage.mock.calls.filter(
-			([name]) => name === "racetime.v4.forceUnwatchRace",
+			([name]) => name === "racetime.v5.forceUnwatchRace",
 		),
 	).toHaveLength(2);
 });
@@ -927,6 +927,7 @@ const categoryRecord: CategoryMappingRecord = {
 	mapping: {
 		racetime: {categorySlug: "game", goal: "Any%"},
 		speedrunCom: {
+			gameId: "g1",
 			categoryId: "c1",
 			categoryName: "Any%",
 			levelId: null,
@@ -954,7 +955,7 @@ function mappingHandler(options: {
 	const categories = options.categories ?? [];
 	const settingsRevision = options.settingsRevision ?? 0;
 	return async (name: string, data?: unknown): Promise<unknown> => {
-		const operation = name.replace("racetime.v4.", "");
+		const operation = name.replace("racetime.v5.", "");
 		const payload = data as {
 			mapping?: GameMapping & CategoryMapping;
 			expectedRevision?: string | null;
@@ -1061,6 +1062,18 @@ async function openMappingEditor() {
 	fireEvent.click(screen.getByRole("button", {name: "編集"}));
 }
 
+async function chooseCategoryGame(gameId = "g1") {
+	fireEvent.change(screen.getByLabelText("SRC Game（必須）"), {
+		target: {value: gameId},
+	});
+	await waitFor(() =>
+		expect(
+			(screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement)
+				.disabled,
+		).toBe(false),
+	);
+}
+
 const updatedRace: Race = {...race, category: {...race.category, goal: "100%"}};
 const updatedRaceState: RaceState = {...raceState, race: updatedRace};
 
@@ -1097,7 +1110,7 @@ it("loads Overview Leaderboards for the selected monitored race and after Mappin
 		},
 	});
 	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
-		if (name === "racetime.v4.getSpeedrunLeaderboards") {
+		if (name === "racetime.v5.getSpeedrunLeaderboards") {
 			leaderboardRequests.push(data);
 			return {ok: true, data: {status: "unregistered", mappings: []}};
 		}
@@ -1154,7 +1167,7 @@ it("registers Game then Category mappings from Overview", async () => {
 		refresh: boolean;
 	}> = [];
 	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
-		const operation = name.replace("racetime.v4.", "");
+		const operation = name.replace("racetime.v5.", "");
 		if (operation === "getSpeedrunLeaderboards") {
 			leaderboardRequests += 1;
 			return {ok: true, data: {status: "unregistered", mappings: []}};
@@ -1212,6 +1225,7 @@ it("registers Game then Category mappings from Overview", async () => {
 	await waitFor(() => expect(bestRequests).toHaveLength(2));
 	expect(bestRequests[1]?.refresh).toBe(false);
 
+	await chooseCategoryGame();
 	const categorySelect = (await screen.findByLabelText(
 		"SRC Category（必須）",
 	)) as HTMLSelectElement;
@@ -1324,7 +1338,7 @@ it("selects Any from the Overview category editor like Mappings", async () => {
 		categories: [categoryRecord],
 	});
 	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
-		const operation = name.replace("racetime.v4.", "");
+		const operation = name.replace("racetime.v5.", "");
 		if (operation === "getSpeedrunCategoryVariables")
 			return {ok: true, data: {variables}};
 		if (operation === "saveCategoryMapping") {
@@ -1378,7 +1392,7 @@ it("removes a deleted Variable from the Overview category editor", async () => {
 		categories: [ghostCategory],
 	});
 	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
-		const operation = name.replace("racetime.v4.", "");
+		const operation = name.replace("racetime.v5.", "");
 		if (operation === "getSpeedrunCategoryVariables")
 			return {ok: true, data: {variables: []}};
 		return handler(name, data);
@@ -1426,7 +1440,7 @@ it("asks before discarding unsaved mapping edits when switching races", async ()
 	render(<Overview races={racesTwo} />);
 	const emit = (url: string, userId: string) => {
 		const handler = listenFor.mock.calls.find(
-			(call) => call[0] === "racetime.v4.entrantFinishUndone",
+			(call) => call[0] === "racetime.v5.entrantFinishUndone",
 		)?.[2];
 		if (typeof handler !== "function")
 			throw new Error("missing entrantFinishUndone handler");
@@ -1709,7 +1723,7 @@ it("keeps the timer on the latest race snapshot while mapping edits are unsaved"
 it("protects unsaved mapping edits when force-release removes the monitored race from the Replicant", async () => {
 	const base = mappingHandler({games: [], categories: []});
 	sendMessage.mockImplementation((name: string, data?: unknown) =>
-		name === "racetime.v4.forceUnwatchRace"
+		name === "racetime.v5.forceUnwatchRace"
 			? Promise.resolve({ok: true, data: {released: true, releasedWatches: 3}})
 			: base(name, data),
 	);
@@ -1839,7 +1853,7 @@ it("preserves an in-flight mapping save when force-release removes the selected 
 		},
 	});
 	sendMessage.mockImplementation((name: string, data?: unknown) =>
-		name === "racetime.v4.forceUnwatchRace"
+		name === "racetime.v5.forceUnwatchRace"
 			? Promise.resolve({ok: true, data: {released: true, releasedWatches: 1}})
 			: base(name, data),
 	);
@@ -2335,7 +2349,14 @@ it("keeps editing after Game Mapping save and closes after Category Mapping save
 	await editMappingDraft();
 	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
 	expect(await screen.findByText("Game Mappingを保存しました。")).toBeTruthy();
-	expect(screen.getByLabelText("SRC Category（必須）")).toBeTruthy();
+	expect(
+		(screen.getByLabelText("SRC Game（必須）") as HTMLSelectElement).value,
+	).toBe("");
+	expect(
+		(screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement)
+			.disabled,
+	).toBe(true);
+	await chooseCategoryGame();
 	await act(async () =>
 		fireEvent.change(screen.getByLabelText("SRC Category（必須）"), {
 			target: {value: "c1"},
@@ -2356,7 +2377,7 @@ it("keeps a successful Game Mapping save when the follow-up reload fails", async
 	const games: GameMappingRecord[] = [];
 	let saved = false;
 	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
-		const operation = name.replace("racetime.v4.", "");
+		const operation = name.replace("racetime.v5.", "");
 		if (
 			operation === "listGameMappings" ||
 			operation === "listCategoryMappings"
@@ -2467,7 +2488,7 @@ it("counts bulk stop targets and requires confirmation before the API request", 
 	fireEvent.click(within(dialog).getByRole("button", {name: "監視を停止"}));
 	await waitFor(() =>
 		expect(sendMessage).toHaveBeenCalledWith(
-			"racetime.v4.forceUnwatchClosedFinishedRaces",
+			"racetime.v5.forceUnwatchClosedFinishedRaces",
 			undefined,
 		),
 	);
@@ -2479,7 +2500,7 @@ it.each([[], ["Hard"], ["Hard", "Normal"]])(
 		const variableValues = values as string[];
 		const handler = mappingHandler({games: [], categories: []});
 		sendMessage.mockImplementation((name, data) =>
-			name === "racetime.v4.getSpeedrunPlayerBests"
+			name === "racetime.v5.getSpeedrunPlayerBests"
 				? Promise.resolve({
 						ok: true,
 						data: {
@@ -2579,6 +2600,7 @@ it("keeps Category save notification after closing even when the follow-up reloa
 	render(<Overview races={races} />);
 	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
 	await openMappingEditor();
+	await chooseCategoryGame();
 	await waitFor(() =>
 		expect(
 			(screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement)

@@ -1,6 +1,6 @@
 {
 	"name": "@nanahuse/racetime-protocol",
-	"version": "0.7.0",
+	"version": "0.8.0",
 	"description": "Public NodeCG RaceTime integration contract",
 	"license": "Apache-2.0",
 	"type": "module",

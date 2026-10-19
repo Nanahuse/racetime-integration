@@ -65,10 +65,14 @@ function inspectGameMappings(values: SpreadsheetValues): {
 				? {ok: true as const, value: conversion.mapping}
 				: conversion;
 		},
-		key: (mapping) => mapping.racetime.categorySlug.trim(),
+		key: (mapping) =>
+			JSON.stringify([
+				mapping.racetime.categorySlug.trim(),
+				mapping.speedrunCom.gameId.trim(),
+			]),
 		duplicateCode: GAME_MAPPING_ROW_ISSUE_CODES.duplicateKey,
 		duplicateMessage: (mapping, previousRow) =>
-			`Duplicate game mapping key "${mapping.racetime.categorySlug}" (also on row ${previousRow}).`,
+			`Duplicate game mapping key "${mapping.racetime.categorySlug}" + "${mapping.speedrunCom.gameId}" (also on row ${previousRow}).`,
 	});
 	return {status: result.status, issues: result.issues};
 }

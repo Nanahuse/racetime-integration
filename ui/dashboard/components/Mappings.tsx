@@ -90,6 +90,7 @@ function blankCategory(categorySlug: string): CategoryMapping {
 	return {
 		racetime: {categorySlug, goal: ""},
 		speedrunCom: {
+			gameId: "",
 			categoryId: "",
 			categoryName: "",
 			levelId: null,
@@ -120,6 +121,7 @@ function categoryForTarget(target: RaceMappingTarget): CategoryMapping {
 	return {
 		racetime: {categorySlug: target.categorySlug, goal: target.goal},
 		speedrunCom: {
+			gameId: "",
 			categoryId: "",
 			categoryName: "",
 			levelId: null,
@@ -139,11 +141,14 @@ function stringify(value: unknown): string {
 function findGame(
 	records: readonly GameMappingRecord[],
 	slug: string,
+	gameId: string,
 ): GameMappingRecord | null {
 	const key = slug.trim();
 	return (
 		records.find(
-			(record) => record.mapping.racetime.categorySlug.trim() === key,
+			(record) =>
+				record.mapping.racetime.categorySlug.trim() === key &&
+				record.mapping.speedrunCom.gameId === gameId,
 		) ?? null
 	);
 }
@@ -437,7 +442,11 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 			session
 				? reconcileGame(
 						session,
-						findGame(result.games, session.draft.racetime.categorySlug),
+						findGame(
+							result.games,
+							session.draft.racetime.categorySlug,
+							session.draft.speedrunCom.gameId,
+						),
 						result.settingsRevision,
 					)
 				: session,
@@ -458,7 +467,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		void refreshLists().catch((cause) => setListsError(errorMessage(cause)));
 	}, [refreshLists]);
 
-	const activeGameId = gameSession?.draft.speedrunCom.gameId ?? "";
+	const activeGameId = categorySession?.draft.speedrunCom.gameId ?? "";
 	useEffect(() => {
 		if (requestedOptions.current === activeGameId) return;
 		requestedOptions.current = activeGameId;
@@ -517,9 +526,18 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		};
 	};
 
-	const startGameSession = (record: GameMappingRecord | null) => {
+	const startGameSession = (
+		record: GameMappingRecord | null,
+		keepCategory = false,
+	) => {
 		searchGen.current++;
-		setCategorySession(null);
+		if (!keepCategory && mode === "race" && target)
+			setCategorySession(
+				makeCategorySession(
+					findCategoryByKey(categories, target.categorySlug, target.goal),
+				),
+			);
+		else if (!keepCategory) setCategorySession(null);
 		setSrcResults([]);
 		setSrcQuery("");
 		setMessage(null);
@@ -528,7 +546,15 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 	};
 
 	const selectGame = (record: GameMappingRecord | null) => {
-		guard(() => startGameSession(record));
+		const sameRaceTimeGame =
+			record !== null &&
+			record.mapping.racetime.categorySlug ===
+				gameSession?.draft.racetime.categorySlug;
+		const action = () => startGameSession(record, sameRaceTimeGame);
+		if (sameRaceTimeGame) {
+			if (gameDirty) setPendingAction(() => action);
+			else action();
+		} else guard(action);
 	};
 
 	const gameCategories = categories.filter(
@@ -536,8 +562,12 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 			record.mapping.racetime.categorySlug ===
 			(gameSession?.draft.racetime.categorySlug ?? ""),
 	);
-	const gameHasChildren =
-		(gameSession?.baseline ?? null) !== null && gameCategories.length > 0;
+	const registeredGames = games.filter(
+		(record) =>
+			record.mapping.racetime.categorySlug ===
+			(target?.categorySlug ?? gameSession?.draft.racetime.categorySlug),
+	);
+	const gameKeyLocked = gameSession?.baseline !== null && gameSession !== null;
 
 	const startCategorySession = (record: CategoryMappingRecord | null) => {
 		setMessage(null);
@@ -555,7 +585,13 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		setMessage(null);
 		setGameSession(
 			(session) =>
-				session ?? makeGameSession(findGame(games, target.categorySlug)),
+				session ??
+				makeGameSession(
+					games.find(
+						(record) =>
+							record.mapping.racetime.categorySlug === target.categorySlug,
+					) ?? null,
+				),
 		);
 		setCategorySession(
 			(session) =>
@@ -727,7 +763,10 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 				const key = result.record.mapping.racetime.categorySlug.trim();
 				return [
 					...current.filter(
-						(record) => record.mapping.racetime.categorySlug.trim() !== key,
+						(record) =>
+							record.mapping.racetime.categorySlug.trim() !== key ||
+							record.mapping.speedrunCom.gameId !==
+								result.record.mapping.speedrunCom.gameId,
 					),
 					result.record,
 				];
@@ -760,12 +799,28 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		try {
 			await request("deleteGameMapping", {
 				categorySlug: gameSession.draft.racetime.categorySlug,
+				gameId: gameSession.draft.speedrunCom.gameId,
 				expectedRevision: gameSession.baselineRevision,
 				settingsRevision: gameSession.settingsRevision,
 			});
 			setConfirmDelete(null);
-			startGameSession(null);
-			if (mode === "race") startCategorySession(null);
+			const remaining = games.filter(
+				(record) =>
+					record.mapping.racetime.categorySlug !==
+						gameSession.draft.racetime.categorySlug ||
+					record.mapping.speedrunCom.gameId !==
+						gameSession.draft.speedrunCom.gameId,
+			);
+			setGames(remaining);
+			setGameSession(
+				makeGameSession(
+					remaining.find(
+						(record) =>
+							record.mapping.racetime.categorySlug ===
+							gameSession.draft.racetime.categorySlug,
+					) ?? null,
+				),
+			);
 			onMappingChange?.();
 			await refreshLists();
 			setMessage("Game Mappingを削除しました。");
@@ -912,23 +967,6 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 					}
 				: session,
 		);
-		setCategorySession((session) =>
-			session
-				? {
-						...session,
-						draft: {
-							...session.draft,
-							speedrunCom: {
-								...session.draft.speedrunCom,
-								categoryId: "",
-								categoryName: "",
-								levelId: null,
-								variables: {},
-							},
-						},
-					}
-				: session,
-		);
 		setSrcResults([]);
 		setSrcQuery("");
 	};
@@ -985,8 +1023,16 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		});
 	};
 
-	const filteredGames = games.filter((record) =>
+	const matchingGames = games.filter((record) =>
 		stringify(record.mapping).toLowerCase().includes(gameQuery.toLowerCase()),
+	);
+	const filteredGames = matchingGames.filter(
+		(record, index) =>
+			matchingGames.findIndex(
+				(candidate) =>
+					candidate.mapping.racetime.categorySlug ===
+					record.mapping.racetime.categorySlug,
+			) === index,
 	);
 	const gameBlocked = gameSession !== null && gameSession.status !== "normal";
 	const categoryBlocked =
@@ -1010,9 +1056,17 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		gameSession?.status === "invalid" ||
 		categorySession?.status === "conflict" ||
 		categorySession?.status === "invalid";
-	const raceGameRecord = target ? findGame(games, target.categorySlug) : null;
 	const raceCategoryRecord = target
 		? findCategoryByKey(categories, target.categorySlug, target.goal)
+		: null;
+	const raceGameRecord = target
+		? (games.find(
+				(record) =>
+					record.mapping.racetime.categorySlug === target.categorySlug &&
+					(!raceCategoryRecord ||
+						record.mapping.speedrunCom.gameId ===
+							raceCategoryRecord.mapping.speedrunCom.gameId),
+			) ?? null)
 		: null;
 	const shownError = mode === "manage" ? (error ?? listsError) : error;
 
@@ -1074,6 +1128,10 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 					<RaceMappingSummary
 						target={target}
 						game={raceGameRecord}
+						games={games.filter(
+							(record) =>
+								record.mapping.racetime.categorySlug === target.categorySlug,
+						)}
 						category={raceCategoryRecord}
 						ready={listsReady}
 						error={listsError}
@@ -1097,6 +1155,37 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 				) : (
 					<>
 						<h2>Game Mapping</h2>
+						<div className='subpanel'>
+							<h3>登録済みSRCゲーム</h3>
+							<ul className='list horizontal'>
+								{registeredGames.map((record) => (
+									<li key={record.mapping.speedrunCom.gameId}>
+										<button
+											type='button'
+											disabled={busy || mutating}
+											onClick={() => selectGame(record)}
+										>
+											{record.mapping.speedrunCom.gameName}
+										</button>
+									</li>
+								))}
+							</ul>
+							<button
+								type='button'
+								disabled={busy || mutating}
+								onClick={() =>
+									guard(() => {
+										const next = makeGameSession(null);
+										next.draft.racetime = {...gameSession.draft.racetime};
+										next.emptyDraft.racetime = {...gameSession.draft.racetime};
+										startGameSession(null);
+										setGameSession(next);
+									})
+								}
+							>
+								SRCゲームを追加
+							</button>
+						</div>
 						{gameSession.status === "conflict" && (
 							<SessionConflict
 								label='Game Mapping'
@@ -1197,11 +1286,33 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 
 							<div className='subpanel'>
 								<h3>Speedrun.com ゲーム（手動選択）</h3>
-								{gameHasChildren && (
+								{gameKeyLocked && (
+									<Field label='SRCゲーム名（表示用）'>
+										<input
+											value={gameSession.draft.speedrunCom.gameName}
+											disabled={mutating}
+											onChange={(event) =>
+												setGameSession((session) =>
+													session
+														? {
+																...session,
+																draft: {
+																	...session.draft,
+																	speedrunCom: {
+																		...session.draft.speedrunCom,
+																		gameName: event.target.value,
+																	},
+																},
+															}
+														: session,
+												)
+											}
+										/>
+									</Field>
+								)}
+								{gameKeyLocked && (
 									<Callout tone='warning'>
-										子Category
-										Mappingが存在するためSRCゲームを変更できません。先に子Category
-										Mappingを整理してください。
+										登録済みのSRCゲームIDは変更できません。別のゲームは追加してください。
 									</Callout>
 								)}
 								<p className='muted'>
@@ -1214,7 +1325,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 									<input
 										aria-label='SRCゲーム検索'
 										placeholder='ゲーム名で検索'
-										disabled={gameHasChildren || mutating}
+										disabled={gameKeyLocked || mutating}
 										value={srcQuery}
 										onChange={(event) => setSrcQuery(event.target.value)}
 									/>
@@ -1223,7 +1334,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 										disabled={
 											busy ||
 											mutating ||
-											gameHasChildren ||
+											gameKeyLocked ||
 											srcQuery.trim() === ""
 										}
 										onClick={() => void searchGames()}
@@ -1236,7 +1347,14 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 										key={game.id}
 										type='button'
 										className='choice'
-										disabled={gameHasChildren || mutating}
+										disabled={
+											gameKeyLocked ||
+											mutating ||
+											registeredGames.some(
+												(record) =>
+													record.mapping.speedrunCom.gameId === game.id,
+											)
+										}
 										onClick={() => chooseSrcGame(game)}
 									>
 										{game.name} ({game.abbreviation})
@@ -1303,7 +1421,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 						</form>
 
 						<h2>Category Mappings</h2>
-						{gameSession.baseline === null ? (
+						{registeredGames.length === 0 ? (
 							<p className='muted'>先にGame Mappingを保存してください。</p>
 						) : (
 							<>
@@ -1326,7 +1444,13 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 												>
 													<strong>{record.mapping.racetime.goal}</strong>
 													<small>
-														{record.mapping.speedrunCom.categoryName}
+														{findGame(
+															games,
+															record.mapping.racetime.categorySlug,
+															record.mapping.speedrunCom.gameId,
+														)?.mapping.speedrunCom.gameName ??
+															record.mapping.speedrunCom.gameId}{" "}
+														/ {record.mapping.speedrunCom.categoryName}
 													</small>
 												</button>
 											</li>
@@ -1392,6 +1516,33 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 										)}
 										<CategoryEditor
 											draft={categorySession.draft}
+											games={registeredGames}
+											onGame={(gameId) => {
+												optionsGen.current++;
+												variablesGen.current++;
+												setOptions(null);
+												setOptionsFor(null);
+												setVariables([]);
+												setVariablesFor(null);
+												requestedOptions.current = null;
+												requestedVariables.current = null;
+												setCategorySession((session) =>
+													session
+														? {
+																...session,
+																draft: {
+																	...session.draft,
+																	speedrunCom: {
+																		...blankCategory(
+																			session.draft.racetime.categorySlug,
+																		).speedrunCom,
+																		gameId,
+																	},
+																},
+															}
+														: session,
+												);
+											}}
 											options={options}
 											variables={variables}
 											busy={busy}
@@ -1401,7 +1552,15 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 											confirmDelete={confirmDelete === "category"}
 											missingPbVariable={missingPbVariable}
 											variablesReady={variablesReady}
-											optionsReady={optionsReady}
+											optionsReady={
+												optionsReady &&
+												!!categorySession.draft.speedrunCom.gameId &&
+												registeredGames.some(
+													(record) =>
+														record.mapping.speedrunCom.gameId ===
+														categorySession.draft.speedrunCom.gameId,
+												)
+											}
 											blocked={categoryBlocked}
 											goalLocked={mode === "race"}
 											onField={setCategoryField}
@@ -1506,6 +1665,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 function RaceMappingSummary({
 	target,
 	game,
+	games,
 	category,
 	ready,
 	error,
@@ -1516,6 +1676,7 @@ function RaceMappingSummary({
 }: {
 	target: RaceMappingTarget;
 	game: GameMappingRecord | null;
+	games: GameMappingRecord[];
 	category: CategoryMappingRecord | null;
 	ready: boolean;
 	error: string | null;
@@ -1529,8 +1690,8 @@ function RaceMappingSummary({
 	const pending = !ready || error !== null;
 	const gameLabel = pending
 		? "—"
-		: game
-			? `登録済み: ${game.mapping.speedrunCom.gameName}`
+		: games.length > 0
+			? `登録済み: ${games.map((record) => record.mapping.speedrunCom.gameName).join(" / ")}`
 			: "未登録";
 	const categoryLabel = pending
 		? "—"
@@ -1647,6 +1808,8 @@ function SessionConflict({
 
 function CategoryEditor({
 	draft,
+	games,
+	onGame,
 	options,
 	variables,
 	busy,
@@ -1670,6 +1833,8 @@ function CategoryEditor({
 	onDeleteCancel,
 }: {
 	draft: CategoryMapping;
+	games: GameMappingRecord[];
+	onGame: (gameId: string) => void;
 	options: SpeedrunGameOptions | null;
 	variables: SpeedrunVariableOption[];
 	busy: boolean;
@@ -1744,6 +1909,23 @@ function CategoryEditor({
 					一意キーの変更はできません。変更する場合は削除して新規登録してください。
 				</p>
 			)}
+			<Field label='SRC Game（必須）'>
+				<select
+					value={draft.speedrunCom.gameId}
+					disabled={disabled || busy}
+					onChange={(event) => onGame(event.target.value)}
+				>
+					<option value=''>選択してください</option>
+					{games.map((record) => (
+						<option
+							key={record.mapping.speedrunCom.gameId}
+							value={record.mapping.speedrunCom.gameId}
+						>
+							{record.mapping.speedrunCom.gameName}
+						</option>
+					))}
+				</select>
+			</Field>
 			<Field label='SRC Category（必須）'>
 				<select
 					value={draft.speedrunCom.categoryId}

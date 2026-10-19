@@ -43,7 +43,7 @@ beforeEach(() => {
 		data: {ready: true, error: null},
 	});
 	sendMessage.mockImplementation(async (name: string) => {
-		const operation = name.replace("racetime.v4.", "");
+		const operation = name.replace("racetime.v5.", "");
 		switch (operation) {
 			case "listGameMappings":
 				return {ok: true, data: {records: [gameRecord], settingsRevision: 0}};
@@ -170,7 +170,7 @@ it("switches tabs without prompting when there are no unsaved edits", async () =
 it("cannot discard edits to switch tabs while a mapping save is in progress", async () => {
 	let finishSave: (() => void) | null = null;
 	sendMessage.mockImplementation(async (name: string) => {
-		const operation = name.replace("racetime.v4.", "");
+		const operation = name.replace("racetime.v5.", "");
 		switch (operation) {
 			case "listGameMappings":
 				return {ok: true, data: {records: [gameRecord], settingsRevision: 0}};

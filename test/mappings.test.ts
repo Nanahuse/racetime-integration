@@ -14,7 +14,7 @@ import {CATEGORY_MAPPING_SHEET_COLUMNS} from "../src/integrations/spreadsheet/ca
 import type {SpreadsheetClient} from "../src/integrations/spreadsheet/client";
 import {GAME_MAPPING_SHEET_COLUMNS} from "../src/integrations/spreadsheet/game-mappings-row";
 import {MappingService, type MappingsRepository} from "../src/mappings";
-import {gameMapping, mapping} from "./fixtures";
+import {deferred, gameMapping, mapping} from "./fixtures";
 
 type Stored<T> = {mapping: T; revision: string};
 
@@ -30,15 +30,15 @@ function memoryRepository() {
 	});
 	const repository: MappingsRepository = {
 		games: {
-			async find(categorySlug): Promise<GameMappingRecord | null> {
-				const record = games.get(key(categorySlug));
+			async find(categorySlug, gameId): Promise<GameMappingRecord | null> {
+				const record = games.get(key(categorySlug, gameId));
 				return record ? clone(record) : null;
 			},
 			async list(): Promise<GameMappingRecord[]> {
 				return [...games.values()].map(clone);
 			},
 			async save(next, expected) {
-				const k = key(next.racetime.categorySlug);
+				const k = key(next.racetime.categorySlug, next.speedrunCom.gameId);
 				const existing = games.get(k);
 				if ((existing?.revision ?? null) !== expected)
 					throw new IntegrationError("mapping_conflict", "conflict");
@@ -49,8 +49,8 @@ function memoryRepository() {
 					action: existing ? "updated" : "created",
 				};
 			},
-			async delete(categorySlug, expected) {
-				const k = key(categorySlug);
+			async delete(categorySlug, gameId, expected) {
+				const k = key(categorySlug, gameId);
 				const existing = games.get(k);
 				if (!existing || existing.revision !== expected)
 					throw new IntegrationError("mapping_conflict", "conflict");
@@ -142,8 +142,9 @@ function setup(
 				values: [{id: "normal", label: "Normal"}],
 			},
 		]),
-		getCategoryGameId: vi.fn(async (categoryId: string) =>
-			categoryId === "c1" ? "g1" : "other",
+		getCategoryGameId: vi.fn(
+			async (categoryId: string): Promise<string> =>
+				categoryId === "c1" ? "g1" : "other",
 		),
 	};
 	const api = createAPI(
@@ -208,7 +209,7 @@ it("exposes Game Mapping CRUD through the public API with conflict detection", a
 		},
 	});
 	expect(
-		await api.request("findGameMapping", {categorySlug: "game"}),
+		await api.request("findGameMapping", {categorySlug: "game", gameId: "g1"}),
 	).toMatchObject({
 		ok: true,
 		data: {record: {mapping: gameMapping}},
@@ -222,6 +223,7 @@ it("exposes Game Mapping CRUD through the public API with conflict detection", a
 	expect(
 		await api.request("deleteGameMapping", {
 			categorySlug: "game",
+			gameId: "g1",
 			expectedRevision: "wrong",
 			settingsRevision: 0,
 		}),
@@ -456,6 +458,7 @@ it("guards child category mappings when changing or deleting the parent game", a
 	expect(
 		await api.request("deleteGameMapping", {
 			categorySlug: "game",
+			gameId: "g1",
 			expectedRevision: revision,
 			settingsRevision: 0,
 		}),
@@ -468,7 +471,7 @@ it("guards child category mappings when changing or deleting the parent game", a
 			expectedRevision: revision,
 			settingsRevision: 0,
 		}),
-	).toMatchObject({ok: false, error: {code: "game_mapping_conflict"}});
+	).toMatchObject({ok: false, error: {code: "mapping_conflict"}});
 	const nameOnly = structuredClone(gameMapping);
 	nameOnly.racetime.categoryName = "Renamed";
 	expect(
@@ -948,4 +951,265 @@ it("rejects invalid expansion limits through the API", async () => {
 			}),
 		).toMatchObject({ok: false, error: {code: "invalid_input"}});
 	}
+});
+
+async function addGame(
+	api: ReturnType<typeof setup>["api"],
+	gameId: string,
+	categorySlug = "game",
+) {
+	const result = await api.request("saveGameMapping", {
+		mapping: {
+			racetime: {...gameMapping.racetime, categorySlug},
+			speedrunCom: {gameId, gameName: gameId},
+		},
+		expectedRevision: null,
+		settingsRevision: 0,
+	});
+	if (!result.ok) throw new Error(result.error.message);
+	return result.data.record;
+}
+
+it("supports multiple parent games and shared SRC games with independent revisions", async () => {
+	const {api} = setup();
+	const first = await addGame(api, "g1");
+	const second = await addGame(api, "g2");
+	await addGame(api, "g1", "other");
+	const list = await api.request("listGameMappings", undefined);
+	expect(list).toMatchObject({ok: true, data: {records: expect.any(Array)}});
+	if (!list.ok) throw new Error("list failed");
+	expect(list.data.records).toHaveLength(3);
+	expect(
+		await api.request("saveGameMapping", {
+			mapping: first.mapping,
+			expectedRevision: null,
+			settingsRevision: 0,
+		}),
+	).toMatchObject({ok: false, error: {code: "mapping_conflict"}});
+	expect(
+		await api.request("saveGameMapping", {
+			mapping: {
+				...second.mapping,
+				speedrunCom: {...second.mapping.speedrunCom, gameName: "Renamed"},
+			},
+			expectedRevision: second.revision,
+			settingsRevision: 0,
+		}),
+	).toMatchObject({ok: true});
+	expect(
+		await api.request("saveGameMapping", {
+			mapping: {
+				...first.mapping,
+				speedrunCom: {...first.mapping.speedrunCom, gameName: "Also renamed"},
+			},
+			expectedRevision: first.revision,
+			settingsRevision: 0,
+		}),
+	).toMatchObject({ok: true});
+	expect(
+		await api.request("findGameMapping", {categorySlug: "game", gameId: "g2"}),
+	).toMatchObject({
+		ok: true,
+		data: {record: {mapping: {speedrunCom: {gameName: "Renamed"}}}},
+	});
+});
+
+it("deletes only the specified parent and protects exactly the children referencing it", async () => {
+	const {api} = setup();
+	const first = await addGame(api, "g1");
+	const second = await addGame(api, "g2");
+	expect(
+		await api.request("saveCategoryMapping", {
+			mapping,
+			expectedRevision: null,
+			settingsRevision: 0,
+		}),
+	).toMatchObject({ok: true});
+	expect(
+		await api.request("deleteGameMapping", {
+			categorySlug: "game",
+			gameId: "g2",
+			expectedRevision: second.revision,
+			settingsRevision: 0,
+		}),
+	).toMatchObject({ok: true});
+	expect(
+		await api.request("deleteGameMapping", {
+			categorySlug: "game",
+			gameId: "g1",
+			expectedRevision: first.revision,
+			settingsRevision: 0,
+		}),
+	).toMatchObject({ok: false, error: {code: "game_mapping_conflict"}});
+});
+
+it("resolves Goal aliases to the same conditions and updates a Goal to another registered game", async () => {
+	const {api, speedrun} = setup();
+	await addGame(api, "g1");
+	await addGame(api, "g2");
+	speedrun.getCategoryGameId.mockImplementation(async (id) =>
+		id === "c2" ? "g2" : "g1",
+	);
+	const saved = await api.request("saveCategoryMapping", {
+		mapping,
+		expectedRevision: null,
+		settingsRevision: 0,
+	});
+	expect(saved.ok).toBe(true);
+	const alias = {
+		...mapping,
+		racetime: {...mapping.racetime, goal: "Any Percent"},
+	};
+	expect(
+		await api.request("saveCategoryMapping", {
+			mapping: alias,
+			expectedRevision: null,
+			settingsRevision: 0,
+		}),
+	).toMatchObject({ok: true});
+	const original = await api.request("resolveCategoryMapping", {
+		categorySlug: "game",
+		goal: "Any%",
+	});
+	expect(
+		await api.request("resolveCategoryMapping", {
+			categorySlug: "game",
+			goal: "Any Percent",
+		}),
+	).toEqual(original);
+	expect(
+		await api.request("saveCategoryMapping", {
+			mapping: alias,
+			expectedRevision: null,
+			settingsRevision: 0,
+		}),
+	).toMatchObject({ok: false, error: {code: "mapping_conflict"}});
+	if (!saved.ok) throw new Error("save failed");
+	const changed = {
+		...mapping,
+		speedrunCom: {...mapping.speedrunCom, gameId: "g2", categoryId: "c2"},
+	};
+	expect(
+		await api.request("saveCategoryMapping", {
+			mapping: changed,
+			expectedRevision: saved.data.record.revision,
+			settingsRevision: 0,
+		}),
+	).toMatchObject({ok: true});
+	expect(
+		await api.request("resolveCategoryMapping", {
+			categorySlug: "game",
+			goal: "Any%",
+		}),
+	).toMatchObject({
+		ok: true,
+		data: {
+			status: "resolved",
+			mappings: [{game: {gameId: "g2"}, category: {categoryId: "c2"}}],
+		},
+	});
+});
+
+it("rejects unregistered game references, missing game IDs and stale condition fields", async () => {
+	const {api} = setup();
+	await addGame(api, "g1");
+	for (const gameId of ["g2", "", null, undefined]) {
+		const result = await api.request("saveCategoryMapping", {
+			mapping: {
+				...mapping,
+				speedrunCom: {...mapping.speedrunCom, gameId},
+			} as CategoryMapping,
+			expectedRevision: null,
+			settingsRevision: 0,
+		});
+		expect(result).toMatchObject({
+			ok: false,
+			error: {code: gameId === "g2" ? "game_mapping_missing" : "invalid_input"},
+		});
+	}
+	for (const field of [
+		"levelId",
+		"platformId",
+		"regionId",
+		"timingMethod",
+	] as const) {
+		expect(
+			await api.request("saveCategoryMapping", {
+				mapping: {
+					...mapping,
+					speedrunCom: {...mapping.speedrunCom, [field]: "obsolete"},
+				},
+				expectedRevision: null,
+				settingsRevision: 0,
+			}),
+		).toMatchObject({ok: false, error: {code: "invalid_input"}});
+	}
+});
+
+it("reports an orphaned composite parent as inconsistent even when another game is registered", async () => {
+	const {api, service, memory} = setup();
+	const record = await addGame(api, "g1");
+	await addGame(api, "g2");
+	await api.request("saveCategoryMapping", {
+		mapping,
+		expectedRevision: null,
+		settingsRevision: 0,
+	});
+	await memory.repository.games.delete("game", "g1", record.revision);
+	expect(await service.resolveSource("game", "Any%")).toMatchObject({
+		status: "inconsistent",
+	});
+	expect(await service.resolveSource("game", "Any Percent")).toEqual({
+		status: "unregistered",
+	});
+});
+
+it("serializes category validation and deletion so a new child cannot lose its parent", async () => {
+	const {api, speedrun} = setup();
+	const parent = await addGame(api, "g1");
+	const validating = deferred<void>();
+	const finish = deferred<void>();
+	speedrun.getCategoryGameId.mockImplementation(async () => {
+		validating.resolve();
+		await finish.promise;
+		return "g1";
+	});
+	const saving = api.request("saveCategoryMapping", {
+		mapping,
+		expectedRevision: null,
+		settingsRevision: 0,
+	});
+	await validating.promise;
+	const deleting = api.request("deleteGameMapping", {
+		categorySlug: "game",
+		gameId: "g1",
+		expectedRevision: parent.revision,
+		settingsRevision: 0,
+	});
+	finish.resolve();
+	expect(await saving).toMatchObject({ok: true});
+	expect(await deleting).toMatchObject({
+		ok: false,
+		error: {code: "game_mapping_conflict"},
+	});
+	expect(
+		await api.request("resolveCategoryMapping", {
+			categorySlug: "game",
+			goal: "Any%",
+		}),
+	).toMatchObject({ok: true, data: {status: "resolved"}});
+});
+it("requires both parts of the Game Mapping key in v5 lookup and delete requests", async () => {
+	const {api} = setup();
+	const parent = await addGame(api, "g1");
+	expect(
+		await api.request("findGameMapping", {categorySlug: "game"} as never),
+	).toMatchObject({ok: false, error: {code: "invalid_input"}});
+	expect(
+		await api.request("deleteGameMapping", {
+			categorySlug: "game",
+			expectedRevision: parent.revision,
+			settingsRevision: 0,
+		} as never),
+	).toMatchObject({ok: false, error: {code: "invalid_input"}});
 });

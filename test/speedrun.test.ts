@@ -359,6 +359,7 @@ it("validates the SRC category against the game resolved from the game link", as
 	const owned: CategoryMapping = {
 		racetime: {categorySlug: "game", goal: "Any%"},
 		speedrunCom: {
+			gameId: "g1",
 			categoryId: "c1",
 			categoryName: "Any%",
 			levelId: null,

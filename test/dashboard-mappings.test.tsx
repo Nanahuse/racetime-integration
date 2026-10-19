@@ -12,7 +12,7 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import {afterEach, beforeEach, expect, it, vi} from "vitest";
-import {Mappings} from "../ui/dashboard/components/Mappings";
+import {Mappings, MappingWorkspace} from "../ui/dashboard/components/Mappings";
 
 type Envelope =
 	| {ok: true; data: unknown}
@@ -36,6 +36,7 @@ const childRecord: CategoryMappingRecord = {
 	mapping: {
 		racetime: {categorySlug: "game", goal: "Any%"},
 		speedrunCom: {
+			gameId: "g1",
 			categoryId: "c1",
 			categoryName: "Any%",
 			levelId: null,
@@ -76,7 +77,7 @@ beforeEach(() => {
 		data: {record: childRecord, action: "created", settingsRevision: 0},
 	});
 	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
-		const operation = name.replace("racetime.v4.", "");
+		const operation = name.replace("racetime.v5.", "");
 		switch (operation) {
 			case "listGameMappings":
 				return {
@@ -160,10 +161,10 @@ it("keeps a saved Game Mapping unique key read-only", async () => {
 	);
 	expect(
 		(screen.getByLabelText("SRCゲーム検索") as HTMLInputElement).disabled,
-	).toBe(false);
+	).toBe(true);
 });
 
-it("disables SRC game selection while child category mappings exist", async () => {
+it("keeps SRC game IDs immutable even when children exist", async () => {
 	games = [gameRecord];
 	categories = [childRecord];
 	render(<Mappings />);
@@ -173,7 +174,9 @@ it("disables SRC game selection while child category mappings exist", async () =
 			(screen.getByLabelText("SRCゲーム検索") as HTMLInputElement).disabled,
 		).toBe(true),
 	);
-	expect(screen.getByText(/子Category Mappingが存在するため/)).toBeTruthy();
+	expect(
+		screen.getByText(/登録済みのSRCゲームIDは変更できません/),
+	).toBeTruthy();
 });
 
 async function selectFirstGame() {
@@ -194,6 +197,9 @@ async function openNewCategory() {
 	const button = await screen.findByRole("button", {name: /新規 Goal/});
 	await act(async () => {
 		fireEvent.click(button);
+	});
+	fireEvent.change(screen.getByLabelText("SRC Game（必須）"), {
+		target: {value: "g1"},
 	});
 	await waitFor(() =>
 		expect(
@@ -337,6 +343,15 @@ it("prevents overwriting a record that was deleted on the server", async () => {
 });
 
 it("detects a conflict when a new mapping's key was created elsewhere", async () => {
+	const handler = sendMessage.getMockImplementation()!;
+	sendMessage.mockImplementation((name: string, data?: unknown) =>
+		name === "racetime.v5.searchSpeedrunGames"
+			? Promise.resolve({
+					ok: true,
+					data: {games: [{id: "g1", name: "SRC Game", abbreviation: "S"}]},
+				})
+			: handler(name, data),
+	);
 	render(<Mappings />);
 	await openNewGame();
 	fireEvent.change(
@@ -348,6 +363,11 @@ it("detects a conflict when a new mapping's key was created elsewhere", async ()
 	fireEvent.change(screen.getByLabelText("RaceTime category name（表示用）"), {
 		target: {value: "New Game"},
 	});
+	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
+		target: {value: "SRC"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "検索"}));
+	fireEvent.click(await screen.findByRole("button", {name: "SRC Game (S)"}));
 	games = [gameRecord];
 	saveGame = () => ({
 		ok: false,
@@ -382,7 +402,7 @@ it("resets the edit session after the spreadsheet destination changed", async ()
 
 it("refuses to mix Game and Category data from different settings revisions", async () => {
 	sendMessage.mockImplementation(async (name: string) => {
-		const operation = name.replace("racetime.v4.", "");
+		const operation = name.replace("racetime.v5.", "");
 		if (operation === "listGameMappings")
 			return {ok: true, data: {records: [gameRecord], settingsRevision: 0}};
 		if (operation === "listCategoryMappings")
@@ -473,7 +493,7 @@ it("offers Any only for eligible variables and submits it", async () => {
 	fireEvent.click(screen.getByRole("button", {name: /Category Mappingを保存/}));
 	const call = await waitFor(() => {
 		const found = sendMessage.mock.calls.find(
-			([name]) => name === "racetime.v4.saveCategoryMapping",
+			([name]) => name === "racetime.v5.saveCategoryMapping",
 		);
 		expect(found).toBeTruthy();
 		return found;
@@ -565,7 +585,7 @@ it("allows saving without a mandatory non-obsoleting variable", async () => {
 	fireEvent.click(save);
 	const call = await waitFor(() => {
 		const found = sendMessage.mock.calls.find(
-			([name]) => name === "racetime.v4.saveCategoryMapping",
+			([name]) => name === "racetime.v5.saveCategoryMapping",
 		);
 		expect(found).toBeTruthy();
 		return found;
@@ -855,5 +875,358 @@ it.each([
 			expect(screen.getByText(/Game Mappingを選択するか/)).toBeTruthy();
 		}
 		expect(screen.queryByText(/他の変更と競合しました/)).toBeNull();
+	},
+);
+
+const secondGame: GameMappingRecord = {
+	mapping: {
+		...gameRecord.mapping,
+		speedrunCom: {gameId: "g2", gameName: "Second SRC"},
+	},
+	revision: "g2r",
+};
+
+async function openMappingMode(mode: "manage" | "race") {
+	if (mode === "manage") {
+		render(<Mappings />);
+		await selectFirstGame();
+	} else {
+		render(
+			<MappingWorkspace
+				mode='race'
+				target={{categorySlug: "game", categoryName: "Game One", goal: "Any%"}}
+			/>,
+		);
+		await waitFor(() =>
+			expect(
+				(screen.getByRole("button", {name: "編集"}) as HTMLButtonElement)
+					.disabled,
+			).toBe(false),
+		);
+		fireEvent.click(screen.getByRole("button", {name: "編集"}));
+	}
+}
+
+it.each(["manage", "race"] as const)(
+	"adds and deletes one of several SRC games from %s",
+	async (mode) => {
+		games = [gameRecord];
+		categories = [childRecord];
+		const handler = sendMessage.getMockImplementation()!;
+		sendMessage.mockImplementation(async (name: string, data?: unknown) => {
+			if (name === "racetime.v5.searchSpeedrunGames")
+				return {
+					ok: true,
+					data: {
+						games: [
+							{id: "g1", name: "Duplicate", abbreviation: "D"},
+							{id: "g2", name: "Second SRC", abbreviation: "S"},
+						],
+					},
+				};
+			if (name === "racetime.v5.saveGameMapping") {
+				const mapping = (data as {mapping: GameMappingRecord["mapping"]})
+					.mapping;
+				const record = {mapping, revision: "g2r"};
+				games = [...games, record];
+				return {
+					ok: true,
+					data: {record, action: "created", settingsRevision: 0},
+				};
+			}
+			if (name === "racetime.v5.deleteGameMapping") {
+				expect(data).toMatchObject({
+					categorySlug: "game",
+					gameId: "g2",
+					expectedRevision: "g2r",
+				});
+				games = games.filter(
+					(record) => record.mapping.speedrunCom.gameId !== "g2",
+				);
+				return {ok: true, data: {deleted: true, settingsRevision: 0}};
+			}
+			return handler(name, data);
+		});
+		await openMappingMode(mode);
+		fireEvent.click(screen.getByRole("button", {name: "SRCゲームを追加"}));
+		fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
+			target: {value: "SRC"},
+		});
+		fireEvent.click(screen.getByRole("button", {name: "検索"}));
+		expect(
+			(
+				(await screen.findByRole("button", {
+					name: "Duplicate (D)",
+				})) as HTMLButtonElement
+			).disabled,
+		).toBe(true);
+		fireEvent.click(screen.getByRole("button", {name: "Second SRC (S)"}));
+		fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+		expect(
+			await screen.findByText("Game Mappingを保存しました。"),
+		).toBeTruthy();
+		expect(
+			await screen.findByRole("button", {name: "Second SRC"}),
+		).toBeTruthy();
+		expect(screen.getByRole("button", {name: "SRC Game"})).toBeTruthy();
+		fireEvent.click(screen.getAllByRole("button", {name: "削除"})[0]!);
+		fireEvent.click(screen.getByRole("button", {name: "削除を確定"}));
+		expect(
+			await screen.findByText("Game Mappingを削除しました。"),
+		).toBeTruthy();
+		expect(screen.queryByRole("button", {name: "Second SRC"})).toBeNull();
+		expect(screen.getByRole("button", {name: "SRC Game"})).toBeTruthy();
+	},
+);
+
+it.each(["manage", "race"] as const)(
+	"clears game-dependent Goal conditions and preserves its revision in %s",
+	async (mode) => {
+		games = [gameRecord, secondGame];
+		categories = [
+			{
+				...childRecord,
+				mapping: {
+					...childRecord.mapping,
+					speedrunCom: {
+						...childRecord.mapping.speedrunCom,
+						levelId: "l1",
+						variables: {old: "one"},
+						platformId: "p1",
+						regionId: "r1",
+						emulator: true,
+						timingMethod: "realtime",
+					},
+				},
+			},
+		];
+		variablesByCategory = {
+			c1: [
+				{
+					id: "old",
+					name: "Old Variable",
+					mandatory: false,
+					obsoletes: false,
+					userDefined: false,
+					values: [{id: "one", label: "One"}],
+				},
+			],
+		};
+		const handler = sendMessage.getMockImplementation()!;
+		sendMessage.mockImplementation(async (name: string, data?: unknown) => {
+			const result = (await handler(name, data)) as {
+				ok: true;
+				data: Record<string, unknown>;
+			};
+			if (
+				name === "racetime.v5.getSpeedrunGameOptions" &&
+				(data as {gameId: string}).gameId === "g2"
+			)
+				return {
+					...result,
+					data: {
+						...result.data,
+						categories: [
+							{
+								id: "c2",
+								name: "Second Category",
+								type: "per-level",
+								miscellaneous: false,
+							},
+						],
+						levels: [{id: "l2", name: "Second Level"}],
+					},
+				};
+			return result;
+		});
+		await openMappingMode(mode);
+		if (mode === "manage")
+			fireEvent.click(
+				await screen.findByRole("button", {name: /Any%.*SRC Game/}),
+			);
+		expect(await screen.findByText("Old Variable")).toBeTruthy();
+		const gameSelect = screen.getByLabelText(
+			"SRC Game（必須）",
+		) as HTMLSelectElement;
+		expect(Array.from(gameSelect.options, (option) => option.value)).toEqual([
+			"",
+			"g1",
+			"g2",
+		]);
+		fireEvent.change(gameSelect, {target: {value: "g2"}});
+		await screen.findByRole("option", {name: /Second Category/});
+		expect(
+			(screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement)
+				.value,
+		).toBe("");
+		expect(screen.queryByLabelText("Level")).toBeNull();
+		expect(screen.queryByText("Old Variable")).toBeNull();
+		for (const field of ["Platform", "Region", "Emulator", "Timing Method"])
+			expect((screen.getByLabelText(field) as HTMLSelectElement).value).toBe(
+				field === "Emulator" ? "any" : "",
+			);
+		fireEvent.click(screen.getAllByRole("button", {name: "Revert"})[1]!);
+		expect(await screen.findByText("Old Variable")).toBeTruthy();
+		expect(
+			(screen.getByLabelText("SRC Game（必須）") as HTMLSelectElement).value,
+		).toBe("g1");
+		expect((screen.getByLabelText("Level") as HTMLSelectElement).value).toBe(
+			"l1",
+		);
+		fireEvent.change(screen.getByLabelText("SRC Game（必須）"), {
+			target: {value: "g2"},
+		});
+		await screen.findByRole("option", {name: /Second Category/});
+		fireEvent.change(screen.getByLabelText("SRC Category（必須）"), {
+			target: {value: "c2"},
+		});
+		await screen.findByText("このカテゴリにVariablesはありません。");
+		expect((screen.getByLabelText("Level") as HTMLSelectElement).value).toBe(
+			"",
+		);
+		fireEvent.click(
+			screen.getByRole("button", {name: /Category Mappingを保存/}),
+		);
+		await waitFor(() =>
+			expect(sendMessage).toHaveBeenCalledWith(
+				"racetime.v5.saveCategoryMapping",
+				expect.objectContaining({
+					expectedRevision: "c1r",
+					mapping: expect.objectContaining({
+						racetime: {categorySlug: "game", goal: "Any%"},
+						speedrunCom: {
+							gameId: "g2",
+							categoryId: "c2",
+							categoryName: "Second Category",
+							levelId: null,
+							variables: {},
+							platformId: null,
+							regionId: null,
+							emulator: null,
+							timingMethod: null,
+						},
+					}),
+				}),
+			),
+		);
+	},
+);
+
+it("lists every Goal alias with its SRC game and category name", async () => {
+	games = [gameRecord, secondGame];
+	categories = [
+		childRecord,
+		{
+			...childRecord,
+			mapping: {
+				...childRecord.mapping,
+				racetime: {...childRecord.mapping.racetime, goal: "Any Percent"},
+			},
+		},
+		{
+			...childRecord,
+			mapping: {
+				...childRecord.mapping,
+				racetime: {...childRecord.mapping.racetime, goal: "All Stages"},
+				speedrunCom: {
+					...childRecord.mapping.speedrunCom,
+					gameId: "g2",
+					categoryId: "c2",
+					categoryName: "Stages",
+				},
+			},
+		},
+	];
+	render(<Mappings />);
+	await selectFirstGame();
+	expect(
+		screen.getByRole("button", {name: /Any%.*SRC Game.*Any%/}),
+	).toBeTruthy();
+	expect(
+		screen.getByRole("button", {name: /Any Percent.*SRC Game.*Any%/}),
+	).toBeTruthy();
+	expect(
+		screen.getByRole("button", {name: /All Stages.*Second SRC.*Stages/}),
+	).toBeTruthy();
+	expect(screen.getAllByText("Game One", {selector: "strong"})).toHaveLength(1);
+});
+
+it.each([
+	{mode: "manage", multiple: false},
+	{mode: "manage", multiple: true},
+	{mode: "race", multiple: false},
+	{mode: "race", multiple: true},
+] as const)(
+	"requires explicit SRC game selection for a new Goal in $mode with multiple=$multiple",
+	async ({mode, multiple}) => {
+		games = multiple ? [gameRecord, secondGame] : [gameRecord];
+		await openMappingMode(mode);
+		if (mode === "manage")
+			fireEvent.click(screen.getByRole("button", {name: /新規 Goal/}));
+		const gameSelect = () =>
+			screen.getByLabelText("SRC Game（必須）") as HTMLSelectElement;
+		const categorySelect = () =>
+			screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement;
+		expect(gameSelect().value).toBe("");
+		expect(categorySelect().disabled).toBe(true);
+		expect(
+			sendMessage.mock.calls.filter(
+				([name]) => name === "racetime.v5.getSpeedrunGameOptions",
+			),
+		).toHaveLength(0);
+		fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+		expect(
+			await screen.findByText("Game Mappingを保存しました。"),
+		).toBeTruthy();
+		expect(gameSelect().value).toBe("");
+		expect(categorySelect().disabled).toBe(true);
+		fireEvent.click(
+			screen.getByRole("button", {name: multiple ? "Second SRC" : "SRC Game"}),
+		);
+		expect(gameSelect().value).toBe("");
+		expect(categorySelect().disabled).toBe(true);
+		const gameId = multiple ? "g2" : "g1";
+		fireEvent.change(gameSelect(), {target: {value: gameId}});
+		await waitFor(() => expect(categorySelect().disabled).toBe(false));
+		expect(sendMessage).toHaveBeenCalledWith(
+			"racetime.v5.getSpeedrunGameOptions",
+			{gameId},
+		);
+		fireEvent.change(categorySelect(), {target: {value: "c1"}});
+		await screen.findByText("このカテゴリにVariablesはありません。");
+		fireEvent.click(screen.getByRole("button", {name: "SRC Game"}));
+		expect(gameSelect().value).toBe(gameId);
+		expect(categorySelect().value).toBe("c1");
+		expect(screen.queryByText(/未保存の変更があります/)).toBeNull();
+	},
+);
+
+it.each(["manage", "race"] as const)(
+	"uses the saved Goal's SRC game independently of the Game Mapping being edited in %s",
+	async (mode) => {
+		games = [gameRecord, secondGame];
+		categories = [
+			{
+				...childRecord,
+				mapping: {
+					...childRecord.mapping,
+					speedrunCom: {...childRecord.mapping.speedrunCom, gameId: "g2"},
+				},
+			},
+		];
+		await openMappingMode(mode);
+		if (mode === "manage")
+			fireEvent.click(screen.getByRole("button", {name: /Any%.*Second SRC/}));
+		const gameSelect = () =>
+			screen.getByLabelText("SRC Game（必須）") as HTMLSelectElement;
+		const categorySelect = () =>
+			screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement;
+		expect(gameSelect().value).toBe("g2");
+		await waitFor(() => expect(categorySelect().disabled).toBe(false));
+		expect(categorySelect().value).toBe("c1");
+		fireEvent.click(screen.getByRole("button", {name: "Second SRC"}));
+		fireEvent.click(screen.getByRole("button", {name: "SRC Game"}));
+		expect(gameSelect().value).toBe("g2");
+		expect(categorySelect().value).toBe("c1");
 	},
 );

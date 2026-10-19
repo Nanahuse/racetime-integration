@@ -152,9 +152,11 @@ it("round-trips Any and concrete variable selections through src_variables", asy
 		difficulty: "normal",
 	};
 	const created = await repository.save(withAny, null);
-	expect(store.get("Category'Mappings")![1]![5]).toBe(
-		'{"ruleset":{"mode":"any"},"difficulty":"normal"}',
-	);
+	expect(
+		store.get("Category'Mappings")![1]![
+			CATEGORY_MAPPING_SHEET_COLUMNS.indexOf("src_variables")
+		],
+	).toBe('{"ruleset":{"mode":"any"},"difficulty":"normal"}');
 	expect((await repository.find("game", "Any%"))!.mapping).toEqual(withAny);
 	const updated = structuredClone(withAny);
 	updated.speedrunCom.variables = {ruleset: "classic"};
@@ -226,10 +228,17 @@ it("rejects duplicate keys/headers, missing headers and malformed category cells
 		if (kind === "header")
 			store.get("Category'Mappings")![0]!.push("src_category_id");
 		if (kind === "missing") store.get("Category'Mappings")![0]![0] = "wrong";
-		if (kind === "json") row[5] = '{"difficulty":1}';
-		if (kind === "anyObject") row[5] = '{"difficulty":{"mode":"other"}}';
-		if (kind === "boolean") row[8] = "maybe";
-		if (kind === "timing") row[9] = "unknown";
+		if (kind === "json")
+			row[CATEGORY_MAPPING_SHEET_COLUMNS.indexOf("src_variables")] =
+				'{"difficulty":1}';
+		if (kind === "anyObject")
+			row[CATEGORY_MAPPING_SHEET_COLUMNS.indexOf("src_variables")] =
+				'{"difficulty":{"mode":"other"}}';
+		if (kind === "boolean")
+			row[CATEGORY_MAPPING_SHEET_COLUMNS.indexOf("src_emulator")] = "maybe";
+		if (kind === "timing")
+			row[CATEGORY_MAPPING_SHEET_COLUMNS.indexOf("src_timing_method")] =
+				"unknown";
 		await expect(repository.save(mapping, null)).rejects.toMatchObject({
 			name: "SheetValidationError",
 		});
@@ -259,9 +268,9 @@ it("keeps game mappings unique by RaceTime slug and manages create/update/delete
 	await expect(repository.save(gameMapping, null)).rejects.toMatchObject({
 		code: "mapping_conflict",
 	});
-	expect((await repository.find(" game "))!.mapping).toEqual(changed);
+	expect((await repository.find(" game ", "g1"))!.mapping).toEqual(changed);
 	expect(await repository.list()).toHaveLength(1);
-	await repository.delete("game", updated.record.revision);
+	await repository.delete("game", "g1", updated.record.revision);
 	expect(await repository.list()).toEqual([]);
 	expect(client.appendValues).toHaveBeenCalledOnce();
 });
@@ -371,7 +380,8 @@ it("requires a parent Game Mapping before saving a category and defends children
 	await expect(
 		service.deleteGame(
 			"game",
-			(await service.findGame("game")).record!.revision,
+			"g1",
+			(await service.findGame("game", "g1")).record!.revision,
 			0,
 		),
 	).rejects.toMatchObject({code: "game_mapping_conflict"});
@@ -380,10 +390,10 @@ it("requires a parent Game Mapping before saving a category and defends children
 	await expect(
 		service.saveGame(
 			changedGame,
-			(await service.findGame("game")).record!.revision,
+			(await service.findGame("game", "g1")).record!.revision,
 			0,
 		),
-	).rejects.toMatchObject({code: "game_mapping_conflict"});
+	).rejects.toMatchObject({code: "mapping_conflict"});
 	await expect(service.resolveSource("game", "Any%")).resolves.toMatchObject({
 		status: "found",
 		game: {gameId: "g1"},
@@ -467,4 +477,69 @@ it("validates both sheets before committing settings and rejects stale writes", 
 		records: [],
 		settingsRevision: 1,
 	});
+});
+
+it("round-trips multiple games per RaceTime slug and revisions per composite key", async () => {
+	const store: Store = new Map();
+	const {repository} = gameRepository(store);
+	const first = await repository.save(gameMapping, null);
+	const secondMapping = {
+		...gameMapping,
+		speedrunCom: {gameId: "g2", gameName: "Same display name"},
+	};
+	const second = await repository.save(secondMapping, null);
+	await repository.save(
+		{...gameMapping, racetime: {categorySlug: "other", categoryName: "Other"}},
+		null,
+	);
+	expect(await repository.list()).toHaveLength(3);
+	await expect(
+		repository.save(
+			{
+				...secondMapping,
+				speedrunCom: {...secondMapping.speedrunCom, gameName: "Renamed"},
+			},
+			null,
+		),
+	).rejects.toMatchObject({code: "mapping_conflict"});
+	await repository.save(
+		{
+			...secondMapping,
+			speedrunCom: {...secondMapping.speedrunCom, gameName: "Renamed"},
+		},
+		second.record.revision,
+	);
+	await expect(
+		repository.delete("game", "g2", second.record.revision),
+	).rejects.toMatchObject({code: "mapping_conflict"});
+	expect((await repository.find("game", "g1"))?.revision).toBe(
+		first.record.revision,
+	);
+	await repository.delete("game", "g1", first.record.revision);
+	expect(await repository.find("game", "g1")).toBeNull();
+	expect(
+		(await repository.find("game", "g2"))?.mapping.speedrunCom.gameName,
+	).toBe("Renamed");
+});
+it("rejects old CategoryMappings headers and blank game IDs without writing", async () => {
+	for (const oldHeader of [true, false]) {
+		const store: Store = new Map();
+		const {repository, client} = categoryRepository(store);
+		const header = store.get("Category'Mappings")![0]!;
+		const row = categoryRow();
+		if (oldHeader) {
+			const index = header.indexOf("src_game_id");
+			header.splice(index, 1);
+			row.splice(index, 1);
+		} else row[header.indexOf("src_game_id")] = "";
+		store.get("Category'Mappings")!.push(row);
+		await expect(repository.list()).rejects.toMatchObject({
+			name: "SheetValidationError",
+		});
+		await expect(repository.save(mapping, null)).rejects.toMatchObject({
+			name: "SheetValidationError",
+		});
+		expect(client.updateValues).not.toHaveBeenCalled();
+		expect(client.appendValues).not.toHaveBeenCalled();
+	}
 });

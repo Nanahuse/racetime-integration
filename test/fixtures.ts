@@ -54,6 +54,7 @@ export const gameMapping: GameMapping = {
 export const mapping: CategoryMapping = {
 	racetime: {categorySlug: "game", goal: "Any%"},
 	speedrunCom: {
+		gameId: "g1",
 		categoryId: "c1",
 		categoryName: "Any%",
 		levelId: null,

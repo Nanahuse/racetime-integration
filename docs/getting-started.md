@@ -117,6 +117,8 @@ DashboardのSettings画面で、Spreadsheet URLまたはIDと両シート名を�
 1. 「Spreadsheetを初期化」で、`GameMappings`と`CategoryMappings`のワークシートを準備します。不足シートは作成し、空のシートにはヘッダーを書き込みます。この操作は設定を保存しません。
 2. 「保存」で接続を確定します。接続先を変更した場合は、保存時に両シートを読み込んで検証できた場合だけ切り替わります。
 
+既存のCategoryMappingsシートを使う場合は、先に`src_game_id`列を追加し、各行へ対応するSRCゲームIDを手動で入力してください。v5の初期化は旧形式の自動更新や値の補完を行いません。
+
 ### 4. マッピングを登録する
 
 RaceTimeのカテゴリ・GoalとSpeedrun.comのゲーム・カテゴリを対応付けます。手順と具体例は[マッピング](mappings.md)を参照してください。

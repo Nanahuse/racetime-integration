@@ -54,8 +54,8 @@ export type {
 export {supportsAnySelection} from "./speedrun.js";
 
 export const BUNDLE_NAME = "racetime-integration";
-export const API_VERSION = 4;
-export const MESSAGE_PREFIX = "racetime.v4";
+export const API_VERSION = 5;
+export const MESSAGE_PREFIX = "racetime.v5";
 export const RACES_REPLICANT = "racetime-races";
 export const SETTINGS_REPLICANT = "racetime-settings";
 /** Default cap on the number of mappings one Any expansion may produce. */
@@ -172,7 +172,7 @@ export type RaceTimeEvents = {
 };
 export const eventMessageName = <K extends keyof RaceTimeEvents>(
 	event: K,
-): `racetime.v4.${K}` => `${MESSAGE_PREFIX}.${event}`;
+): `racetime.v5.${K}` => `${MESSAGE_PREFIX}.${event}`;
 export type Entrant = {
 	userId: string;
 	name: string;
@@ -383,7 +383,7 @@ export type Operations = {
 	listRaces: {request: undefined; response: RacesState};
 	listGameMappings: {request: undefined; response: GameMappingList};
 	findGameMapping: {
-		request: {categorySlug: string};
+		request: {categorySlug: string; gameId: string};
 		response: {record: GameMappingRecord | null; settingsRevision: number};
 	};
 	saveGameMapping: {
@@ -397,6 +397,7 @@ export type Operations = {
 	deleteGameMapping: {
 		request: {
 			categorySlug: string;
+			gameId: string;
 			expectedRevision: string;
 			settingsRevision: number;
 		};
@@ -505,9 +506,9 @@ export const OPERATIONS = [
 ] as const satisfies readonly (keyof Operations)[];
 export const operationMessageName = <K extends keyof Operations>(
 	operation: K,
-): `racetime.v4.${K}` => `${MESSAGE_PREFIX}.${operation}`;
+): `racetime.v5.${K}` => `${MESSAGE_PREFIX}.${operation}`;
 export type RaceTimeAPI = {
-	apiVersion: 4;
+	apiVersion: 5;
 	request<K extends keyof Operations>(
 		operation: K,
 		request: Operations[K]["request"],

@@ -109,7 +109,7 @@ it("requests the selected category and shows only rank, name, time, and date", a
 	);
 	await screen.findByText("Game / Any%");
 	expect(sendMessage).toHaveBeenCalledWith(
-		"racetime.v4.getSpeedrunLeaderboards",
+		"racetime.v5.getSpeedrunLeaderboards",
 		{
 			categorySlug: "game",
 			goal: "Any%",

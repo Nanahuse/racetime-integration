@@ -121,12 +121,15 @@ export class MappingService {
 			settingsRevision: this.state.revision,
 		}));
 	}
-	findGame(categorySlug: string): Promise<{
+	findGame(
+		categorySlug: string,
+		gameId: string,
+	): Promise<{
 		record: GameMappingRecord | null;
 		settingsRevision: number;
 	}> {
 		return this.serialize(async () => ({
-			record: await this.requireRepository().games.find(categorySlug),
+			record: await this.requireRepository().games.find(categorySlug, gameId),
 			settingsRevision: this.state.revision,
 		}));
 	}
@@ -143,25 +146,6 @@ export class MappingService {
 		return this.serialize(async () => {
 			this.checkRevision(settingsRevision);
 			const repository = this.requireRepository();
-			const existing = await repository.games.find(
-				snapshot.racetime.categorySlug,
-			);
-			if (
-				existing &&
-				existing.mapping.speedrunCom.gameId !== snapshot.speedrunCom.gameId
-			) {
-				const key = slotKey(snapshot.racetime.categorySlug);
-				const children = await repository.categories.list();
-				if (
-					children.some(
-						(record) => slotKey(record.mapping.racetime.categorySlug) === key,
-					)
-				)
-					throw new IntegrationError(
-						"game_mapping_conflict",
-						"Cannot change the Speedrun.com game while child category mappings exist",
-					);
-			}
 			return {
 				...(await repository.games.save(snapshot, expectedRevision)),
 				settingsRevision: this.state.revision,
@@ -170,6 +154,7 @@ export class MappingService {
 	}
 	deleteGame(
 		categorySlug: string,
+		gameId: string,
 		expectedRevision: string,
 		settingsRevision: number,
 	): Promise<{deleted: true; settingsRevision: number}> {
@@ -180,14 +165,16 @@ export class MappingService {
 			const children = await repository.categories.list();
 			if (
 				children.some(
-					(record) => slotKey(record.mapping.racetime.categorySlug) === key,
+					(record) =>
+						slotKey(record.mapping.racetime.categorySlug) === key &&
+						slotKey(record.mapping.speedrunCom.gameId) === slotKey(gameId),
 				)
 			)
 				throw new IntegrationError(
 					"game_mapping_conflict",
 					"Remove child category mappings before deleting this game mapping",
 				);
-			await repository.games.delete(categorySlug, expectedRevision);
+			await repository.games.delete(categorySlug, gameId, expectedRevision);
 			return {deleted: true as const, settingsRevision: this.state.revision};
 		});
 	}
@@ -232,6 +219,7 @@ export class MappingService {
 			const repository = this.requireRepository();
 			const parent = await repository.games.find(
 				snapshot.racetime.categorySlug,
+				snapshot.speedrunCom.gameId,
 			);
 			if (!parent)
 				throw new IntegrationError(
@@ -268,11 +256,10 @@ export class MappingService {
 	): Promise<CategoryResolutionSource> {
 		return this.serialize(async () => {
 			const repository = this.requireRepository();
-			const [game, category] = await Promise.all([
-				repository.games.find(categorySlug),
-				repository.categories.find(categorySlug, goal),
-			]);
+			const category = await repository.categories.find(categorySlug, goal);
 			if (!category) return {status: "unregistered"};
+			const {gameId, ...selection} = category.mapping.speedrunCom;
+			const game = await repository.games.find(categorySlug, gameId);
 			if (!game)
 				return {
 					status: "inconsistent",
@@ -281,7 +268,7 @@ export class MappingService {
 			return {
 				status: "found",
 				game: structuredClone(game.mapping.speedrunCom),
-				category: structuredClone(category.mapping.speedrunCom),
+				category: structuredClone(selection),
 				maxResolvedMappings: this.state.settings.maxResolvedMappings,
 			};
 		});
