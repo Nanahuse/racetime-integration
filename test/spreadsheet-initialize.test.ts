@@ -269,3 +269,50 @@ it("does not re-read formulas for worksheets that already match the format", asy
 	});
 	expect(formulaRanges).toEqual([]);
 });
+
+it("accepts multiple GameMappings for one slug and writes the new category header", async () => {
+	const first = gameMappingToSheetRow(gameMapping, "");
+	const second = gameMappingToSheetRow(
+		{...gameMapping, speedrunCom: {gameId: "g2", gameName: "Second"}},
+		"",
+	);
+	const store: Store = new Map([
+		[
+			"GameMappings",
+			[
+				gameHeader(),
+				...[first, second].map((row) =>
+					GAME_MAPPING_SHEET_COLUMNS.map((column) => row[column]),
+				),
+			],
+		],
+	]);
+	const {client} = fakeClient(store);
+	expect(await initializeSpreadsheet(client, options)).toEqual({
+		gameMappings: "unchanged",
+		categoryMappings: "created",
+	});
+	expect(store.get("CategoryMappings")![0]).toEqual([
+		...CATEGORY_MAPPING_SHEET_COLUMNS,
+	]);
+	expect(store.get("CategoryMappings")![0]![2]).toBe("src_game_id");
+});
+it("refuses to upgrade or fill an old category sheet during initialization", async () => {
+	const oldHeader = CATEGORY_MAPPING_SHEET_COLUMNS.filter(
+		(column) => column !== "src_game_id",
+	);
+	const row = categoryMappingToSheetRow(mapping, "");
+	const store: Store = new Map([
+		["GameMappings", [gameHeader()]],
+		[
+			"CategoryMappings",
+			[[...oldHeader], oldHeader.map((column) => row[column])],
+		],
+	]);
+	const before = structuredClone(store);
+	const {client} = fakeClient(store);
+	await expect(initializeSpreadsheet(client, options)).rejects.toMatchObject({
+		name: "SheetValidationError",
+	});
+	expect(store).toEqual(before);
+});

@@ -235,6 +235,7 @@ function categoryMapping(raw: unknown): CategoryMapping {
 			goal: text(race.goal, "goal"),
 		},
 		speedrunCom: {
+			gameId: text(src.gameId, "gameId"),
 			categoryId: text(src.categoryId, "categoryId"),
 			categoryName: text(src.categoryName, "categoryName"),
 			levelId: nullableText(src.levelId, "levelId"),
@@ -342,7 +343,10 @@ export function createAPI(
 					value = await mappings.listGames();
 					break;
 				case "findGameMapping":
-					value = await mappings.findGame(text(data.categorySlug));
+					value = await mappings.findGame(
+						text(data.categorySlug),
+						text(data.gameId),
+					);
 					break;
 				case "saveGameMapping":
 					value = await mappings.saveGame(
@@ -354,6 +358,7 @@ export function createAPI(
 				case "deleteGameMapping":
 					value = await mappings.deleteGame(
 						text(data.categorySlug),
+						text(data.gameId),
 						text(data.expectedRevision),
 						revision(data.settingsRevision),
 					);
@@ -388,6 +393,39 @@ export function createAPI(
 								throw new RequestError(
 									"category_not_in_game",
 									`Category "${category.categoryId}" does not belong to game "${game.gameId}"`,
+								);
+							const options = await speedrun.getGameOptions(game.gameId);
+							for (const [field, value, choices] of [
+								["levelId", category.levelId, options.levels],
+								["platformId", category.platformId, options.platforms],
+								["regionId", category.regionId, options.regions],
+							] as const) {
+								if (
+									value !== null &&
+									!choices.some((option) => option.id === value)
+								)
+									throw new RequestError(
+										"invalid_input",
+										`Invalid ${field} for game "${game.gameId}"`,
+									);
+							}
+							if (
+								category.levelId !== null &&
+								options.categories.find(
+									(option) => option.id === category.categoryId,
+								)?.type === "per-game"
+							)
+								throw new RequestError(
+									"invalid_input",
+									"A per-game category cannot select a level",
+								);
+							if (
+								category.timingMethod !== null &&
+								!options.timingMethods.includes(category.timingMethod)
+							)
+								throw new RequestError(
+									"invalid_input",
+									"Invalid timing method for game",
 								);
 							const definitions = await speedrun.getCategoryVariables(
 								category.categoryId,

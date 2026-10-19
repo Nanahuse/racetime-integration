@@ -74,7 +74,7 @@ beforeEach(() => {
 		data: {gameMappings: "created", categoryMappings: "created"},
 	});
 	sendMessage.mockImplementation(async (name: string) => {
-		const operation = name.replace("racetime.v4.", "");
+		const operation = name.replace("racetime.v5.", "");
 		if (operation === "getSettings") return getSettingsResult();
 		if (operation === "updateSettings") return updateResult();
 		if (operation === "initializeSpreadsheet") return initializeResult();
@@ -111,7 +111,7 @@ it("adds and saves a normalized RaceTime origin without checking the spreadsheet
 	fireEvent.click(screen.getByRole("button", {name: "追加"}));
 	expect(screen.getByText("http://localhost:8000")).toBeTruthy();
 	expect(sendMessage).not.toHaveBeenCalledWith(
-		"racetime.v4.updateSettings",
+		"racetime.v5.updateSettings",
 		expect.anything(),
 	);
 	fireEvent.click(screen.getByRole("button", {name: "保存"}));
@@ -121,7 +121,7 @@ it("adds and saves a normalized RaceTime origin without checking the spreadsheet
 		),
 	).toBeTruthy();
 	expect(sendMessage).toHaveBeenCalledWith(
-		"racetime.v4.updateSettings",
+		"racetime.v5.updateSettings",
 		expect.objectContaining({
 			settings: expect.objectContaining({
 				allowedRaceOrigins: ["https://racetime.gg", "http://localhost:8000"],
@@ -144,7 +144,7 @@ it("allows deleting the default origin and saving an empty allowlist", async () 
 	);
 	expect(screen.getByText("接続許可先はありません。")).toBeTruthy();
 	expect(sendMessage).not.toHaveBeenCalledWith(
-		"racetime.v4.updateSettings",
+		"racetime.v5.updateSettings",
 		expect.anything(),
 	);
 	fireEvent.click(screen.getByRole("button", {name: "保存"}));
@@ -154,7 +154,7 @@ it("allows deleting the default origin and saving an empty allowlist", async () 
 		),
 	).toBeTruthy();
 	expect(sendMessage).toHaveBeenCalledWith(
-		"racetime.v4.updateSettings",
+		"racetime.v5.updateSettings",
 		expect.objectContaining({
 			settings: expect.objectContaining({allowedRaceOrigins: []}),
 		}),
@@ -176,7 +176,7 @@ it("rejects duplicate and non-loopback HTTP origins in the editor", async () => 
 	}
 	expect(screen.queryByText("接続許可先はありません。")).toBeNull();
 	for (const call of sendMessage.mock.calls)
-		expect(call[0]).not.toBe("racetime.v4.updateSettings");
+		expect(call[0]).not.toBe("racetime.v5.updateSettings");
 });
 
 it("keeps the edited origins when saving fails", async () => {
@@ -285,7 +285,7 @@ it("initializes from unsaved input and can still save afterwards", async () => {
 	fireEvent.click(screen.getByRole("button", {name: "Spreadsheetを初期化"}));
 	expect(await screen.findByText(/GameMappings: 新規作成/)).toBeTruthy();
 	expect(sendMessage).toHaveBeenCalledWith(
-		"racetime.v4.initializeSpreadsheet",
+		"racetime.v5.initializeSpreadsheet",
 		{
 			settings: {
 				spreadsheetId: "abc",
@@ -456,7 +456,7 @@ it("shows, edits and saves the Any expansion limit", async () => {
 		await screen.findByText(/Spreadsheet接続の確認は行っていません/),
 	).toBeTruthy();
 	expect(sendMessage).toHaveBeenCalledWith(
-		"racetime.v4.updateSettings",
+		"racetime.v5.updateSettings",
 		expect.objectContaining({
 			settings: expect.objectContaining({
 				maxResolvedMappings: 30,
@@ -486,7 +486,7 @@ it("rejects an invalid Any expansion limit before saving", async () => {
 		).toBe(true);
 		fireEvent.click(screen.getByRole("button", {name: "保存"}));
 		expect(sendMessage).not.toHaveBeenCalledWith(
-			"racetime.v4.updateSettings",
+			"racetime.v5.updateSettings",
 			expect.anything(),
 		);
 		cleanup();

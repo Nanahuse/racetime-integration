@@ -24,13 +24,17 @@ import type {ColumnMap} from "./sheet-columns";
 import {parseSheetValues} from "./sheet-parse";
 
 export interface GameMappingsRepository {
-	find(categorySlug: string): Promise<GameMappingRecord | null>;
+	find(categorySlug: string, gameId: string): Promise<GameMappingRecord | null>;
 	list(): Promise<GameMappingRecord[]>;
 	save(
 		mapping: GameMapping,
 		expectedRevision: string | null,
 	): Promise<{record: GameMappingRecord; action: "created" | "updated"}>;
-	delete(categorySlug: string, expectedRevision: string): Promise<void>;
+	delete(
+		categorySlug: string,
+		gameId: string,
+		expectedRevision: string,
+	): Promise<void>;
 }
 
 export type SpreadsheetGameMappingsRepositoryOptions = {
@@ -50,8 +54,8 @@ type ParsedGameMappingsSheet = {
 	entries: GameMappingEntry[];
 };
 
-function mappingKey(categorySlug: string): string {
-	return categorySlug.trim();
+function mappingKey(categorySlug: string, gameId: string): string {
+	return JSON.stringify([categorySlug.trim(), gameId.trim()]);
 }
 
 function positionRow(
@@ -92,14 +96,20 @@ export class SpreadsheetGameMappingsRepository
 		this.now = options.now ?? (() => new Date());
 	}
 
-	async find(categorySlug: string): Promise<GameMappingRecord | null> {
+	async find(
+		categorySlug: string,
+		gameId: string,
+	): Promise<GameMappingRecord | null> {
 		const parsed = this.parse(
 			await this.client.readValues(sheetReadRange(this.sheetName)),
 		);
-		const key = mappingKey(categorySlug);
+		const key = mappingKey(categorySlug, gameId);
 		const entry = parsed.entries.find(
 			(candidate) =>
-				mappingKey(candidate.mapping.racetime.categorySlug) === key,
+				mappingKey(
+					candidate.mapping.racetime.categorySlug,
+					candidate.mapping.speedrunCom.gameId,
+				) === key,
 		);
 		return entry ? {mapping: entry.mapping, revision: entry.revision} : null;
 	}
@@ -124,15 +134,21 @@ export class SpreadsheetGameMappingsRepository
 		return this.serialize(() => this.write(snapshot, expectedRevision));
 	}
 
-	delete(categorySlug: string, expectedRevision: string): Promise<void> {
+	delete(
+		categorySlug: string,
+		gameId: string,
+		expectedRevision: string,
+	): Promise<void> {
 		return this.serialize(async () => {
 			const parsed = this.parse(
 				await this.client.readValues(sheetReadRange(this.sheetName)),
 			);
 			const entry = parsed.entries.find(
 				(item) =>
-					mappingKey(item.mapping.racetime.categorySlug) ===
-					mappingKey(categorySlug),
+					mappingKey(
+						item.mapping.racetime.categorySlug,
+						item.mapping.speedrunCom.gameId,
+					) === mappingKey(categorySlug, gameId),
 			);
 			if (!entry || entry.revision !== expectedRevision)
 				throw new IntegrationError(
@@ -168,10 +184,16 @@ export class SpreadsheetGameMappingsRepository
 		const parsed = this.parse(values);
 
 		const row = gameMappingToSheetRow(mapping, this.now().toISOString());
-		const key = mappingKey(mapping.racetime.categorySlug);
+		const key = mappingKey(
+			mapping.racetime.categorySlug,
+			mapping.speedrunCom.gameId,
+		);
 		const existing = parsed.entries.find(
 			(candidate) =>
-				mappingKey(candidate.mapping.racetime.categorySlug) === key,
+				mappingKey(
+					candidate.mapping.racetime.categorySlug,
+					candidate.mapping.speedrunCom.gameId,
+				) === key,
 		);
 		if ((existing?.revision ?? null) !== expectedRevision)
 			throw new IntegrationError(
@@ -205,10 +227,11 @@ export class SpreadsheetGameMappingsRepository
 					? {ok: true as const, value: conversion.mapping}
 					: conversion;
 			},
-			key: (mapping) => mappingKey(mapping.racetime.categorySlug),
+			key: (mapping) =>
+				mappingKey(mapping.racetime.categorySlug, mapping.speedrunCom.gameId),
 			duplicateCode: GAME_MAPPING_ROW_ISSUE_CODES.duplicateKey,
 			duplicateMessage: (mapping, previousRow) =>
-				`Duplicate game mapping key "${mapping.racetime.categorySlug}" (also on row ${previousRow}).`,
+				`Duplicate game mapping key "${mapping.racetime.categorySlug}" + "${mapping.speedrunCom.gameId}" (also on row ${previousRow}).`,
 		});
 		if (result.status !== "valid" || !result.map)
 			throw new SheetValidationError(this.sheetName, result.issues);

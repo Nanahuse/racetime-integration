@@ -79,7 +79,7 @@ pnpm build
 
 ルートの`package.json`と`packages/racetime-protocol/package.json`は、同じ`MAJOR.MINOR.PATCH`に揃えて更新します。この一致はCIで検証します。
 
-公開APIの`API_VERSION`はパッケージ版とは別に管理します。現在は`API_VERSION=4`、メッセージ名は`racetime.v4.*`、`RacesState.schemaVersion=1`です。
+公開APIの`API_VERSION`はパッケージ版とは別に管理します。現在は`API_VERSION = 5`、メッセージ名は`racetime.v5.*`、`RacesState.schemaVersion=1`です。
 
 `main`へのpushで`Check`が成功すると、`Tag`ワークフローがそのコミットのバージョンで注釈付きタグ`vX.Y.Z`を作成します。次の場合はタグを作成しません。
 

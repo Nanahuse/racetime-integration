@@ -7,6 +7,7 @@ NodeCG向けのRaceTime連携バンドルです。RaceTime.ggのレース情報�
 - DashboardでRaceTimeのレースを監視し、開始予定・進行状況・タイマー・イベントを確認できます。
 - 未登録の参加者をPlayer Managerのプレイヤーに紐付けて、レースの参加者を確認できます。
 - ほかのNodeCGバンドルが公開API・Replicant・イベントを通じて同じレース情報を利用できます。
+- 1つのRaceTimeゲームに複数のSRCゲームを登録し、Goalごとに参照先のSRCゲーム・カテゴリを選択できます。
 - RaceTimeとSpeedrun.comの対応付け（マッピング）を登録し、条件別Leaderboardと参加者の自己ベスト（PB）を取得できます。
 
 ## システム内での位置付け
@@ -41,6 +42,8 @@ NodeCG向けのRaceTime連携バンドルです。RaceTime.ggのレース情報�
 NodeCGの`bundles/racetime-integration`に配置し、依存関係のインストールとビルドを行います。同じNodeCGにPlayer Managerを配置してください。
 
 手順は[導入と初期設定](docs/getting-started.md)を参照してください。Speedrun.com連携は任意で、必要な場合だけ追加の設定を行います。
+
+公開APIはv5（`racetime.v5.*`）です。利用側バンドルのプロトコル更新と、既存CategoryMappingsシートへの`src_game_id`列の手動追加・入力が必要です。旧形式の互換読み込みや自動移行はありません。
 
 ## ドキュメント
 

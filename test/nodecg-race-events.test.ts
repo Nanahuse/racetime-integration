@@ -104,8 +104,8 @@ it.each([
 ] as const)(
 	"exports the event message name for %s without adding an RPC",
 	(name) => {
-		expect(eventMessageName(name)).toBe(`racetime.v4.${name}`);
-		expect(operationMessageName("watchRace")).toBe("racetime.v4.watchRace");
+		expect(eventMessageName(name)).toBe(`racetime.v5.${name}`);
+		expect(operationMessageName("watchRace")).toBe("racetime.v5.watchRace");
 	},
 );
 
@@ -207,7 +207,7 @@ it.each(["synchronous", "rejected Promise"])(
 		]);
 		expect(warn).toHaveBeenCalledWith(
 			expect.stringContaining(
-				"Failed to send racetime.v4.raceStarted: send failed",
+				"Failed to send racetime.v5.raceStarted: send failed",
 			),
 		);
 		expect(state().races[0]).toMatchObject({

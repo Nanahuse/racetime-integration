@@ -70,24 +70,32 @@ PBはマッピングを登録している場合だけ取得できます。PB列�
 
 ## Mappingsタブ
 
-MappingsはRaceTimeとSpeedrun.comのマッピングを編集する画面です。左側にGame Mapping一覧と検索、右側に選択したゲームの詳細とCategory Mapping一覧を表示します。
+MappingsはRaceTimeとSpeedrun.comのマッピングを編集する画面です。左側にRaceTimeゲームの一覧と検索、右側に選択したゲームの登録済みSRCゲームとGoal一覧を表示します。
 
 ### Game Mapping
 
 1. 「＋ 新規」で新しいGame Mappingを作成します。
-2. `RaceTime category slug（一意キー）`と`RaceTime category name（表示用）`を入力します。一意キーは作成後に変更できません。
+2. `RaceTime category slug（一意キー）`と`RaceTime category name（表示用）`を入力します。slugとSRCゲームIDの組が一意キーで、保存後はどちらも変更できません。表示名は更新できます。
 3. SRCゲームを「Speedrun.com ゲーム（手動選択）」で検索して選びます。自動マッピングや候補の提案は行いません。
 4. 「Game Mappingを保存」で保存します。削除は「削除」から行います。
 
-子Category Mappingがある場合は、SRCゲームの変更と削除ができません。
+同じRaceTimeゲームへ別のSRCゲームを登録するには「SRCゲームを追加」を使います。検索結果に同じSRCゲームがあっても重複登録はできません。「登録済みSRCゲーム」から個別に選んで編集・削除できます。
+
+削除対象のSRCゲームを参照するCategory Mappingがある場合は削除できません。他のSRCゲームを参照するGoalは削除を妨げません。
 
 ### Category Mapping
 
 1. ゲームを選択した状態で、Category Mappingsの「＋ 新規 Goal」から作成します。
-2. `RaceTime Goal`と`SRC Category（必須）`を指定します。
+2. `RaceTime Goal`を入力し、`SRC Game（必須）`で登録済みSRCゲームを選んでから`SRC Category（必須）`を指定します。
 3. per-levelカテゴリでは`Level`、必要に応じて`Platform`、`Region`、`Emulator`、`Timing Method`を指定します。
 4. Variablesはカテゴリの定義に従って値を選びます。「Any（すべて）」を選べるVariableでは、定義済みのすべての値を対象にできます。指定条件の詳細は[マッピング](mappings.md)を参照してください。
 5. 「Category Mappingを保存」で保存します。
+
+同じSRCカテゴリを指すGoalでも、別名は個別の行として表示します。SRCゲームを変更すると、旧ゲームに依存したカテゴリ・Level・Variableなどの選択はクリアされます。Revertで保存済みのゲームと条件へ戻せます。
+
+Game Mappingの保存後は編集画面を開いたままにします。Category Mappingの保存後は、Game Mappingに未保存変更がなければ編集画面を閉じます。保存成功の通知は閉じたあとも残ります。
+
+Overviewの編集画面でも同じSRCゲーム一覧とゲーム選択を使います。Goalは監視中のレースの値を使用します。
 
 ### 競合の解決
 

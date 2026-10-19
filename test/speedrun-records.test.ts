@@ -65,7 +65,7 @@ function setup() {
 		getCategoryVariables: vi.fn(
 			async (): Promise<SpeedrunVariableOption[]> => [],
 		),
-		getUserPersonalBests: vi.fn(async (userId: string) => [
+		getUserPersonalBests: vi.fn(async (userId: string, _gameId: string) => [
 			personalBest(
 				`${userId}-pb`,
 				userId === "u1" ? "PT45S" : "PT30S",
@@ -480,4 +480,40 @@ it("omits PB labels when no variables are mapped", async () => {
 	const response = await service.playerBests("game", "Any%", ["p1"]);
 	if (response.status !== "resolved") throw new Error("not resolved");
 	expect(response.results[0]?.variableValues).toEqual([]);
+});
+
+it("fetches only the selected game and shares condition caches across Goal aliases", async () => {
+	const {service, mapping, speedrun} = setup();
+	mapping.resolveSource.mockResolvedValue({
+		...source,
+		game: {gameId: "g2", gameName: "Second"},
+		category: {...source.category, categoryId: "c2"},
+	});
+	speedrun.getUserPersonalBests.mockImplementation(async (userId) => [
+		personalBest("second", "PT2.030S", 1, userId, {
+			gameId: "g2",
+			categoryId: "c2",
+		}),
+	]);
+	const first = await service.leaderboards("race-game", "Any%");
+	const alias = await service.leaderboards("race-game", "Any Percent");
+	expect(alias).toMatchObject({
+		status: "resolved",
+		mappings: [{game: {gameId: "g2"}}],
+	});
+	expect(speedrun.getLeaderboard).toHaveBeenCalledTimes(1);
+	expect(speedrun.getLeaderboard.mock.calls[0]?.[0].game.gameId).toBe("g2");
+	if (first.status !== "resolved" || alias.status !== "resolved")
+		throw new Error("not resolved");
+	expect(first.mappings[0]?.key).toBe(alias.mappings[0]?.key);
+	const pb = await service.playerBests("race-game", "Any%", ["p1"]);
+	await service.playerBests("race-game", "Any Percent", ["p1"]);
+	expect(speedrun.getUserPersonalBests).toHaveBeenCalledTimes(2);
+	expect(
+		speedrun.getUserPersonalBests.mock.calls.map((call) => call[1]),
+	).toEqual(["g2", "g2"]);
+	expect(pb).toMatchObject({
+		status: "resolved",
+		results: [{players: [{state: "found", run: {time: "PT2.030S"}}]}],
+	});
 });

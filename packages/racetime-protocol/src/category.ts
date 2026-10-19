@@ -2,7 +2,8 @@ export type TimingMethod = "realtime" | "realtime_noloads" | "ingame";
 
 /**
  * Associates a RaceTime game (identified by its category slug) with a
- * Speedrun.com game. The slug is the unique key; names are display-only.
+ * Speedrun.com game. The slug and SRC game ID form the unique key; names
+ * are display-only.
  */
 export type GameMapping = {
 	racetime: {categorySlug: string; categoryName: string};
@@ -17,8 +18,7 @@ export type GameMapping = {
 export type VariableSelection = string | {mode: "any"};
 
 /**
- * Associates a RaceTime goal with a Speedrun.com category. The game is not
- * stored here; it is resolved through the parent {@link GameMapping}.
+ * Category and condition fields shared by stored and resolved SRC lookups.
  */
 export type SpeedrunCategorySelection = {
 	categoryId: string;
@@ -33,7 +33,7 @@ export type SpeedrunCategorySelection = {
 
 export type CategoryMapping = {
 	racetime: {categorySlug: string; goal: string};
-	speedrunCom: SpeedrunCategorySelection;
+	speedrunCom: SpeedrunCategorySelection & {gameId: string};
 };
 
 export type MappingRecord<T> = {mapping: T; revision: string};

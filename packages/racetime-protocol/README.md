@@ -1,8 +1,8 @@
 # @nanahuse/racetime-protocol
 
-RaceTime Integration v4の公開型・定数・メッセージ名です。ほかのNodeCGバンドルがracetime-integrationのレース監視・参加者解決・イベント通知を利用するために使います。ESMとCommonJSの両方に型宣言を含み、実行時の依存は日時・期間・日付処理に使う`@js-temporal/polyfill`だけです（NodeCG・Google SDK・Player Managerへの実行時依存はありません）。
+RaceTime Integration v5の公開型・定数・メッセージ名です。ほかのNodeCGバンドルがracetime-integrationのレース監視・参加者解決・イベント通知を利用するために使います。ESMとCommonJSの両方に型宣言を含み、実行時の依存は日時・期間・日付処理に使う`@js-temporal/polyfill`だけです（NodeCG・Google SDK・Player Managerへの実行時依存はありません）。
 
-APIバージョンは4で、旧バージョンとの互換実装は提供しません（v3との互換レイヤーはありません）。
+APIバージョンは5です。v4メッセージや旧Game Mapping APIの互換実装は提供しません。利用側バンドルもv5プロトコルへ更新してください。
 
 ## セットアップ
 
@@ -175,9 +175,9 @@ nodecg.unlisten(
 | getRace | `{url}` | `RaceState \| null`（監視中） |
 | listRaces | `undefined` | `RacesState` |
 | listGameMappings | `undefined` | `{records, settingsRevision}` |
-| findGameMapping | `{categorySlug}` | `{record, settingsRevision}` |
+| findGameMapping | `{categorySlug, gameId}` | `{record, settingsRevision}` |
 | saveGameMapping | `{mapping, expectedRevision, settingsRevision}` | `{record, action, settingsRevision}` |
-| deleteGameMapping | `{categorySlug, expectedRevision, settingsRevision}` | `{deleted: true, settingsRevision}` |
+| deleteGameMapping | `{categorySlug, gameId, expectedRevision, settingsRevision}` | `{deleted: true, settingsRevision}` |
 | listCategoryMappings | `undefined` | `{records, settingsRevision}` |
 | findCategoryMapping | `{categorySlug, goal}` | `{record, settingsRevision}` |
 | saveCategoryMapping | `{mapping, expectedRevision, settingsRevision}` | `{record, action, settingsRevision}` |
@@ -218,7 +218,7 @@ nodecg.unlisten(
 
 ## レースモデルと時間情報
 
-`fetchRace`、`watchRace`、`getRace`、`getWatch`、`listRaces`と`racetime-races`Replicantは同じ`Race`モデルを使用します。直接`RaceTimeAPI.request()`を呼んだ場合も、NodeCGメッセージと同じISO 8601文字列を返し、Temporalインスタンスを公開しません。`API_VERSION=4`、`racetime.v4.*`、`RacesState.schemaVersion=1`です。
+`fetchRace`、`watchRace`、`getRace`、`getWatch`、`listRaces`と`racetime-races`Replicantは同じ`Race`モデルを使用します。直接`RaceTimeAPI.request()`を呼んだ場合も、NodeCGメッセージと同じISO 8601文字列を返し、Temporalインスタンスを公開しません。`API_VERSION = 5`、`racetime.v5.*`、`RacesState.schemaVersion=1`です。
 
 | Raceフィールド | 意味・公開形式 |
 | --- | --- |
@@ -315,7 +315,7 @@ if (time) {
 
 マッピングはGame MappingとCategory Mappingの2シートに分かれ、Revisionは独立して管理します。
 
-`GameMapping`はRaceTimeゲーム（`racetime.categorySlug`が一意キー）とSRCゲームを対応付けます。`CategoryMapping`はRaceTime Goal（`categorySlug + goal`が一意キー）をSRCカテゴリへ対応付けます。Category Mappingは親Game Mappingを参照し、SRC Game ID/Nameは重複保存しません。
+`GameMapping`はRaceTimeゲームとSRCゲームの1組を表し、`racetime.categorySlug` + `speedrunCom.gameId`が一意キーです。同じslugに複数レコードを登録できます。`CategoryMapping`の一意キーは`categorySlug + goal`のまま、`speedrunCom`に必須の`gameId: string`を持ちます。ゲーム名は親Game Mappingから取得します。異なるGoalから同じSRC条件を参照できます。
 
 `MappingRecord`は`{mapping, revision}`です。revisionは保存行に対応する不透明な文字列として扱ってください。
 
@@ -324,11 +324,13 @@ if (time) {
 - 削除: 同じrevision契約。既知列の値を消去し、追加列や数式を保持。
 - Revert: find系で保存済みの値を読み直す。
 
-親子整合性はサーバー側で保証します。親Game Mappingが無いCategory Mappingの登録はgame_mapping_missing、子が存在する親のSRC Game ID変更・削除はgame_mapping_conflict、SRCカテゴリが親のSRCゲームに属さない場合はcategory_not_in_gameを返します。
+親子整合性はサーバー側で保証します。親Game Mappingが無いCategory Mappingの登録はgame_mapping_missing、参照する子が存在する親の削除はgame_mapping_conflict、SRCカテゴリが親のSRCゲームに属さない場合はcategory_not_in_gameを返します。
+
+登録済みGame MappingのslugとSRCゲームIDは変更不可です。別のゲームは新規登録してください。更新時のRevisionは複合キーごとに照合します。Category Mappingは一意キーを保ったまま別の登録済みSRCゲームへ変更できます。
 
 各書込みにはfind/listと同時に得たsettingsRevisionも必要です。接続先変更後の古いリクエストはsettings_changedになります。保存成功時のactionはcreated / updatedです。
 
-`resolveCategoryMapping`はGame MappingとCategory Mappingを結合し、SRCの問い合わせ条件となる`ResolvedCategoryMapping[]`を返します。未登録は`unregistered`、Category Mappingはあるが親Game Mappingが無い場合や保存済みの`Any`が現在のSRC定義と整合しない場合は`inconsistent`を返します。利用側が2シートを直接結合する必要はありません。
+`resolveCategoryMapping`はGame MappingとCategory Mappingを結合し、SRCの問い合わせ条件となる`ResolvedCategoryMapping[]`を返します。Category Mappingの未登録は`unregistered`、Category Mappingはあるが指定SRCゲームに対応する親Game Mappingが無い場合や保存済みの`Any`が現在のSRC定義と整合しない場合は`inconsistent`を返します。利用側が2シートを直接結合する必要はありません。
 
 ### Category VariableのAny
 
@@ -339,6 +341,8 @@ if (time) {
 展開件数には上限があり、Settingsの`maxResolvedMappings`（初期値20）で設定します。上限以下なら全件を返します。上限超過時は部分結果を返さず、公開APIは`expansion_limit_exceeded`エラー（作成しようとした件数と現在の上限を含むメッセージ）を返します。これはマッピングの不整合ではなく設定された上限として扱い、`inconsistent`や`internal_error`にはなりません。上限判定は直積を生成する前に行われます。`Any`を含まない解決には影響しません。
 
 `initializeSpreadsheet`は指定されたSpreadsheetへ`GameMappings`と`CategoryMappings`のワークシートを準備します。不足シートは作成（`created`）、空シートにはヘッダーを設定（`initialized`）し、正常な既存シートは変更しません（`unchanged`）。不正な既存データがある場合は変更せずエラーを返します。初期化はSettingsを永続化せず、`settingsRevision`も変更しません。保存前に利用者が明示的に接続先を確定してください。
+
+v5のCategoryMappingsシートには必須の`src_game_id`列が必要です。既存シートの列追加と値の入力は手動で行ってください。初期化による旧形式の更新や補完、互換読み込みは行いません。
 
 設定は`{spreadsheetId: string | null, gameMappingsSheet: string, categoryMappingsSheet: string, allowedRaceOrigins: string[], maxResolvedMappings: number, leaderboardTop: number}`です。spreadsheetIdがnullなら無効化します。`maxResolvedMappings`と`leaderboardTop`は1以上の安全な整数（初期値20）で、0以下・小数・負数・NaN・Infinity・数値以外・安全な整数範囲外は拒否します。どちらかを持たない既存の永続化済み設定は、他の値とrevisionを変更せずに20を補完して読み込みます。updateSettingsは両シートを読込み・検証してから切替え、失敗時は旧設定を保持します。`SETTINGS_REPLICANT`（racetime-settings）へ永続化されます。`allowedRaceOrigins`はRaceTime URLの接続許可先で、初期値は`["https://racetime.gg"]`です。設定ReplicantとレースReplicantは参照専用として扱い、変更にはAPIを使ってください。
 

@@ -46,7 +46,7 @@ Player Manager v3の公開`list`でDirectoryを1スナップショット取得�
 
 ## マッピングとSpeedrun.com
 
-Game MappingとCategory MappingはRevisionを独立して管理し、Spreadsheetの2つのワークシートへ保存します。列はヘッダー名で照合します。`initializeSpreadsheet`は、不足シートの作成、空シートへのヘッダー設定、正常な既存シートの維持を行い、不正な既存データがある場合は変更を始める前にエラーを返します。
+Game MappingはRaceTime slugとSRCゲームIDの複合キー、Category MappingはslugとGoalをキーにして、それぞれRevisionを管理します。Category Mappingに保存したSRCゲームIDで親を選び、保存・削除の参照整合性を直列化した操作内で確認します。両マッピングはSpreadsheetの2つのワークシートへ保存します。列はヘッダー名で照合します。`initializeSpreadsheet`は、不足シートの作成、空シートへのヘッダー設定、正常な既存シートの維持を行い、不正な既存データがある場合は変更を始める前にエラーを返します。
 
 Speedrun.comのLeaderboardとPBは、マッピングから解決した条件ごとに取得します。条件別キャッシュのTTLは5分で、同時要求は共有し、HTTPの並行数は4に制限します。再取得に失敗して直前の正常値がある場合は`stale: true`を付けて返し、通信失敗は正常値としてキャッシュしません。レースの通常更新はSpeedrun.comの取得を開始せず、マッピングの保存・削除後にLeaderboardと参加者PBを再解決します。
 

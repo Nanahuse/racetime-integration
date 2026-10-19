@@ -8,6 +8,7 @@ import type {
 export const CATEGORY_MAPPING_SHEET_COLUMNS = [
 	"racetime_category_slug",
 	"racetime_goal",
+	"src_game_id",
 	"src_category_id",
 	"src_category_name",
 	"src_level_id",
@@ -29,6 +30,7 @@ export type CategoryMappingSheetRow = {
 export const CATEGORY_MAPPING_ROW_ISSUE_CODES = {
 	categorySlugMissing: "racetime_category_slug_missing",
 	goalMissing: "racetime_goal_missing",
+	gameIdMissing: "src_game_id_missing",
 	categoryIdMissing: "src_category_id_missing",
 	categoryNameMissing: "src_category_name_missing",
 	variablesInvalid: "src_variables_invalid",
@@ -173,6 +175,14 @@ export function validateCategoryMapping(
 			message: "racetime goal is required.",
 		});
 	}
+	if (
+		typeof mapping.speedrunCom.gameId !== "string" ||
+		!mapping.speedrunCom.gameId.trim()
+	)
+		issues.push({
+			code: CATEGORY_MAPPING_ROW_ISSUE_CODES.gameIdMissing,
+			message: "src_game_id is required.",
+		});
 	if (mapping.speedrunCom.categoryId.trim() === "") {
 		issues.push({
 			code: CATEGORY_MAPPING_ROW_ISSUE_CODES.categoryIdMissing,
@@ -195,6 +205,7 @@ export function categoryMappingToSheetRow(
 	const row = emptyCategoryMappingSheetRow();
 	row.racetime_category_slug = mapping.racetime.categorySlug;
 	row.racetime_goal = mapping.racetime.goal;
+	row.src_game_id = mapping.speedrunCom.gameId;
 
 	row.src_category_id = mapping.speedrunCom.categoryId;
 	row.src_category_name = mapping.speedrunCom.categoryName;
@@ -232,6 +243,12 @@ export function categoryMappingSheetRowToMapping(
 		});
 	}
 
+	const gameId = normalizeCell(row.src_game_id);
+	if (!gameId)
+		issues.push({
+			code: CATEGORY_MAPPING_ROW_ISSUE_CODES.gameIdMissing,
+			message: "src_game_id is required.",
+		});
 	const categoryId = normalizeCell(row.src_category_id);
 	if (categoryId === "") {
 		issues.push({
@@ -260,6 +277,7 @@ export function categoryMappingSheetRowToMapping(
 		mapping: {
 			racetime: {categorySlug, goal},
 			speedrunCom: {
+				gameId,
 				categoryId,
 				categoryName,
 				levelId: nullableCell(row.src_level_id),
