@@ -79,13 +79,6 @@ export type MappingWorkspaceProps =
 			onMappingChange?: () => void;
 	  };
 
-function blankGame(): GameMapping {
-	return {
-		racetime: {categorySlug: "", categoryName: ""},
-		speedrunCom: {gameId: "", gameName: ""},
-	};
-}
-
 function blankCategory(categorySlug: string): CategoryMapping {
 	return {
 		racetime: {categorySlug, goal: ""},
@@ -130,6 +123,23 @@ function categoryForTarget(target: RaceMappingTarget): CategoryMapping {
 			regionId: null,
 			emulator: null,
 			timingMethod: null,
+		},
+	};
+}
+
+function withGoalGame(
+	session: CategorySession,
+	gameId: string,
+): CategorySession {
+	if (session.draft.speedrunCom.gameId === gameId) return session;
+	return {
+		...session,
+		draft: {
+			...session.draft,
+			speedrunCom: {
+				...blankCategory(session.draft.racetime.categorySlug).speedrunCom,
+				gameId,
+			},
 		},
 	};
 }
@@ -341,6 +351,8 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		number | null
 	>(null);
 	const [gameQuery, setGameQuery] = useState("");
+	const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
+	const [gameMode, setGameMode] = useState<"add" | "rename" | null>(null);
 
 	const [gameSession, setGameSession] = useState<GameSession | null>(null);
 	const [categorySession, setCategorySession] =
@@ -486,9 +498,30 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		else action();
 	};
 
-	const makeGameSession = (record: GameMappingRecord | null): GameSession => {
+	const makeGameSession = (
+		record: GameMappingRecord | null,
+		slugOverride?: string,
+	): GameSession => {
+		const slug =
+			record?.mapping.racetime.categorySlug ??
+			slugOverride ??
+			target?.categorySlug ??
+			selectedSlug ??
+			"";
+		const name =
+			record?.mapping.racetime.categoryName ??
+			(slug === target?.categorySlug
+				? (target?.categoryName ?? "")
+				: (games.find(
+						(candidate) => candidate.mapping.racetime.categorySlug === slug,
+					)?.mapping.racetime.categoryName ?? ""));
 		const empty =
-			mode === "race" && target ? gameForTarget(target) : blankGame();
+			slug === "" && mode === "race" && target
+				? gameForTarget(target)
+				: {
+						racetime: {categorySlug: slug, categoryName: name},
+						speedrunCom: {gameId: "", gameName: ""},
+					};
 		return {
 			status: "normal",
 			baseline: record?.mapping ?? null,
@@ -507,7 +540,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		const slug =
 			record?.mapping.racetime.categorySlug ??
 			target?.categorySlug ??
-			gameSession?.draft.racetime.categorySlug ??
+			selectedSlug ??
 			"";
 		const empty =
 			mode === "race" && target
@@ -526,48 +559,84 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		};
 	};
 
-	const startGameSession = (
-		record: GameMappingRecord | null,
-		keepCategory = false,
-	) => {
+	const closeGameEdit = () => {
 		searchGen.current++;
-		if (!keepCategory && mode === "race" && target)
-			setCategorySession(
-				makeCategorySession(
-					findCategoryByKey(categories, target.categorySlug, target.goal),
-				),
-			);
-		else if (!keepCategory) setCategorySession(null);
+		setGameMode(null);
+		setGameSession(null);
 		setSrcResults([]);
 		setSrcQuery("");
-		setMessage(null);
-		setError(null);
-		setGameSession(makeGameSession(record));
 	};
 
-	const selectGame = (record: GameMappingRecord | null) => {
-		const sameRaceTimeGame =
-			record !== null &&
-			record.mapping.racetime.categorySlug ===
-				gameSession?.draft.racetime.categorySlug;
-		const action = () => startGameSession(record, sameRaceTimeGame);
-		if (sameRaceTimeGame) {
-			if (gameDirty) setPendingAction(() => action);
-			else action();
-		} else guard(action);
+	const requestCloseGameEdit = () => {
+		if (gameDirty) setPendingAction(() => closeGameEdit);
+		else closeGameEdit();
 	};
 
+	const beginGameEdit = (
+		nextMode: "add" | "rename",
+		record: GameMappingRecord | null,
+	) => {
+		const action = () => {
+			searchGen.current++;
+			setSrcResults([]);
+			setSrcQuery("");
+			setMessage(null);
+			setError(null);
+			setConfirmDelete(null);
+			setGameMode(nextMode);
+			setGameSession(
+				makeGameSession(
+					record,
+					nextMode === "add" ? (selectedSlug ?? "") : undefined,
+				),
+			);
+		};
+		if (gameDirty) setPendingAction(() => action);
+		else action();
+	};
+
+	const startNewRace = () => {
+		guard(() => {
+			searchGen.current++;
+			setSelectedSlug(null);
+			setCategorySession(null);
+			setSrcResults([]);
+			setSrcQuery("");
+			setConfirmDelete(null);
+			setMessage(null);
+			setError(null);
+			setGameMode("add");
+			setGameSession(makeGameSession(null, ""));
+		});
+	};
+
+	const selectRaceGame = (record: GameMappingRecord) => {
+		const slug = record.mapping.racetime.categorySlug;
+		if (slug === selectedSlug) return;
+		guard(() => {
+			setSelectedSlug(slug);
+			setCategorySession(null);
+			closeGameEdit();
+			setConfirmDelete(null);
+			setMessage(null);
+			setError(null);
+		});
+	};
+
+	const activeSlug =
+		mode === "race" ? (target?.categorySlug ?? "") : (selectedSlug ?? "");
 	const gameCategories = categories.filter(
-		(record) =>
-			record.mapping.racetime.categorySlug ===
-			(gameSession?.draft.racetime.categorySlug ?? ""),
+		(record) => record.mapping.racetime.categorySlug === activeSlug,
 	);
 	const registeredGames = games.filter(
-		(record) =>
-			record.mapping.racetime.categorySlug ===
-			(target?.categorySlug ?? gameSession?.draft.racetime.categorySlug),
+		(record) => record.mapping.racetime.categorySlug === activeSlug,
 	);
-	const gameKeyLocked = gameSession?.baseline !== null && gameSession !== null;
+	const raceCategoryName =
+		registeredGames[0]?.mapping.racetime.categoryName ??
+		games.find((record) => record.mapping.racetime.categorySlug === activeSlug)
+			?.mapping.racetime.categoryName ??
+		"";
+	const hasRegisteredGames = registeredGames.length > 0;
 
 	const startCategorySession = (record: CategoryMappingRecord | null) => {
 		setMessage(null);
@@ -583,16 +652,6 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		if (!target) return;
 		setError(null);
 		setMessage(null);
-		setGameSession(
-			(session) =>
-				session ??
-				makeGameSession(
-					games.find(
-						(record) =>
-							record.mapping.racetime.categorySlug === target.categorySlug,
-					) ?? null,
-				),
-		);
 		setCategorySession(
 			(session) =>
 				session ??
@@ -606,7 +665,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 	const closeEditor = () => {
 		setExpanded(false);
 		setConfirmClose(false);
-		setGameSession(null);
+		closeGameEdit();
 		setCategorySession(null);
 		setError(null);
 		setMessage(null);
@@ -618,7 +677,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 	const closeEditorAfterSave = () => {
 		setExpanded(false);
 		setConfirmClose(false);
-		setGameSession(null);
+		closeGameEdit();
 		setCategorySession(null);
 		setConfirmDelete(null);
 	};
@@ -738,6 +797,16 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 
 	const saveGame = async () => {
 		if (mutating || !gameSession || gameSession.status !== "normal") return;
+		const draft = gameSession.draft;
+		if (
+			!draft.racetime.categorySlug.trim() ||
+			!draft.racetime.categoryName.trim() ||
+			!draft.speedrunCom.gameId
+		) {
+			setError("RaceTime category slug、表示名、SRCゲームを入力してください。");
+			return;
+		}
+		const adding = gameMode === "add";
 		setMutating(true);
 		setBusy(true);
 		setError(null);
@@ -745,34 +814,57 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		let saved = false;
 		try {
 			const result = await request("saveGameMapping", {
-				mapping: gameSession.draft,
+				mapping: draft,
 				expectedRevision: gameSession.baselineRevision,
 				settingsRevision: gameSession.settingsRevision,
 			});
-			setGameSession({
-				status: "normal",
-				baseline: structuredClone(result.record.mapping),
-				baselineRevision: result.record.revision,
-				emptyDraft: gameSession.emptyDraft,
-				draft: structuredClone(result.record.mapping),
-				settingsRevision: gameSession.settingsRevision,
-				conflict: null,
-				comparison: null,
-			});
+			const savedGameId = result.record.mapping.speedrunCom.gameId;
 			setGames((current) => {
 				const key = result.record.mapping.racetime.categorySlug.trim();
 				return [
 					...current.filter(
 						(record) =>
 							record.mapping.racetime.categorySlug.trim() !== key ||
-							record.mapping.speedrunCom.gameId !==
-								result.record.mapping.speedrunCom.gameId,
+							record.mapping.speedrunCom.gameId !== savedGameId,
 					),
 					result.record,
 				];
 			});
 			setListSettingsRevision(result.settingsRevision);
-			setMessage("Game Mappingを保存しました。");
+			if (adding) {
+				if (mode === "manage" && selectedSlug === null)
+					setSelectedSlug(result.record.mapping.racetime.categorySlug);
+				if (categorySession)
+					setCategorySession((session) => {
+						if (!session) return session;
+						const next = withGoalGame(session, savedGameId);
+						if (session.baseline !== null) return next;
+						return {
+							...next,
+							emptyDraft: {
+								...next.emptyDraft,
+								speedrunCom: {
+									...next.emptyDraft.speedrunCom,
+									gameId: savedGameId,
+								},
+							},
+						};
+					});
+				setMessage("SRCゲームを追加しました。");
+				closeGameEdit();
+			} else {
+				setGameSession({
+					status: "normal",
+					baseline: structuredClone(result.record.mapping),
+					baselineRevision: result.record.revision,
+					emptyDraft: gameSession.emptyDraft,
+					draft: structuredClone(result.record.mapping),
+					settingsRevision: gameSession.settingsRevision,
+					conflict: null,
+					comparison: null,
+				});
+				setMessage("SRCゲームの表示名を保存しました。");
+			}
 			onMappingChange?.();
 			saved = true;
 		} catch (cause) {
@@ -804,26 +896,23 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 				settingsRevision: gameSession.settingsRevision,
 			});
 			setConfirmDelete(null);
+			const removedGameId = gameSession.draft.speedrunCom.gameId;
 			const remaining = games.filter(
 				(record) =>
 					record.mapping.racetime.categorySlug !==
 						gameSession.draft.racetime.categorySlug ||
-					record.mapping.speedrunCom.gameId !==
-						gameSession.draft.speedrunCom.gameId,
+					record.mapping.speedrunCom.gameId !== removedGameId,
 			);
 			setGames(remaining);
-			setGameSession(
-				makeGameSession(
-					remaining.find(
-						(record) =>
-							record.mapping.racetime.categorySlug ===
-							gameSession.draft.racetime.categorySlug,
-					) ?? null,
-				),
+			closeGameEdit();
+			setCategorySession((session) =>
+				session && session.draft.speedrunCom.gameId === removedGameId
+					? withGoalGame(session, "")
+					: session,
 			);
 			onMappingChange?.();
 			await refreshLists();
-			setMessage("Game Mappingを削除しました。");
+			setMessage("SRCゲームの登録を解除しました。");
 		} catch (cause) {
 			setConfirmDelete(null);
 			await handleSaveFailure(cause);
@@ -871,7 +960,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 			setListSettingsRevision(result.settingsRevision);
 			setMessage("Category Mappingを保存しました。");
 			onMappingChange?.();
-			if (closeOnSuccess) closeEditorAfterSave();
+			if (closeOnSuccess && mode === "race") closeEditorAfterSave();
 			saved = true;
 		} catch (cause) {
 			await handleSaveFailure(cause);
@@ -905,10 +994,10 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 				expectedRevision: categorySession.baselineRevision,
 				settingsRevision: categorySession.settingsRevision,
 			});
-			setMessage("Category Mappingを削除しました。");
 			setConfirmDelete(null);
 			if (mode === "race") startCategorySession(null);
 			else setCategorySession(null);
+			setMessage("Category Mappingを削除しました。");
 			onMappingChange?.();
 			await refreshLists();
 		} catch (cause) {
@@ -969,6 +1058,21 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		);
 		setSrcResults([]);
 		setSrcQuery("");
+	};
+
+	const chooseGoalGame = (gameId: string) => {
+		if (categorySession?.draft.speedrunCom.gameId === gameId) return;
+		optionsGen.current++;
+		variablesGen.current++;
+		setOptions(null);
+		setOptionsFor(null);
+		setVariables([]);
+		setVariablesFor(null);
+		requestedOptions.current = null;
+		requestedVariables.current = null;
+		setCategorySession((session) =>
+			session ? withGoalGame(session, gameId) : session,
+		);
 	};
 
 	const chooseCategory = (option: SpeedrunCategoryOption) => {
@@ -1059,15 +1163,12 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 	const raceCategoryRecord = target
 		? findCategoryByKey(categories, target.categorySlug, target.goal)
 		: null;
-	const raceGameRecord = target
-		? (games.find(
-				(record) =>
-					record.mapping.racetime.categorySlug === target.categorySlug &&
-					(!raceCategoryRecord ||
-						record.mapping.speedrunCom.gameId ===
-							raceCategoryRecord.mapping.speedrunCom.gameId),
-			) ?? null)
-		: null;
+	const categoryGameId = categorySession?.draft.speedrunCom.gameId ?? "";
+	const hasCategoryGame =
+		categoryGameId !== "" &&
+		registeredGames.some(
+			(record) => record.mapping.speedrunCom.gameId === categoryGameId,
+		);
 	const shownError = mode === "manage" ? (error ?? listsError) : error;
 
 	return (
@@ -1075,11 +1176,11 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 			{mode === "manage" && (
 				<aside className='panel'>
 					<div className='toolbar'>
-						<h2>Game Mappings</h2>
+						<h2>RaceTimeゲーム</h2>
 						<button
 							type='button'
-							disabled={busy}
-							onClick={() => selectGame(null)}
+							disabled={busy || mutating}
+							onClick={startNewRace}
 						>
 							＋ 新規
 						</button>
@@ -1091,34 +1192,37 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 						onChange={(event) => setGameQuery(event.target.value)}
 					/>
 					<ul className='list'>
-						{filteredGames.map((record) => (
-							<li key={record.mapping.racetime.categorySlug}>
-								<button
-									type='button'
-									disabled={busy}
-									className={
-										gameSession?.draft.racetime.categorySlug ===
-										record.mapping.racetime.categorySlug
-											? "active"
-											: ""
-									}
-									onClick={() => selectGame(record)}
-								>
-									<strong>
-										{record.mapping.racetime.categoryName ||
-											record.mapping.racetime.categorySlug}
-									</strong>
-									<small>{record.mapping.speedrunCom.gameName}</small>
-								</button>
-							</li>
-						))}
+						{filteredGames.map((record) => {
+							const slug = record.mapping.racetime.categorySlug;
+							const names = games
+								.filter(
+									(candidate) =>
+										candidate.mapping.racetime.categorySlug === slug,
+								)
+								.map((candidate) => candidate.mapping.speedrunCom.gameName);
+							return (
+								<li key={slug}>
+									<button
+										type='button'
+										disabled={busy || mutating}
+										className={selectedSlug === slug ? "active" : ""}
+										onClick={() => selectRaceGame(record)}
+									>
+										<strong>
+											{record.mapping.racetime.categoryName || slug}
+										</strong>
+										<small>{names.join(" / ")}</small>
+									</button>
+								</li>
+							);
+						})}
 					</ul>
 					<button
 						type='button'
-						disabled={busy}
+						disabled={busy || mutating}
 						onClick={() => void reloadLatest()}
 					>
-						保存先から再読込
+						再読み込み
 					</button>
 				</aside>
 			)}
@@ -1127,7 +1231,6 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 				{mode === "race" && target && (
 					<RaceMappingSummary
 						target={target}
-						game={raceGameRecord}
 						games={games.filter(
 							(record) =>
 								record.mapping.racetime.categorySlug === target.categorySlug,
@@ -1146,197 +1249,381 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 				)}
 				{message && <Callout tone='success'>{message}</Callout>}
 
-				{gameSession === null || (mode === "race" && !expanded) ? (
-					mode === "race" ? null : (
-						<p className='muted'>
-							Game Mappingを選択するか、＋新規で作成してください。
-						</p>
-					)
-				) : (
-					<>
-						<h2>Game Mapping</h2>
-						<div className='subpanel'>
-							<h3>登録済みSRCゲーム</h3>
-							<ul className='list horizontal'>
-								{registeredGames.map((record) => (
-									<li key={record.mapping.speedrunCom.gameId}>
-										<button
-											type='button'
-											disabled={busy || mutating}
-											onClick={() => selectGame(record)}
-										>
-											{record.mapping.speedrunCom.gameName}
-										</button>
-									</li>
-								))}
-							</ul>
-							<button
-								type='button'
-								disabled={busy || mutating}
-								onClick={() =>
-									guard(() => {
-										const next = makeGameSession(null);
-										next.draft.racetime = {...gameSession.draft.racetime};
-										next.emptyDraft.racetime = {...gameSession.draft.racetime};
-										startGameSession(null);
-										setGameSession(next);
-									})
-								}
-							>
-								SRCゲームを追加
-							</button>
-						</div>
-						{gameSession.status === "conflict" && (
-							<SessionConflict
-								label='Game Mapping'
-								deleted={gameSession.conflict === null}
-								before={gameSession.conflict?.mapping ?? gameSession.emptyDraft}
-								after={gameSession.draft}
-								busy={busy}
-								onAdopt={adoptGameLatest}
-								onReEdit={reEditGameLatest}
-							/>
-						)}
-						{gameSession.status === "invalid" && (
-							<Callout tone='warning'>
-								このGame
-								Mappingは保存先から削除されたか、Spreadsheet設定が変更されました。保存できません。再読込して選び直してください。
-							</Callout>
-						)}
-						{gameSession.comparison && (
-							<div className='subpanel'>
-								<h3>前回の編集内容（比較用・自動適用しません）</h3>
-								<DiffTable
-									before={gameSession.baseline ?? gameSession.emptyDraft}
-									after={gameSession.comparison}
-								/>
-								<div className='button-row'>
-									<button
-										type='button'
-										onClick={() =>
-											setGameSession((session) =>
-												session ? {...session, comparison: null} : session,
-											)
-										}
-									>
-										比較を閉じる
-									</button>
-								</div>
-							</div>
-						)}
-						<form
-							onSubmit={(event) => {
-								event.preventDefault();
-								void saveGame();
-							}}
-						>
-							<div className='grid'>
-								<Field label='RaceTime category slug（一意キー）'>
-									<input
-										value={gameSession.draft.racetime.categorySlug}
-										readOnly={mode === "race" || gameSession.baseline !== null}
-										disabled={mutating}
-										onChange={(event) =>
-											setGameSession((session) =>
-												session
-													? {
-															...session,
-															draft: {
-																...session.draft,
-																racetime: {
-																	...session.draft.racetime,
-																	categorySlug: event.target.value,
-																},
-															},
-														}
-													: session,
-											)
-										}
-									/>
-								</Field>
-								<Field label='RaceTime category name（表示用）'>
-									<input
-										value={gameSession.draft.racetime.categoryName}
-										readOnly={mode === "race"}
-										disabled={mutating}
-										onChange={(event) =>
-											setGameSession((session) =>
-												session
-													? {
-															...session,
-															draft: {
-																...session.draft,
-																racetime: {
-																	...session.draft.racetime,
-																	categoryName: event.target.value,
-																},
-															},
-														}
-													: session,
-											)
-										}
-									/>
-								</Field>
-							</div>
-							{gameSession.baseline !== null && (
-								<p className='muted'>
-									一意キーの変更はできません。変更する場合は削除して新規登録してください。
-								</p>
-							)}
+				{mode === "manage" && selectedSlug === null && gameMode !== "add" && (
+					<p className='muted'>
+						RaceTimeゲームを選択するか、＋新規で作成してください。
+					</p>
+				)}
 
+				{mode === "race" && !expanded ? null : (
+					<>
+						{mode === "manage" && selectedSlug !== null && (
+							<div className='mapping-target'>
+								<span className='muted'>RaceTime</span>
+								<strong>
+									{raceCategoryName || selectedSlug} ({selectedSlug})
+								</strong>
+							</div>
+						)}
+
+						{(mode === "race" || selectedSlug !== null) && (
 							<div className='subpanel'>
-								<h3>Speedrun.com ゲーム（手動選択）</h3>
-								{gameKeyLocked && (
-									<Field label='SRCゲーム名（表示用）'>
-										<input
-											value={gameSession.draft.speedrunCom.gameName}
-											disabled={mutating}
-											onChange={(event) =>
-												setGameSession((session) =>
-													session
-														? {
-																...session,
-																draft: {
-																	...session.draft,
-																	speedrunCom: {
-																		...session.draft.speedrunCom,
-																		gameName: event.target.value,
-																	},
-																},
-															}
-														: session,
-												)
-											}
-										/>
-									</Field>
+								<h3>登録済みSRCゲーム</h3>
+								{registeredGames.length === 0 ? (
+									<p className='muted'>未登録</p>
+								) : (
+									<ul className='src-game-list'>
+										{registeredGames.map((record) => {
+											const gameId = record.mapping.speedrunCom.gameId;
+											const gameName = record.mapping.speedrunCom.gameName;
+											const checked =
+												categorySession?.draft.speedrunCom.gameId === gameId;
+											const editingThisGame =
+												gameMode === "rename" &&
+												gameSession?.draft.speedrunCom.gameId === gameId;
+											return (
+												<li
+													key={gameId}
+													className='src-game-row'
+												>
+													<div className='src-game-main'>
+														<label className='src-game-choice'>
+															<input
+																type='radio'
+																name={`goal-src-game-${activeSlug}`}
+																aria-label={gameName}
+																checked={checked}
+																disabled={
+																	busy || mutating || categorySession === null
+																}
+																onChange={() => chooseGoalGame(gameId)}
+															/>
+															<span>{gameName}</span>
+														</label>
+														<button
+															type='button'
+															className='game-menu-button'
+															aria-label={`${gameName} の管理`}
+															disabled={busy || mutating}
+															onClick={() => {
+																if (editingThisGame) requestCloseGameEdit();
+																else beginGameEdit("rename", record);
+															}}
+														>
+															⋯
+														</button>
+													</div>
+													{editingThisGame && gameSession && (
+														<div className='game-manage'>
+															{gameSession.status === "conflict" && (
+																<SessionConflict
+																	label='Game Mapping'
+																	deleted={gameSession.conflict === null}
+																	before={
+																		gameSession.conflict?.mapping ??
+																		gameSession.emptyDraft
+																	}
+																	after={gameSession.draft}
+																	busy={busy}
+																	onAdopt={adoptGameLatest}
+																	onReEdit={reEditGameLatest}
+																/>
+															)}
+															{gameSession.status === "invalid" && (
+																<Callout tone='warning'>
+																	このSRCゲームは保存先から削除されたか、Spreadsheet設定が変更されました。保存できません。再読み込みして選び直してください。
+																</Callout>
+															)}
+															{gameSession.comparison && (
+																<div className='subpanel'>
+																	<h3>
+																		前回の編集内容（比較用・自動適用しません）
+																	</h3>
+																	<DiffTable
+																		before={
+																			gameSession.baseline ??
+																			gameSession.emptyDraft
+																		}
+																		after={gameSession.comparison}
+																	/>
+																	<div className='button-row'>
+																		<button
+																			type='button'
+																			onClick={() =>
+																				setGameSession((session) =>
+																					session
+																						? {
+																								...session,
+																								comparison: null,
+																							}
+																						: session,
+																				)
+																			}
+																		>
+																			比較を閉じる
+																		</button>
+																	</div>
+																</div>
+															)}
+															<Field label='SRCゲーム名（表示用）'>
+																<input
+																	aria-label={`${gameName} の表示名`}
+																	value={gameSession.draft.speedrunCom.gameName}
+																	disabled={mutating}
+																	onChange={(event) =>
+																		setGameSession((session) =>
+																			session
+																				? {
+																						...session,
+																						draft: {
+																							...session.draft,
+																							speedrunCom: {
+																								...session.draft.speedrunCom,
+																								gameName: event.target.value,
+																							},
+																						},
+																					}
+																				: session,
+																		)
+																	}
+																/>
+															</Field>
+															<div className='button-row'>
+																<button
+																	type='button'
+																	disabled={busy || mutating || gameBlocked}
+																	onClick={() => void saveGame()}
+																>
+																	{busy ? "保存中…" : "保存"}
+																</button>
+																<button
+																	type='button'
+																	disabled={busy || mutating || !gameDirty}
+																	onClick={() =>
+																		setGameSession((session) =>
+																			session
+																				? {
+																						...session,
+																						draft: structuredClone(
+																							session.baseline ??
+																								session.emptyDraft,
+																						),
+																					}
+																				: session,
+																		)
+																	}
+																>
+																	元に戻す
+																</button>
+																<div className='danger-zone'>
+																	{confirmDelete === "game" ? (
+																		<>
+																			<span>
+																				このSRCゲームの登録を解除しますか？
+																			</span>
+																			<button
+																				type='button'
+																				disabled={busy || mutating}
+																				onClick={() => void removeGame()}
+																			>
+																				登録解除を確定
+																			</button>
+																			<button
+																				type='button'
+																				onClick={() => setConfirmDelete(null)}
+																			>
+																				キャンセル
+																			</button>
+																		</>
+																	) : (
+																		<button
+																			type='button'
+																			disabled={busy || mutating}
+																			onClick={() => setConfirmDelete("game")}
+																		>
+																			登録解除
+																		</button>
+																	)}
+																</div>
+															</div>
+														</div>
+													)}
+												</li>
+											);
+										})}
+									</ul>
 								)}
-								{gameKeyLocked && (
+								{gameMode === "rename" &&
+									gameSession &&
+									!registeredGames.some(
+										(record) =>
+											record.mapping.speedrunCom.gameId ===
+											gameSession.draft.speedrunCom.gameId,
+									) && (
+										<div className='game-manage'>
+											{gameSession.status === "conflict" && (
+												<SessionConflict
+													label='Game Mapping'
+													deleted={gameSession.conflict === null}
+													before={
+														gameSession.conflict?.mapping ??
+														gameSession.emptyDraft
+													}
+													after={gameSession.draft}
+													busy={busy}
+													onAdopt={adoptGameLatest}
+													onReEdit={reEditGameLatest}
+												/>
+											)}
+											{gameSession.status === "invalid" && (
+												<Callout tone='warning'>
+													このSRCゲームは保存先から削除されたか、Spreadsheet設定が変更されました。保存できません。再読み込みして選び直してください。
+												</Callout>
+											)}
+											<div className='button-row'>
+												<button
+													type='button'
+													disabled={busy || mutating}
+													onClick={requestCloseGameEdit}
+												>
+													閉じる
+												</button>
+											</div>
+										</div>
+									)}
+								{mode === "manage" && categorySession === null && (
+									<p className='muted'>Goalを選択するとSRCゲームを選べます。</p>
+								)}
+								<button
+									type='button'
+									disabled={busy || mutating || gameMode === "add"}
+									onClick={() => beginGameEdit("add", null)}
+								>
+									SRCゲームを追加
+								</button>
+							</div>
+						)}
+
+						{gameMode === "add" && gameSession && (
+							<form
+								className='subpanel game-registration'
+								onSubmit={(event) => {
+									event.preventDefault();
+									void saveGame();
+								}}
+							>
+								<h3>SRCゲームを追加</h3>
+								{gameSession.status === "conflict" && (
+									<SessionConflict
+										label='Game Mapping'
+										deleted={gameSession.conflict === null}
+										before={
+											gameSession.conflict?.mapping ?? gameSession.emptyDraft
+										}
+										after={gameSession.draft}
+										busy={busy}
+										onAdopt={adoptGameLatest}
+										onReEdit={reEditGameLatest}
+									/>
+								)}
+								{gameSession.status === "invalid" && (
 									<Callout tone='warning'>
-										登録済みのSRCゲームIDは変更できません。別のゲームは追加してください。
+										このGame
+										Mappingは保存先から削除されたか、Spreadsheet設定が変更されました。保存できません。再読み込みして選び直してください。
 									</Callout>
 								)}
-								<p className='muted'>
-									選択中: {gameSession.draft.speedrunCom.gameName || "未選択"}
-									{gameSession.draft.speedrunCom.gameId
-										? ` (${gameSession.draft.speedrunCom.gameId})`
-										: ""}
-								</p>
+								{gameSession.comparison && (
+									<div className='subpanel'>
+										<h3>前回の編集内容（比較用・自動適用しません）</h3>
+										<DiffTable
+											before={gameSession.baseline ?? gameSession.emptyDraft}
+											after={gameSession.comparison}
+										/>
+										<div className='button-row'>
+											<button
+												type='button'
+												onClick={() =>
+													setGameSession((session) =>
+														session
+															? {
+																	...session,
+																	comparison: null,
+																}
+															: session,
+													)
+												}
+											>
+												比較を閉じる
+											</button>
+										</div>
+									</div>
+								)}
+								{selectedSlug === null ? (
+									<div className='grid'>
+										<Field label='RaceTime category slug'>
+											<input
+												value={gameSession.draft.racetime.categorySlug}
+												disabled={mutating}
+												onChange={(event) =>
+													setGameSession((session) =>
+														session
+															? {
+																	...session,
+																	draft: {
+																		...session.draft,
+																		racetime: {
+																			...session.draft.racetime,
+																			categorySlug: event.target.value,
+																		},
+																	},
+																}
+															: session,
+													)
+												}
+											/>
+										</Field>
+										<Field label='RaceTime category name'>
+											<input
+												value={gameSession.draft.racetime.categoryName}
+												disabled={mutating}
+												onChange={(event) =>
+													setGameSession((session) =>
+														session
+															? {
+																	...session,
+																	draft: {
+																		...session.draft,
+																		racetime: {
+																			...session.draft.racetime,
+																			categoryName: event.target.value,
+																		},
+																	},
+																}
+															: session,
+													)
+												}
+											/>
+										</Field>
+									</div>
+								) : (
+									<div className='mapping-target'>
+										<span className='muted'>RaceTime</span>
+										<strong>
+											{raceCategoryName || selectedSlug} ({selectedSlug})
+										</strong>
+									</div>
+								)}
 								<div className='formrow'>
 									<input
 										aria-label='SRCゲーム検索'
 										placeholder='ゲーム名で検索'
-										disabled={gameKeyLocked || mutating}
+										disabled={mutating}
 										value={srcQuery}
 										onChange={(event) => setSrcQuery(event.target.value)}
 									/>
 									<button
 										type='button'
-										disabled={
-											busy ||
-											mutating ||
-											gameKeyLocked ||
-											srcQuery.trim() === ""
-										}
+										disabled={busy || mutating || srcQuery.trim() === ""}
 										onClick={() => void searchGames()}
 									>
 										検索
@@ -1348,7 +1635,6 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 										type='button'
 										className='choice'
 										disabled={
-											gameKeyLocked ||
 											mutating ||
 											registeredGames.some(
 												(record) =>
@@ -1360,73 +1646,53 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 										{game.name} ({game.abbreviation})
 									</button>
 								))}
-							</div>
+								<p className='muted'>
+									選択中: {gameSession.draft.speedrunCom.gameName || "未選択"}
+									{gameSession.draft.speedrunCom.gameId
+										? ` (${gameSession.draft.speedrunCom.gameId})`
+										: ""}
+								</p>
+								<div className='button-row'>
+									<button
+										type='submit'
+										disabled={
+											busy ||
+											mutating ||
+											gameBlocked ||
+											!gameSession.draft.racetime.categorySlug.trim() ||
+											!gameSession.draft.racetime.categoryName.trim() ||
+											!gameSession.draft.speedrunCom.gameId
+										}
+									>
+										{busy ? "保存中…" : "保存"}
+									</button>
+									<button
+										type='button'
+										disabled={busy || mutating}
+										onClick={requestCloseGameEdit}
+									>
+										キャンセル
+									</button>
+								</div>
+							</form>
+						)}
 
-							<div className='button-row'>
-								<button
-									type='submit'
-									disabled={busy || mutating || gameBlocked}
-								>
-									{busy ? "保存中…" : "Game Mappingを保存"}
-								</button>
-								<button
-									type='button'
-									disabled={busy || mutating || !gameDirty}
-									onClick={() =>
-										setGameSession((session) =>
-											session
-												? {
-														...session,
-														draft: structuredClone(
-															session.baseline ?? session.emptyDraft,
-														),
-													}
-												: session,
-										)
-									}
-								>
-									Revert
-								</button>
-								{gameSession.baselineRevision !== null &&
-									(confirmDelete === "game" ? (
-										<>
-											<span>
-												子Category
-												Mappingがある場合は削除できません。削除しますか？
-											</span>
-											<button
-												type='button'
-												disabled={busy || mutating}
-												onClick={() => void removeGame()}
-											>
-												削除を確定
-											</button>
-											<button
-												type='button'
-												onClick={() => setConfirmDelete(null)}
-											>
-												キャンセル
-											</button>
-										</>
-									) : (
-										<button
-											type='button'
-											disabled={busy || mutating}
-											onClick={() => setConfirmDelete("game")}
-										>
-											削除
-										</button>
-									))}
-							</div>
-						</form>
-
-						<h2>Category Mappings</h2>
-						{registeredGames.length === 0 ? (
-							<p className='muted'>先にGame Mappingを保存してください。</p>
-						) : (
-							<>
-								{mode === "manage" && (
-									<ul className='list horizontal'>
+						{mode === "manage" && selectedSlug !== null && (
+							<div className='subpanel'>
+								<div className='toolbar'>
+									<h3>Goals</h3>
+									<button
+										type='button'
+										disabled={busy || !hasRegisteredGames}
+										onClick={() => selectCategory(null)}
+									>
+										＋ 新規 Goal
+									</button>
+								</div>
+								{gameCategories.length === 0 ? (
+									<p className='muted'>Goalはまだ登録されていません。</p>
+								) : (
+									<ul className='list'>
 										{gameCategories.map((record) => (
 											<li key={record.mapping.racetime.goal}>
 												<button
@@ -1455,157 +1721,119 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 												</button>
 											</li>
 										))}
-										<li>
-											<button
-												type='button'
-												disabled={busy}
-												onClick={() => selectCategory(null)}
-											>
-												＋ 新規 Goal
-											</button>
-										</li>
 									</ul>
 								)}
-								{categorySession ? (
-									<>
-										{categorySession.status === "conflict" && (
-											<SessionConflict
-												label='Category Mapping'
-												deleted={categorySession.conflict === null}
-												before={
-													categorySession.conflict?.mapping ??
-													categorySession.emptyDraft
-												}
-												after={categorySession.draft}
-												busy={busy}
-												onAdopt={adoptCategoryLatest}
-												onReEdit={reEditCategoryLatest}
-											/>
-										)}
-										{categorySession.status === "invalid" && (
-											<Callout tone='warning'>
-												このCategory
-												Mappingは保存先から削除されたか、Spreadsheet設定が変更されました。保存できません。再読込して選び直してください。
-											</Callout>
-										)}
-										{categorySession.comparison && (
-											<div className='subpanel'>
-												<h3>前回の編集内容（比較用・自動適用しません）</h3>
-												<DiffTable
-													before={
-														categorySession.baseline ??
-														categorySession.emptyDraft
-													}
-													after={categorySession.comparison}
-												/>
-												<div className='button-row'>
-													<button
-														type='button'
-														onClick={() =>
-															setCategorySession((session) =>
-																session
-																	? {...session, comparison: null}
-																	: session,
-															)
-														}
-													>
-														比較を閉じる
-													</button>
-												</div>
-											</div>
-										)}
-										<CategoryEditor
-											draft={categorySession.draft}
-											games={registeredGames}
-											onGame={(gameId) => {
-												optionsGen.current++;
-												variablesGen.current++;
-												setOptions(null);
-												setOptionsFor(null);
-												setVariables([]);
-												setVariablesFor(null);
-												requestedOptions.current = null;
-												requestedVariables.current = null;
-												setCategorySession((session) =>
-													session
-														? {
-																...session,
-																draft: {
-																	...session.draft,
-																	speedrunCom: {
-																		...blankCategory(
-																			session.draft.racetime.categorySlug,
-																		).speedrunCom,
-																		gameId,
-																	},
-																},
-															}
-														: session,
-												);
-											}}
-											options={options}
-											variables={variables}
-											busy={busy}
-											disabled={mutating}
-											dirty={categoryDirty}
-											expected={categorySession.baselineRevision}
-											confirmDelete={confirmDelete === "category"}
-											missingPbVariable={missingPbVariable}
-											variablesReady={variablesReady}
-											optionsReady={
-												optionsReady &&
-												!!categorySession.draft.speedrunCom.gameId &&
-												registeredGames.some(
-													(record) =>
-														record.mapping.speedrunCom.gameId ===
-														categorySession.draft.speedrunCom.gameId,
-												)
-											}
-											blocked={categoryBlocked}
-											goalLocked={mode === "race"}
-											onField={setCategoryField}
-											onChooseCategory={chooseCategory}
-											onRemoveVariable={removeVariable}
-											onGoal={(goal) =>
-												setCategorySession((session) =>
-													session
-														? {
-																...session,
-																draft: {
-																	...session.draft,
-																	racetime: {
-																		...session.draft.racetime,
-																		goal,
-																	},
-																},
-															}
-														: session,
-												)
-											}
-											onSave={() => void saveCategory()}
-											onRevert={() =>
-												setCategorySession((session) =>
-													session
-														? {
-																...session,
-																draft: structuredClone(
-																	session.baseline ?? session.emptyDraft,
-																),
-															}
-														: session,
-												)
-											}
-											onDeleteRequest={() => setConfirmDelete("category")}
-											onDeleteConfirm={() => void removeCategory()}
-											onDeleteCancel={() => setConfirmDelete(null)}
-										/>
-									</>
-								) : (
-									<p className='muted'>
-										Goalを選択するか新規作成してください。
-									</p>
+							</div>
+						)}
+
+						{categorySession ? (
+							<>
+								{categorySession.status === "conflict" && (
+									<SessionConflict
+										label='Category Mapping'
+										deleted={categorySession.conflict === null}
+										before={
+											categorySession.conflict?.mapping ??
+											categorySession.emptyDraft
+										}
+										after={categorySession.draft}
+										busy={busy}
+										onAdopt={adoptCategoryLatest}
+										onReEdit={reEditCategoryLatest}
+									/>
 								)}
+								{categorySession.status === "invalid" && (
+									<Callout tone='warning'>
+										このCategory
+										Mappingは保存先から削除されたか、Spreadsheet設定が変更されました。保存できません。再読み込みして選び直してください。
+									</Callout>
+								)}
+								{categorySession.comparison && (
+									<div className='subpanel'>
+										<h3>前回の編集内容（比較用・自動適用しません）</h3>
+										<DiffTable
+											before={
+												categorySession.baseline ?? categorySession.emptyDraft
+											}
+											after={categorySession.comparison}
+										/>
+										<div className='button-row'>
+											<button
+												type='button'
+												onClick={() =>
+													setCategorySession((session) =>
+														session
+															? {
+																	...session,
+																	comparison: null,
+																}
+															: session,
+													)
+												}
+											>
+												比較を閉じる
+											</button>
+										</div>
+									</div>
+								)}
+								<CategoryEditor
+									draft={categorySession.draft}
+									hasGame={hasCategoryGame}
+									isNewGoal={categorySession.baseline === null}
+									options={options}
+									variables={variables}
+									busy={busy}
+									disabled={mutating}
+									dirty={categoryDirty}
+									expected={categorySession.baselineRevision}
+									confirmDelete={confirmDelete === "category"}
+									missingPbVariable={missingPbVariable}
+									variablesReady={variablesReady}
+									optionsReady={optionsReady}
+									blocked={categoryBlocked}
+									goalLocked={mode === "race"}
+									onField={setCategoryField}
+									onChooseCategory={chooseCategory}
+									onRemoveVariable={removeVariable}
+									onGoal={(goal) =>
+										setCategorySession((session) =>
+											session
+												? {
+														...session,
+														draft: {
+															...session.draft,
+															racetime: {
+																...session.draft.racetime,
+																goal,
+															},
+														},
+													}
+												: session,
+										)
+									}
+									onSave={() => void saveCategory()}
+									onRevert={() =>
+										setCategorySession((session) =>
+											session
+												? {
+														...session,
+														draft: structuredClone(
+															session.baseline ?? session.emptyDraft,
+														),
+													}
+												: session,
+										)
+									}
+									onDeleteRequest={() => setConfirmDelete("category")}
+									onDeleteConfirm={() => void removeCategory()}
+									onDeleteCancel={() => setConfirmDelete(null)}
+								/>
 							</>
+						) : (
+							mode === "manage" &&
+							selectedSlug !== null && (
+								<p className='muted'>Goalを選択するか新規作成してください。</p>
+							)
 						)}
 					</>
 				)}
@@ -1664,7 +1892,6 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 
 function RaceMappingSummary({
 	target,
-	game,
 	games,
 	category,
 	ready,
@@ -1675,7 +1902,6 @@ function RaceMappingSummary({
 	onReload,
 }: {
 	target: RaceMappingTarget;
-	game: GameMappingRecord | null;
 	games: GameMappingRecord[];
 	category: CategoryMappingRecord | null;
 	ready: boolean;
@@ -1685,19 +1911,26 @@ function RaceMappingSummary({
 	onToggle: () => void;
 	onReload: () => void;
 }) {
-	const inconsistent =
-		ready && error === null && game === null && category !== null;
 	const pending = !ready || error !== null;
+	const referencedGameId = category?.mapping.speedrunCom.gameId;
+	const primaryGame = referencedGameId
+		? (games.find(
+				(record) => record.mapping.speedrunCom.gameId === referencedGameId,
+			) ?? null)
+		: (games[0] ?? null);
+	const otherGames = games.filter(
+		(record) =>
+			record.mapping.speedrunCom.gameId !==
+			primaryGame?.mapping.speedrunCom.gameId,
+	);
+	const inconsistent =
+		ready && error === null && category !== null && primaryGame === null;
 	const gameLabel = pending
 		? "—"
-		: games.length > 0
-			? `登録済み: ${games.map((record) => record.mapping.speedrunCom.gameName).join(" / ")}`
-			: "未登録";
+		: (primaryGame?.mapping.speedrunCom.gameName ?? "未登録");
 	const categoryLabel = pending
 		? "—"
-		: category
-			? `登録済み: ${category.mapping.speedrunCom.categoryName}`
-			: "未登録";
+		: (category?.mapping.speedrunCom.categoryName ?? "未登録");
 	return (
 		<div className='subpanel race-mapping-summary'>
 			<div className='toolbar'>
@@ -1715,30 +1948,38 @@ function RaceMappingSummary({
 						disabled={busy}
 						onClick={onReload}
 					>
-						保存先から再読込
+						再読み込み
 					</button>
 				</div>
 			</div>
-			<dl className='details'>
-				<div>
-					<dt>RaceTimeゲーム</dt>
-					<dd>
-						{target.categoryName} ({target.categorySlug})
-					</dd>
-				</div>
-				<div>
-					<dt>RaceTime Goal</dt>
-					<dd>{target.goal}</dd>
-				</div>
-				<div>
-					<dt>Game Mapping</dt>
-					<dd>{gameLabel}</dd>
-				</div>
-				<div>
-					<dt>Category Mapping</dt>
-					<dd>{categoryLabel}</dd>
-				</div>
-			</dl>
+			<table className='mapping-summary'>
+				<thead>
+					<tr>
+						<th>RaceTime</th>
+						<th>Speedrun.com</th>
+					</tr>
+				</thead>
+				<tbody>
+					<tr>
+						<td>
+							{target.categoryName} ({target.categorySlug})
+						</td>
+						<td>{gameLabel}</td>
+					</tr>
+					<tr>
+						<td>{target.goal}</td>
+						<td>{categoryLabel}</td>
+					</tr>
+				</tbody>
+			</table>
+			{otherGames.length > 0 && (
+				<p className='muted'>
+					その他のSRCゲーム:{" "}
+					{otherGames
+						.map((record) => record.mapping.speedrunCom.gameName)
+						.join(" / ")}
+				</p>
+			)}
 			{!ready && error === null && (
 				<p className='muted'>マッピング情報を取得中です…</p>
 			)}
@@ -1749,8 +1990,8 @@ function RaceMappingSummary({
 			)}
 			{inconsistent && (
 				<Callout tone='warning'>
-					Game Mappingが未登録のため不整合です。先にGame
-					Mappingを登録してください。
+					Category
+					Mappingが参照するSRCゲームが未登録です。SRCゲームを追加してください。
 				</Callout>
 			)}
 		</div>
@@ -1808,8 +2049,8 @@ function SessionConflict({
 
 function CategoryEditor({
 	draft,
-	games,
-	onGame,
+	hasGame,
+	isNewGoal,
 	options,
 	variables,
 	busy,
@@ -1833,8 +2074,8 @@ function CategoryEditor({
 	onDeleteCancel,
 }: {
 	draft: CategoryMapping;
-	games: GameMappingRecord[];
-	onGame: (gameId: string) => void;
+	hasGame: boolean;
+	isNewGoal: boolean;
 	options: SpeedrunGameOptions | null;
 	variables: SpeedrunVariableOption[];
 	busy: boolean;
@@ -1863,7 +2104,6 @@ function CategoryEditor({
 	const selectedCategory = options?.categories.find(
 		(option) => option.id === draft.speedrunCom.categoryId,
 	);
-	const goalReadOnly = goalLocked || expected !== null;
 	const unsupportedAny = variablesReady
 		? variables.filter(
 				(variable) =>
@@ -1880,14 +2120,23 @@ function CategoryEditor({
 				)
 				.map(([id]) => id)
 		: [];
-	const saveDisabled =
-		busy ||
-		disabled ||
-		missingPbVariable ||
-		!variablesReady ||
-		blocked ||
-		unsupportedAny.length > 0 ||
-		removedVariables.length > 0;
+	const goalMissing = isNewGoal && !goalLocked && !draft.racetime.goal.trim();
+	const requirementIssue = !hasGame
+		? "SRCゲームを選択してください。"
+		: goalMissing
+			? "Goalを入力してください。"
+			: draft.speedrunCom.categoryId === ""
+				? "SRCカテゴリを選択してください。"
+				: !variablesReady
+					? "Variablesを取得中です…"
+					: missingPbVariable
+						? "PB区分のVariableが未選択です。"
+						: unsupportedAny.length > 0
+							? "利用できないAnyがあります。"
+							: removedVariables.length > 0
+								? "削除されたVariableが残っています。"
+								: null;
+	const saveDisabled = busy || disabled || blocked || requirementIssue !== null;
 	return (
 		<form
 			className='subpanel category-editor'
@@ -1896,40 +2145,26 @@ function CategoryEditor({
 				onSave();
 			}}
 		>
-			<Field label='RaceTime Goal'>
-				<input
-					value={draft.racetime.goal}
-					readOnly={goalReadOnly}
-					disabled={disabled}
-					onChange={(event) => onGoal(event.target.value)}
-				/>
-			</Field>
-			{goalReadOnly && (
-				<p className='muted'>
-					一意キーの変更はできません。変更する場合は削除して新規登録してください。
+			{isNewGoal && !goalLocked ? (
+				<Field label='RaceTime Goal'>
+					<input
+						value={draft.racetime.goal}
+						disabled={disabled}
+						onChange={(event) => onGoal(event.target.value)}
+					/>
+				</Field>
+			) : (
+				<p className='mapping-goal'>
+					<span className='muted'>Goal</span>{" "}
+					<strong>{draft.racetime.goal || "未入力"}</strong>
 				</p>
 			)}
-			<Field label='SRC Game（必須）'>
-				<select
-					value={draft.speedrunCom.gameId}
-					disabled={disabled || busy}
-					onChange={(event) => onGame(event.target.value)}
-				>
-					<option value=''>選択してください</option>
-					{games.map((record) => (
-						<option
-							key={record.mapping.speedrunCom.gameId}
-							value={record.mapping.speedrunCom.gameId}
-						>
-							{record.mapping.speedrunCom.gameName}
-						</option>
-					))}
-				</select>
-			</Field>
-			<Field label='SRC Category（必須）'>
+
+			<h3>対応するSRCカテゴリ</h3>
+			<Field label='カテゴリ'>
 				<select
 					value={draft.speedrunCom.categoryId}
-					disabled={disabled || !optionsReady}
+					disabled={disabled || !optionsReady || !hasGame}
 					onChange={(event) => {
 						const option = options?.categories.find(
 							(candidate) => candidate.id === event.target.value,
@@ -1948,259 +2183,278 @@ function CategoryEditor({
 					))}
 				</select>
 			</Field>
-			{selectedCategory?.type === "per-level" && (
-				<Field label='Level'>
-					<select
-						value={draft.speedrunCom.levelId ?? ""}
-						disabled={disabled}
-						onChange={(event) => onField("levelId", event.target.value || null)}
-					>
-						<option value=''>指定なし</option>
-						{options?.levels.map((level) => (
-							<option
-								key={level.id}
-								value={level.id}
-							>
-								{level.name}
-							</option>
-						))}
-					</select>
-				</Field>
-			)}
-			<div className='grid'>
-				<Field label='Platform'>
-					<select
-						value={draft.speedrunCom.platformId ?? ""}
-						disabled={disabled}
-						onChange={(event) =>
-							onField("platformId", event.target.value || null)
-						}
-					>
-						<option value=''>指定なし</option>
-						{options?.platforms.map((platform) => (
-							<option
-								key={platform.id}
-								value={platform.id}
-							>
-								{platform.name}
-							</option>
-						))}
-					</select>
-				</Field>
-				<Field label='Region'>
-					<select
-						value={draft.speedrunCom.regionId ?? ""}
-						disabled={disabled}
-						onChange={(event) =>
-							onField("regionId", event.target.value || null)
-						}
-					>
-						<option value=''>指定なし</option>
-						{options?.regions.map((region) => (
-							<option
-								key={region.id}
-								value={region.id}
-							>
-								{region.name}
-							</option>
-						))}
-					</select>
-				</Field>
-				<Field label='Emulator'>
-					<select
-						value={
-							draft.speedrunCom.emulator === null
-								? "any"
-								: draft.speedrunCom.emulator
-									? "true"
-									: "false"
-						}
-						disabled={disabled}
-						onChange={(event) =>
-							onField(
-								"emulator",
-								event.target.value === "any"
-									? null
-									: event.target.value === "true",
-							)
-						}
-					>
-						<option value='any'>指定なし</option>
-						<option value='true'>エミュレータ</option>
-						<option value='false'>実機</option>
-					</select>
-				</Field>
-				<Field label='Timing Method'>
-					<select
-						value={draft.speedrunCom.timingMethod ?? ""}
-						disabled={disabled}
-						onChange={(event) =>
-							onField(
-								"timingMethod",
-								(event.target.value || null) as TimingMethod | null,
-							)
-						}
-					>
-						<option value=''>指定なし</option>
-						{(options?.timingMethods ?? []).map((method) => (
-							<option
-								key={method}
-								value={method}
-							>
-								{TIMING_LABELS[method]}
-							</option>
-						))}
-					</select>
-				</Field>
-			</div>
-			<fieldset className='variables'>
-				<legend>Variables</legend>
+
+			<details className='mapping-conditions'>
+				<summary>
+					<span>記録の取得条件</span>
+					{requirementIssue && (
+						<span className='summary-warning'>
+							保存に必要な条件が不足しています: {requirementIssue}
+						</span>
+					)}
+				</summary>
+				{selectedCategory?.type === "per-level" && (
+					<Field label='Level'>
+						<select
+							value={draft.speedrunCom.levelId ?? ""}
+							disabled={disabled}
+							onChange={(event) =>
+								onField("levelId", event.target.value || null)
+							}
+						>
+							<option value=''>指定なし</option>
+							{options?.levels.map((level) => (
+								<option
+									key={level.id}
+									value={level.id}
+								>
+									{level.name}
+								</option>
+							))}
+						</select>
+					</Field>
+				)}
+				<div className='grid'>
+					<Field label='Platform'>
+						<select
+							value={draft.speedrunCom.platformId ?? ""}
+							disabled={disabled}
+							onChange={(event) =>
+								onField("platformId", event.target.value || null)
+							}
+						>
+							<option value=''>指定なし</option>
+							{options?.platforms.map((platform) => (
+								<option
+									key={platform.id}
+									value={platform.id}
+								>
+									{platform.name}
+								</option>
+							))}
+						</select>
+					</Field>
+					<Field label='Region'>
+						<select
+							value={draft.speedrunCom.regionId ?? ""}
+							disabled={disabled}
+							onChange={(event) =>
+								onField("regionId", event.target.value || null)
+							}
+						>
+							<option value=''>指定なし</option>
+							{options?.regions.map((region) => (
+								<option
+									key={region.id}
+									value={region.id}
+								>
+									{region.name}
+								</option>
+							))}
+						</select>
+					</Field>
+					<Field label='Emulator'>
+						<select
+							value={
+								draft.speedrunCom.emulator === null
+									? "any"
+									: draft.speedrunCom.emulator
+										? "true"
+										: "false"
+							}
+							disabled={disabled}
+							onChange={(event) =>
+								onField(
+									"emulator",
+									event.target.value === "any"
+										? null
+										: event.target.value === "true",
+								)
+							}
+						>
+							<option value='any'>指定なし</option>
+							<option value='true'>エミュレータ</option>
+							<option value='false'>実機</option>
+						</select>
+					</Field>
+					<Field label='Timing Method'>
+						<select
+							value={draft.speedrunCom.timingMethod ?? ""}
+							disabled={disabled}
+							onChange={(event) =>
+								onField(
+									"timingMethod",
+									(event.target.value || null) as TimingMethod | null,
+								)
+							}
+						>
+							<option value=''>指定なし</option>
+							{(options?.timingMethods ?? []).map((method) => (
+								<option
+									key={method}
+									value={method}
+								>
+									{TIMING_LABELS[method]}
+								</option>
+							))}
+						</select>
+					</Field>
+				</div>
 				{draft.speedrunCom.categoryId === "" ? (
-					<p className='muted'>SRC Categoryを選択してください。</p>
+					<p className='muted'>カテゴリを選択するとVariablesを設定できます。</p>
 				) : !variablesReady ? (
 					<p className='muted'>Variablesを取得中です…</p>
 				) : variables.length === 0 ? (
 					<p className='muted'>このカテゴリにVariablesはありません。</p>
 				) : (
-					<div className='grid'>
-						{variables.map((variable) => (
-							<Field
-								key={variable.id}
-								label={`${variable.name}${variable.obsoletes ? "（PB区分）" : ""}`}
-							>
-								{variable.userDefined ? (
-									<input
-										value={
-											typeof draft.speedrunCom.variables[variable.id] ===
-											"string"
-												? (draft.speedrunCom.variables[variable.id] as string)
-												: ""
-										}
-										disabled={disabled}
-										onChange={(event) =>
-											onField("variables", {
-												...draft.speedrunCom.variables,
-												[variable.id]: event.target.value,
-											})
-										}
-									/>
-								) : (
-									<select
-										value={
-											isAnySelection(draft.speedrunCom.variables[variable.id])
-												? ANY_SELECTION
-												: typeof draft.speedrunCom.variables[variable.id] ===
-														"string"
+					<fieldset className='variables'>
+						<legend>Variables</legend>
+						<div className='grid'>
+							{variables.map((variable) => (
+								<Field
+									key={variable.id}
+									label={`${variable.name}${variable.obsoletes ? "（PB区分）" : ""}`}
+								>
+									{variable.userDefined ? (
+										<input
+											value={
+												typeof draft.speedrunCom.variables[variable.id] ===
+												"string"
 													? (draft.speedrunCom.variables[variable.id] as string)
 													: ""
-										}
-										disabled={disabled}
-										onChange={(event) =>
-											onField("variables", {
-												...draft.speedrunCom.variables,
-												[variable.id]:
-													event.target.value === ANY_SELECTION
-														? {mode: "any"}
-														: event.target.value,
-											})
-										}
-									>
-										<option value=''>選択してください</option>
-										{supportsAnySelection(variable) && (
-											<option value={ANY_SELECTION}>Any（すべて）</option>
-										)}
-										{variable.values.map((value) => (
-											<option
-												key={value.id}
-												value={value.id}
-											>
-												{value.label}
-											</option>
-										))}
-									</select>
-								)}
-							</Field>
-						))}
-					</div>
-				)}
-			</fieldset>
-			{removedVariables.length > 0 && (
-				<fieldset className='variables'>
-					<legend>削除されたVariable</legend>
-					<Callout tone='error'>
-						保存されているVariableが現在のSpeedrun.com定義に存在しません。設定を削除するか、カテゴリを見直してください。
-					</Callout>
-					{removedVariables.map((id) => (
-						<div
-							className='formrow'
-							key={id}
-						>
-							<span>{id}</span>
-							<button
-								type='button'
-								aria-label={`変数 ${id} を削除`}
-								disabled={disabled}
-								onClick={() => onRemoveVariable(id)}
-							>
-								削除
-							</button>
+											}
+											disabled={disabled}
+											onChange={(event) =>
+												onField("variables", {
+													...draft.speedrunCom.variables,
+													[variable.id]: event.target.value,
+												})
+											}
+										/>
+									) : (
+										<select
+											value={
+												isAnySelection(draft.speedrunCom.variables[variable.id])
+													? ANY_SELECTION
+													: typeof draft.speedrunCom.variables[variable.id] ===
+															"string"
+														? (draft.speedrunCom.variables[
+																variable.id
+															] as string)
+														: ""
+											}
+											disabled={disabled}
+											onChange={(event) =>
+												onField("variables", {
+													...draft.speedrunCom.variables,
+													[variable.id]:
+														event.target.value === ANY_SELECTION
+															? {mode: "any"}
+															: event.target.value,
+												})
+											}
+										>
+											<option value=''>選択してください</option>
+											{supportsAnySelection(variable) && (
+												<option value={ANY_SELECTION}>Any（すべて）</option>
+											)}
+											{variable.values.map((value) => (
+												<option
+													key={value.id}
+													value={value.id}
+												>
+													{value.label}
+												</option>
+											))}
+										</select>
+									)}
+								</Field>
+							))}
 						</div>
-					))}
-				</fieldset>
-			)}
-			{missingPbVariable && (
-				<Callout tone='warning'>
-					公式PB区分を特定するVariableが未選択のため保存できません。
-				</Callout>
-			)}
-			{unsupportedAny.length > 0 && (
-				<Callout tone='error'>
-					{`保存済みのAnyが現在のSpeedrun.com定義では利用できません: ${unsupportedAny
-						.map((variable) => variable.name)
-						.join(", ")}。値を選び直してください。`}
-				</Callout>
-			)}
-			<div className='button-row'>
+					</fieldset>
+				)}
+				{removedVariables.length > 0 && (
+					<fieldset className='variables'>
+						<legend>削除されたVariable</legend>
+						<Callout tone='error'>
+							保存されているVariableが現在のSpeedrun.com定義に存在しません。設定を削除するか、カテゴリを見直してください。
+						</Callout>
+						{removedVariables.map((id) => (
+							<div
+								className='formrow'
+								key={id}
+							>
+								<span>{id}</span>
+								<button
+									type='button'
+									aria-label={`変数 ${id} を削除`}
+									disabled={disabled}
+									onClick={() => onRemoveVariable(id)}
+								>
+									削除
+								</button>
+							</div>
+						))}
+					</fieldset>
+				)}
+				{missingPbVariable && (
+					<Callout tone='warning'>
+						公式PB区分を特定するVariableが未選択のため保存できません。
+					</Callout>
+				)}
+				{unsupportedAny.length > 0 && (
+					<Callout tone='error'>
+						{`保存済みのAnyが現在のSpeedrun.com定義では利用できません: ${unsupportedAny
+							.map((variable) => variable.name)
+							.join(", ")}。値を選び直してください。`}
+					</Callout>
+				)}
+			</details>
+
+			<div className='button-row mapping-actions'>
 				<button
 					type='submit'
 					disabled={saveDisabled}
 				>
-					{busy ? "保存中…" : "Category Mappingを保存"}
+					{busy ? "保存中…" : "保存"}
 				</button>
 				<button
 					type='button'
 					disabled={busy || disabled || !dirty}
 					onClick={onRevert}
 				>
-					Revert
+					元に戻す
 				</button>
-				{expected !== null &&
-					(confirmDelete ? (
-						<>
-							<span>このCategory Mappingを削除しますか？</span>
+				{expected !== null && (
+					<div className='danger-zone'>
+						{confirmDelete ? (
+							<>
+								<span>このCategory Mappingを削除しますか？</span>
+								<button
+									type='button'
+									disabled={busy || disabled}
+									onClick={onDeleteConfirm}
+								>
+									削除を確定
+								</button>
+								<button
+									type='button'
+									onClick={onDeleteCancel}
+								>
+									キャンセル
+								</button>
+							</>
+						) : (
 							<button
 								type='button'
 								disabled={busy || disabled}
-								onClick={onDeleteConfirm}
+								onClick={onDeleteRequest}
 							>
-								削除を確定
+								削除
 							</button>
-							<button
-								type='button'
-								onClick={onDeleteCancel}
-							>
-								キャンセル
-							</button>
-						</>
-					) : (
-						<button
-							type='button'
-							disabled={busy || disabled}
-							onClick={onDeleteRequest}
-						>
-							削除
-						</button>
-					))}
+						)}
+					</div>
+				)}
 			</div>
 		</form>
 	);

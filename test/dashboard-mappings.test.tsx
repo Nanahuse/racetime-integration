@@ -10,6 +10,7 @@ import {
 	render,
 	screen,
 	waitFor,
+	within,
 } from "@testing-library/react";
 import {afterEach, beforeEach, expect, it, vi} from "vitest";
 import {Mappings, MappingWorkspace} from "../ui/dashboard/components/Mappings";
@@ -149,34 +150,80 @@ afterEach(() => {
 	sendMessage.mockReset();
 });
 
-it("keeps a saved Game Mapping unique key read-only", async () => {
+it("shows the RaceTime mapping as plain text without key inputs", async () => {
 	games = [gameRecord];
 	render(<Mappings />);
-	const item = await screen.findByText("Game One");
-	await act(async () => {
-		fireEvent.click(item);
-	});
-	expect((screen.getByDisplayValue("game") as HTMLInputElement).readOnly).toBe(
-		true,
-	);
-	expect(
-		(screen.getByLabelText("SRCゲーム検索") as HTMLInputElement).disabled,
-	).toBe(true);
+	await selectFirstGame();
+	expect(screen.getByText("Game One (game)")).toBeTruthy();
+	expect(screen.queryByDisplayValue("game")).toBeNull();
+	expect(screen.queryByLabelText("RaceTime category slug")).toBeNull();
+	expect(screen.getByRole("button", {name: "SRCゲームを追加"})).toBeTruthy();
 });
 
-it("keeps SRC game IDs immutable even when children exist", async () => {
+it("keeps SRC game IDs out of the management editor", async () => {
 	games = [gameRecord];
 	categories = [childRecord];
 	render(<Mappings />);
 	fireEvent.click(await screen.findByText("Game One"));
-	await waitFor(() =>
-		expect(
-			(screen.getByLabelText("SRCゲーム検索") as HTMLInputElement).disabled,
-		).toBe(true),
-	);
+	fireEvent.click(await screen.findByRole("button", {name: "SRC Game の管理"}));
+	expect(await screen.findByLabelText("SRC Game の表示名")).toBeTruthy();
+	expect(screen.queryByLabelText("SRC Game（必須）")).toBeNull();
+	expect(screen.queryByLabelText("SRCゲーム検索")).toBeNull();
+});
+
+it("reveals the SRC game search only when adding a game", async () => {
+	games = [gameRecord];
+	render(<Mappings />);
+	await selectFirstGame();
+	expect(screen.queryByLabelText("SRCゲーム検索")).toBeNull();
+	fireEvent.click(screen.getByRole("button", {name: "SRCゲームを追加"}));
+	expect(screen.getByLabelText("SRCゲーム検索")).toBeTruthy();
+	fireEvent.click(within(gameForm()).getByRole("button", {name: "キャンセル"}));
+	expect(screen.queryByLabelText("SRCゲーム検索")).toBeNull();
+});
+
+it("keeps conditions collapsed and shows missing requirements", async () => {
+	games = [gameRecord];
+	render(<Mappings />);
+	await selectFirstGame();
+	fireEvent.click(screen.getByRole("button", {name: /新規 Goal/}));
+	expect(screen.getByText(/保存に必要な条件が不足しています/)).toBeTruthy();
 	expect(
-		screen.getByText(/登録済みのSRCゲームIDは変更できません/),
+		(document.querySelector("details.mapping-conditions") as HTMLDetailsElement)
+			.open,
+	).toBe(false);
+	expect(
+		screen.getByText("カテゴリを選択するとVariablesを設定できます。"),
 	).toBeTruthy();
+});
+
+it("renames a registered SRC game from the management menu", async () => {
+	games = [gameRecord];
+	saveGame = () => {
+		const record: GameMappingRecord = {
+			mapping: {
+				...gameRecord.mapping,
+				speedrunCom: {gameId: "g1", gameName: "Renamed SRC"},
+			},
+			revision: "g2r",
+		};
+		games = [record];
+		return {
+			ok: true,
+			data: {record, action: "updated", settingsRevision: 0},
+		};
+	};
+	render(<Mappings />);
+	await selectFirstGame();
+	openRename();
+	fireEvent.change(screen.getByLabelText("SRC Game の表示名"), {
+		target: {value: "Renamed SRC"},
+	});
+	fireEvent.click(renameSaveButton());
+	expect(
+		await screen.findByText(/SRCゲームの表示名を保存しました/),
+	).toBeTruthy();
+	expect(await screen.findByRole("radio", {name: "Renamed SRC"})).toBeTruthy();
 });
 
 async function selectFirstGame() {
@@ -193,18 +240,60 @@ async function openNewGame() {
 	});
 }
 
+function gameForm() {
+	return document.querySelector("form.game-registration") as HTMLElement;
+}
+
+function categoryForm() {
+	return document.querySelector("form.category-editor") as HTMLElement;
+}
+
+function gameSaveButton() {
+	return within(gameForm()).getByRole("button", {
+		name: "保存",
+	}) as HTMLButtonElement;
+}
+
+function categorySaveButton() {
+	return within(categoryForm()).getByRole("button", {
+		name: "保存",
+	}) as HTMLButtonElement;
+}
+
+function openAddGame() {
+	fireEvent.click(screen.getByRole("button", {name: "SRCゲームを追加"}));
+}
+
+function manageForm() {
+	return document.querySelector(".game-manage") as HTMLElement;
+}
+
+function renameSaveButton() {
+	return within(manageForm()).getByRole("button", {
+		name: "保存",
+	}) as HTMLButtonElement;
+}
+
+function openRename(name = "SRC Game") {
+	fireEvent.click(screen.getByRole("button", {name: `${name} の管理`}));
+}
+
+function chooseGoalGame(name = "SRC Game") {
+	fireEvent.click(screen.getByRole("radio", {name}));
+}
+
 async function openNewCategory() {
 	const button = await screen.findByRole("button", {name: /新規 Goal/});
 	await act(async () => {
 		fireEvent.click(button);
 	});
-	fireEvent.change(screen.getByLabelText("SRC Game（必須）"), {
-		target: {value: "g1"},
+	fireEvent.change(screen.getByLabelText("RaceTime Goal"), {
+		target: {value: "Any%"},
 	});
+	chooseGoalGame();
 	await waitFor(() =>
 		expect(
-			(screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement)
-				.disabled,
+			(screen.getByLabelText("カテゴリ") as HTMLSelectElement).disabled,
 		).toBe(false),
 	);
 }
@@ -213,14 +302,15 @@ it("recovers from a save conflict and keeps edits until the user resolves it", a
 	games = [gameRecord];
 	render(<Mappings />);
 	await selectFirstGame();
-	fireEvent.change(screen.getByDisplayValue("Game One"), {
-		target: {value: "Game One Edited"},
+	openRename();
+	fireEvent.change(screen.getByLabelText("SRC Game の表示名"), {
+		target: {value: "SRC Game Edited"},
 	});
 	games = [
 		{
 			mapping: {
 				...gameRecord.mapping,
-				racetime: {categorySlug: "game", categoryName: "Server Name"},
+				speedrunCom: {gameId: "g1", gameName: "Server Name"},
 			},
 			revision: "g2r",
 		},
@@ -229,11 +319,11 @@ it("recovers from a save conflict and keeps edits until the user resolves it", a
 		ok: false,
 		error: {code: "mapping_conflict", message: "conflict"},
 	});
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	fireEvent.click(renameSaveButton());
 	expect(
 		await screen.findByRole("button", {name: /最新状態を採用/}),
 	).toBeTruthy();
-	expect(screen.getByDisplayValue("Game One Edited")).toBeTruthy();
+	expect(screen.getByDisplayValue("SRC Game Edited")).toBeTruthy();
 	fireEvent.click(screen.getByRole("button", {name: /最新状態を採用/}));
 	expect(await screen.findByDisplayValue("Server Name")).toBeTruthy();
 });
@@ -242,67 +332,58 @@ it("blocks saving after reload detects a conflicting remote change", async () =>
 	games = [gameRecord];
 	render(<Mappings />);
 	await selectFirstGame();
-	fireEvent.change(screen.getByDisplayValue("Game One"), {
-		target: {value: "Game One Edited"},
+	openRename();
+	fireEvent.change(screen.getByLabelText("SRC Game の表示名"), {
+		target: {value: "SRC Game Edited"},
 	});
 	games = [
 		{
 			mapping: {
 				...gameRecord.mapping,
-				racetime: {categorySlug: "game", categoryName: "Server Name"},
+				speedrunCom: {gameId: "g1", gameName: "Server Name"},
 			},
 			revision: "g2r",
 		},
 	];
-	const reload = screen.getByRole("button", {name: "保存先から再読込"});
+	const reload = screen.getByRole("button", {name: "再読み込み"});
 	await act(async () => {
 		fireEvent.click(reload);
 	});
 	expect(
 		await screen.findByRole("button", {name: /最新状態を採用/}),
 	).toBeTruthy();
-	expect(
-		(
-			screen.getByRole("button", {
-				name: /Game Mappingを保存/,
-			}) as HTMLButtonElement
-		).disabled,
-	).toBe(true);
+	expect(renameSaveButton().disabled).toBe(true);
 });
 
 it("keeps unsaved edits when reload finds no remote change", async () => {
 	games = [gameRecord];
 	render(<Mappings />);
 	await selectFirstGame();
-	fireEvent.change(screen.getByDisplayValue("Game One"), {
-		target: {value: "Game One Edited"},
+	openRename();
+	fireEvent.change(screen.getByLabelText("SRC Game の表示名"), {
+		target: {value: "SRC Game Edited"},
 	});
-	const reload = screen.getByRole("button", {name: "保存先から再読込"});
+	const reload = screen.getByRole("button", {name: "再読み込み"});
 	await act(async () => {
 		fireEvent.click(reload);
 	});
-	expect(await screen.findByDisplayValue("Game One Edited")).toBeTruthy();
-	expect(
-		(
-			screen.getByRole("button", {
-				name: /Game Mappingを保存/,
-			}) as HTMLButtonElement
-		).disabled,
-	).toBe(false);
+	expect(await screen.findByDisplayValue("SRC Game Edited")).toBeTruthy();
+	expect(renameSaveButton().disabled).toBe(false);
 });
 
 it("re-edits from the latest state without auto-applying the previous edit", async () => {
 	games = [gameRecord];
 	render(<Mappings />);
 	await selectFirstGame();
-	fireEvent.change(screen.getByDisplayValue("Game One"), {
-		target: {value: "Game One Edited"},
+	openRename();
+	fireEvent.change(screen.getByLabelText("SRC Game の表示名"), {
+		target: {value: "SRC Game Edited"},
 	});
 	games = [
 		{
 			mapping: {
 				...gameRecord.mapping,
-				racetime: {categorySlug: "game", categoryName: "Server Name"},
+				speedrunCom: {gameId: "g1", gameName: "Server Name"},
 			},
 			revision: "g2r",
 		},
@@ -311,27 +392,28 @@ it("re-edits from the latest state without auto-applying the previous edit", asy
 		ok: false,
 		error: {code: "mapping_conflict", message: "conflict"},
 	});
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	fireEvent.click(renameSaveButton());
 	await screen.findByRole("button", {name: /最新状態から再編集/});
 	fireEvent.click(screen.getByRole("button", {name: /最新状態から再編集/}));
 	expect(await screen.findByDisplayValue("Server Name")).toBeTruthy();
-	expect(screen.queryByDisplayValue("Game One Edited")).toBeNull();
-	expect(screen.getByText("Game One Edited")).toBeTruthy();
+	expect(screen.queryByDisplayValue("SRC Game Edited")).toBeNull();
+	expect(screen.getByText("SRC Game Edited")).toBeTruthy();
 });
 
 it("prevents overwriting a record that was deleted on the server", async () => {
 	games = [gameRecord];
 	render(<Mappings />);
 	await selectFirstGame();
-	fireEvent.change(screen.getByDisplayValue("Game One"), {
-		target: {value: "Game One Edited"},
+	openRename();
+	fireEvent.change(screen.getByLabelText("SRC Game の表示名"), {
+		target: {value: "SRC Game Edited"},
 	});
 	games = [];
 	saveGame = () => ({
 		ok: false,
 		error: {code: "mapping_conflict", message: "conflict"},
 	});
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	fireEvent.click(renameSaveButton());
 	expect(await screen.findByText(/削除されています/)).toBeTruthy();
 	expect(
 		(
@@ -354,13 +436,10 @@ it("detects a conflict when a new mapping's key was created elsewhere", async ()
 	);
 	render(<Mappings />);
 	await openNewGame();
-	fireEvent.change(
-		screen.getByLabelText("RaceTime category slug（一意キー）"),
-		{
-			target: {value: "game"},
-		},
-	);
-	fireEvent.change(screen.getByLabelText("RaceTime category name（表示用）"), {
+	fireEvent.change(screen.getByLabelText("RaceTime category slug"), {
+		target: {value: "game"},
+	});
+	fireEvent.change(screen.getByLabelText("RaceTime category name"), {
 		target: {value: "New Game"},
 	});
 	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
@@ -373,7 +452,7 @@ it("detects a conflict when a new mapping's key was created elsewhere", async ()
 		ok: false,
 		error: {code: "mapping_conflict", message: "conflict"},
 	});
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	fireEvent.click(gameSaveButton());
 	expect(
 		await screen.findByRole("button", {name: /最新状態を採用/}),
 	).toBeTruthy();
@@ -383,8 +462,9 @@ it("resets the edit session after the spreadsheet destination changed", async ()
 	games = [gameRecord];
 	render(<Mappings />);
 	await selectFirstGame();
-	fireEvent.change(screen.getByDisplayValue("Game One"), {
-		target: {value: "Game One Edited"},
+	openRename();
+	fireEvent.change(screen.getByLabelText("SRC Game の表示名"), {
+		target: {value: "SRC Game Edited"},
 	});
 	listRevision = 1;
 	games = [];
@@ -392,12 +472,11 @@ it("resets the edit session after the spreadsheet destination changed", async ()
 		ok: false,
 		error: {code: "settings_changed", message: "changed"},
 	});
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	fireEvent.click(renameSaveButton());
 	expect(
 		await screen.findByText(/Spreadsheet設定が変更されました/),
 	).toBeTruthy();
-	expect(screen.queryByDisplayValue("Game One Edited")).toBeNull();
-	expect(screen.getByText("Game One Edited")).toBeTruthy();
+	expect(screen.queryByDisplayValue("SRC Game Edited")).toBeNull();
 });
 
 it("refuses to mix Game and Category data from different settings revisions", async () => {
@@ -430,7 +509,7 @@ it("clears variables from the previous SRC category", async () => {
 	render(<Mappings />);
 	await selectFirstGame();
 	await openNewCategory();
-	const select = screen.getByLabelText("SRC Category（必須）");
+	const select = screen.getByLabelText("カテゴリ");
 	await act(async () => {
 		fireEvent.change(select, {target: {value: "c1"}});
 	});
@@ -469,7 +548,7 @@ it("offers Any only for eligible variables and submits it", async () => {
 	render(<Mappings />);
 	await selectFirstGame();
 	await openNewCategory();
-	const select = screen.getByLabelText("SRC Category（必須）");
+	const select = screen.getByLabelText("カテゴリ");
 	await act(async () => {
 		fireEvent.change(select, {target: {value: "c1"}});
 	});
@@ -490,7 +569,7 @@ it("offers Any only for eligible variables and submits it", async () => {
 			option.textContent?.startsWith("Any"),
 		),
 	).toBe(false);
-	fireEvent.click(screen.getByRole("button", {name: /Category Mappingを保存/}));
+	fireEvent.click(categorySaveButton());
 	const call = await waitFor(() => {
 		const found = sendMessage.mock.calls.find(
 			([name]) => name === "racetime.v5.saveCategoryMapping",
@@ -537,25 +616,13 @@ it("shows an error when a saved Any is no longer supported", async () => {
 			/保存済みのAnyが現在のSpeedrun.com定義では利用できません/,
 		),
 	).toBeTruthy();
-	expect(
-		(
-			screen.getByRole("button", {
-				name: /Category Mappingを保存/,
-			}) as HTMLButtonElement
-		).disabled,
-	).toBe(true);
+	expect(categorySaveButton().disabled).toBe(true);
 	// The user can still fix it by choosing a concrete value.
 	const select = (await screen.findByLabelText("Ruleset")) as HTMLSelectElement;
 	await act(async () => {
 		fireEvent.change(select, {target: {value: "x"}});
 	});
-	expect(
-		(
-			screen.getByRole("button", {
-				name: /Category Mappingを保存/,
-			}) as HTMLButtonElement
-		).disabled,
-	).toBe(false);
+	expect(categorySaveButton().disabled).toBe(false);
 });
 
 it("allows saving without a mandatory non-obsoleting variable", async () => {
@@ -575,12 +642,12 @@ it("allows saving without a mandatory non-obsoleting variable", async () => {
 	render(<Mappings />);
 	await selectFirstGame();
 	await openNewCategory();
-	const select = screen.getByLabelText("SRC Category（必須）");
+	const select = screen.getByLabelText("カテゴリ");
 	await act(async () => {
 		fireEvent.change(select, {target: {value: "c1"}});
 	});
 	expect(await screen.findByLabelText("Platform Mode")).toBeTruthy();
-	const save = screen.getByRole("button", {name: /Category Mappingを保存/});
+	const save = categorySaveButton();
 	expect((save as HTMLButtonElement).disabled).toBe(false);
 	fireEvent.click(save);
 	const call = await waitFor(() => {
@@ -615,17 +682,14 @@ it("detects a deleted Variable and lets the user remove it from the draft", asyn
 	fireEvent.click(await screen.findByRole("button", {name: /Any%/}));
 	expect(await screen.findByText("ghost")).toBeTruthy();
 	expect(screen.getByText(/現在のSpeedrun.com定義に存在しません/)).toBeTruthy();
-	const saveButton = () =>
-		screen.getByRole("button", {
-			name: /Category Mappingを保存/,
-		}) as HTMLButtonElement;
+	const saveButton = () => categorySaveButton();
 	expect(saveButton().disabled).toBe(true);
 	fireEvent.click(screen.getByRole("button", {name: "変数 ghost を削除"}));
 	await waitFor(() => expect(screen.queryByText("ghost")).toBeNull());
 	expect(saveButton().disabled).toBe(false);
 	// Revert restores the saved (inconsistent) state.
 	const revert = (
-		screen.getAllByRole("button", {name: "Revert"}) as HTMLButtonElement[]
+		screen.getAllByRole("button", {name: "元に戻す"}) as HTMLButtonElement[]
 	).find((button) => !button.disabled)!;
 	fireEvent.click(revert);
 	expect(await screen.findByText("ghost")).toBeTruthy();
@@ -637,7 +701,7 @@ it("resets the level when the SRC category changes", async () => {
 	render(<Mappings />);
 	await selectFirstGame();
 	await openNewCategory();
-	const select = screen.getByLabelText("SRC Category（必須）");
+	const select = screen.getByLabelText("カテゴリ");
 	await act(async () => {
 		fireEvent.change(select, {target: {value: "c1"}});
 	});
@@ -665,17 +729,15 @@ it("blocks form input while a Game Mapping save is in progress", async () => {
 		});
 	render(<Mappings />);
 	await selectFirstGame();
-	fireEvent.change(screen.getByDisplayValue("Game One"), {
+	openRename();
+	fireEvent.change(screen.getByLabelText("SRC Game の表示名"), {
 		target: {value: "Edited"},
 	});
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	fireEvent.click(renameSaveButton());
 	await waitFor(() =>
 		expect(
 			(screen.getByDisplayValue("Edited") as HTMLInputElement).disabled,
 		).toBe(true),
-	);
-	expect((screen.getByDisplayValue("game") as HTMLInputElement).disabled).toBe(
-		true,
 	);
 	// The list selection is locked while the save replaces the editing state.
 	expect(
@@ -688,7 +750,9 @@ it("blocks form input while a Game Mapping save is in progress", async () => {
 			data: {record: gameRecord, action: "updated", settingsRevision: 0},
 		});
 	});
-	expect(await screen.findByText(/Game Mappingを保存しました/)).toBeTruthy();
+	expect(
+		await screen.findByText(/SRCゲームの表示名を保存しました/),
+	).toBeTruthy();
 });
 
 it("blocks form input while a Category Mapping save is in progress", async () => {
@@ -701,12 +765,12 @@ it("blocks form input while a Category Mapping save is in progress", async () =>
 	render(<Mappings />);
 	await selectFirstGame();
 	await openNewCategory();
-	const select = screen.getByLabelText("SRC Category（必須）");
+	const select = screen.getByLabelText("カテゴリ");
 	await act(async () => {
 		fireEvent.change(select, {target: {value: "c1"}});
 	});
 	await screen.findByText("このカテゴリにVariablesはありません。");
-	fireEvent.click(screen.getByRole("button", {name: /Category Mappingを保存/}));
+	fireEvent.click(categorySaveButton());
 	await waitFor(() =>
 		expect(
 			(screen.getByLabelText("RaceTime Goal") as HTMLInputElement).disabled,
@@ -734,52 +798,69 @@ it("keeps edits when a save fails", async () => {
 	});
 	render(<Mappings />);
 	await selectFirstGame();
-	fireEvent.change(screen.getByDisplayValue("Game One"), {
+	openRename();
+	fireEvent.change(screen.getByLabelText("SRC Game の表示名"), {
 		target: {value: "Edited"},
 	});
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	fireEvent.click(renameSaveButton());
 	expect(await screen.findByText(/boom|Operation failed/)).toBeTruthy();
 	expect(screen.getByDisplayValue("Edited")).toBeTruthy();
-	expect(screen.getByRole("button", {name: /Game Mappingを保存/})).toBeTruthy();
+	expect(renameSaveButton()).toBeTruthy();
 });
 
 it("keeps the Game Mapping editor open after saving in the manage view", async () => {
 	games = [gameRecord];
 	render(<Mappings />);
 	await selectFirstGame();
-	fireEvent.change(screen.getByDisplayValue("Game One"), {
+	openRename();
+	fireEvent.change(screen.getByLabelText("SRC Game の表示名"), {
 		target: {value: "Edited"},
 	});
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
-	expect(await screen.findByText(/Game Mappingを保存しました/)).toBeTruthy();
-	expect(screen.getByRole("button", {name: /Game Mappingを保存/})).toBeTruthy();
+	fireEvent.click(renameSaveButton());
+	expect(
+		await screen.findByText(/SRCゲームの表示名を保存しました/),
+	).toBeTruthy();
+	expect(renameSaveButton()).toBeTruthy();
 	expect(screen.getByRole("button", {name: /新規 Goal/})).toBeTruthy();
 });
 
 it("keeps the Game Mapping editor open while Category changes are unsaved", async () => {
 	games = [gameRecord];
+	const handler = sendMessage.getMockImplementation()!;
+	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
+		if (name === "racetime.v5.searchSpeedrunGames")
+			return {
+				ok: true,
+				data: {games: [{id: "g2", name: "Second SRC", abbreviation: "S"}]},
+			};
+		return handler(name, data);
+	});
 	render(<Mappings />);
 	await selectFirstGame();
 	await openNewCategory();
 	await act(async () => {
-		fireEvent.change(screen.getByLabelText("SRC Category（必須）"), {
+		fireEvent.change(screen.getByLabelText("カテゴリ"), {
 			target: {value: "c1"},
 		});
 	});
 	await screen.findByText("このカテゴリにVariablesはありません。");
 
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
-	expect(await screen.findByText(/Game Mappingを保存しました/)).toBeTruthy();
-	expect(screen.getByLabelText("SRC Category（必須）")).toBeTruthy();
-	expect(
-		screen.getByRole("button", {name: /Category Mappingを保存/}),
-	).toBeTruthy();
+	openAddGame();
+	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
+		target: {value: "Second"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "検索"}));
+	fireEvent.click(await screen.findByRole("button", {name: "Second SRC (S)"}));
+	fireEvent.click(gameSaveButton());
+	expect(await screen.findByText(/SRCゲームを追加しました/)).toBeTruthy();
+	expect(screen.getByLabelText("カテゴリ")).toBeTruthy();
+	expect(categorySaveButton()).toBeTruthy();
 });
 
 async function editNewCategory() {
 	await openNewCategory();
 	await act(async () => {
-		fireEvent.change(screen.getByLabelText("SRC Category（必須）"), {
+		fireEvent.change(screen.getByLabelText("カテゴリ"), {
 			target: {value: "c1"},
 		});
 	});
@@ -798,21 +879,15 @@ it("keeps Category Mapping inputs and error visible when saving fails", async ()
 	fireEvent.change(screen.getByLabelText("RaceTime Goal"), {
 		target: {value: "Edited Goal"},
 	});
-	fireEvent.click(screen.getByRole("button", {name: /Category Mappingを保存/}));
+	fireEvent.click(categorySaveButton());
 	expect(await screen.findByText(/category save failed/)).toBeTruthy();
 	expect(
 		(screen.getByLabelText("RaceTime Goal") as HTMLInputElement).value,
 	).toBe("Edited Goal");
-	expect(
-		(screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement).value,
-	).toBe("c1");
-	expect(
-		(
-			screen.getByRole("button", {
-				name: /Category Mappingを保存/,
-			}) as HTMLButtonElement
-		).disabled,
-	).toBe(false);
+	expect((screen.getByLabelText("カテゴリ") as HTMLSelectElement).value).toBe(
+		"c1",
+	);
+	expect(categorySaveButton().disabled).toBe(false);
 	expect(screen.queryByText(/Category Mappingを保存しました/)).toBeNull();
 });
 
@@ -846,33 +921,22 @@ it.each([
 		render(<Mappings />);
 		await selectFirstGame();
 		await editNewCategory();
-		if (gameDirty)
-			fireEvent.change(screen.getByDisplayValue("Game One"), {
+		if (gameDirty) {
+			openRename();
+			fireEvent.change(screen.getByLabelText("SRC Game の表示名"), {
 				target: {value: "Unsaved Game"},
 			});
-		fireEvent.click(
-			screen.getByRole("button", {name: /Category Mappingを保存/}),
-		);
+		}
+		fireEvent.click(categorySaveButton());
 		expect(
 			await screen.findByText("Category Mappingを保存しました。"),
 		).toBeTruthy();
 		if (reloadFails)
 			expect(await screen.findByText(/reload failed/)).toBeTruthy();
+		expect(screen.getByLabelText("カテゴリ")).toBeTruthy();
 		if (gameDirty) {
 			expect(screen.getByDisplayValue("Unsaved Game")).toBeTruthy();
-			expect(screen.getByLabelText("SRC Category（必須）")).toBeTruthy();
-			expect(
-				(
-					screen.getByRole("button", {
-						name: /Game Mappingを保存/,
-					}) as HTMLButtonElement
-				).disabled,
-			).toBe(false);
-		} else {
-			await waitFor(() =>
-				expect(screen.queryByLabelText("SRC Category（必須）")).toBeNull(),
-			);
-			expect(screen.getByText(/Game Mappingを選択するか/)).toBeTruthy();
+			expect(renameSaveButton().disabled).toBe(false);
 		}
 		expect(screen.queryByText(/他の変更と競合しました/)).toBeNull();
 	},
@@ -948,7 +1012,7 @@ it.each(["manage", "race"] as const)(
 			return handler(name, data);
 		});
 		await openMappingMode(mode);
-		fireEvent.click(screen.getByRole("button", {name: "SRCゲームを追加"}));
+		openAddGame();
 		fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
 			target: {value: "SRC"},
 		});
@@ -961,21 +1025,18 @@ it.each(["manage", "race"] as const)(
 			).disabled,
 		).toBe(true);
 		fireEvent.click(screen.getByRole("button", {name: "Second SRC (S)"}));
-		fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+		fireEvent.click(gameSaveButton());
+		expect(await screen.findByText("SRCゲームを追加しました。")).toBeTruthy();
+		expect(await screen.findByRole("radio", {name: "Second SRC"})).toBeTruthy();
+		expect(screen.getByRole("radio", {name: "SRC Game"})).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", {name: "Second SRC の管理"}));
+		fireEvent.click(screen.getByRole("button", {name: "登録解除"}));
+		fireEvent.click(screen.getByRole("button", {name: "登録解除を確定"}));
 		expect(
-			await screen.findByText("Game Mappingを保存しました。"),
+			await screen.findByText("SRCゲームの登録を解除しました。"),
 		).toBeTruthy();
-		expect(
-			await screen.findByRole("button", {name: "Second SRC"}),
-		).toBeTruthy();
-		expect(screen.getByRole("button", {name: "SRC Game"})).toBeTruthy();
-		fireEvent.click(screen.getAllByRole("button", {name: "削除"})[0]!);
-		fireEvent.click(screen.getByRole("button", {name: "削除を確定"}));
-		expect(
-			await screen.findByText("Game Mappingを削除しました。"),
-		).toBeTruthy();
-		expect(screen.queryByRole("button", {name: "Second SRC"})).toBeNull();
-		expect(screen.getByRole("button", {name: "SRC Game"})).toBeTruthy();
+		expect(screen.queryByRole("radio", {name: "Second SRC"})).toBeNull();
+		expect(screen.getByRole("radio", {name: "SRC Game"})).toBeTruthy();
 	},
 );
 
@@ -1045,48 +1106,42 @@ it.each(["manage", "race"] as const)(
 				await screen.findByRole("button", {name: /Any%.*SRC Game/}),
 			);
 		expect(await screen.findByText("Old Variable")).toBeTruthy();
-		const gameSelect = screen.getByLabelText(
-			"SRC Game（必須）",
-		) as HTMLSelectElement;
-		expect(Array.from(gameSelect.options, (option) => option.value)).toEqual([
-			"",
-			"g1",
-			"g2",
-		]);
-		fireEvent.change(gameSelect, {target: {value: "g2"}});
-		await screen.findByRole("option", {name: /Second Category/});
 		expect(
-			(screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement)
-				.value,
-		).toBe("");
+			(screen.getByRole("radio", {name: "SRC Game"}) as HTMLInputElement)
+				.checked,
+		).toBe(true);
+		fireEvent.click(screen.getByRole("radio", {name: "Second SRC"}));
+		await screen.findByRole("option", {name: /Second Category/});
+		expect((screen.getByLabelText("カテゴリ") as HTMLSelectElement).value).toBe(
+			"",
+		);
 		expect(screen.queryByLabelText("Level")).toBeNull();
 		expect(screen.queryByText("Old Variable")).toBeNull();
 		for (const field of ["Platform", "Region", "Emulator", "Timing Method"])
 			expect((screen.getByLabelText(field) as HTMLSelectElement).value).toBe(
 				field === "Emulator" ? "any" : "",
 			);
-		fireEvent.click(screen.getAllByRole("button", {name: "Revert"})[1]!);
+		fireEvent.click(
+			within(categoryForm()).getByRole("button", {name: "元に戻す"}),
+		);
 		expect(await screen.findByText("Old Variable")).toBeTruthy();
 		expect(
-			(screen.getByLabelText("SRC Game（必須）") as HTMLSelectElement).value,
-		).toBe("g1");
+			(screen.getByRole("radio", {name: "SRC Game"}) as HTMLInputElement)
+				.checked,
+		).toBe(true);
 		expect((screen.getByLabelText("Level") as HTMLSelectElement).value).toBe(
 			"l1",
 		);
-		fireEvent.change(screen.getByLabelText("SRC Game（必須）"), {
-			target: {value: "g2"},
-		});
+		fireEvent.click(screen.getByRole("radio", {name: "Second SRC"}));
 		await screen.findByRole("option", {name: /Second Category/});
-		fireEvent.change(screen.getByLabelText("SRC Category（必須）"), {
+		fireEvent.change(screen.getByLabelText("カテゴリ"), {
 			target: {value: "c2"},
 		});
 		await screen.findByText("このカテゴリにVariablesはありません。");
 		expect((screen.getByLabelText("Level") as HTMLSelectElement).value).toBe(
 			"",
 		);
-		fireEvent.click(
-			screen.getByRole("button", {name: /Category Mappingを保存/}),
-		);
+		fireEvent.click(categorySaveButton());
 		await waitFor(() =>
 			expect(sendMessage).toHaveBeenCalledWith(
 				"racetime.v5.saveCategoryMapping",
@@ -1163,30 +1218,22 @@ it.each([
 		await openMappingMode(mode);
 		if (mode === "manage")
 			fireEvent.click(screen.getByRole("button", {name: /新規 Goal/}));
-		const gameSelect = () =>
-			screen.getByLabelText("SRC Game（必須）") as HTMLSelectElement;
 		const categorySelect = () =>
-			screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement;
-		expect(gameSelect().value).toBe("");
+			screen.getByLabelText("カテゴリ") as HTMLSelectElement;
+		expect(
+			screen
+				.getAllByRole("radio")
+				.some((radio) => (radio as HTMLInputElement).checked),
+		).toBe(false);
 		expect(categorySelect().disabled).toBe(true);
 		expect(
 			sendMessage.mock.calls.filter(
 				([name]) => name === "racetime.v5.getSpeedrunGameOptions",
 			),
 		).toHaveLength(0);
-		fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
-		expect(
-			await screen.findByText("Game Mappingを保存しました。"),
-		).toBeTruthy();
-		expect(gameSelect().value).toBe("");
-		expect(categorySelect().disabled).toBe(true);
-		fireEvent.click(
-			screen.getByRole("button", {name: multiple ? "Second SRC" : "SRC Game"}),
-		);
-		expect(gameSelect().value).toBe("");
-		expect(categorySelect().disabled).toBe(true);
+		const gameName = multiple ? "Second SRC" : "SRC Game";
 		const gameId = multiple ? "g2" : "g1";
-		fireEvent.change(gameSelect(), {target: {value: gameId}});
+		fireEvent.click(screen.getByRole("radio", {name: gameName}));
 		await waitFor(() => expect(categorySelect().disabled).toBe(false));
 		expect(sendMessage).toHaveBeenCalledWith(
 			"racetime.v5.getSpeedrunGameOptions",
@@ -1194,8 +1241,6 @@ it.each([
 		);
 		fireEvent.change(categorySelect(), {target: {value: "c1"}});
 		await screen.findByText("このカテゴリにVariablesはありません。");
-		fireEvent.click(screen.getByRole("button", {name: "SRC Game"}));
-		expect(gameSelect().value).toBe(gameId);
 		expect(categorySelect().value).toBe("c1");
 		expect(screen.queryByText(/未保存の変更があります/)).toBeNull();
 	},
@@ -1217,16 +1262,19 @@ it.each(["manage", "race"] as const)(
 		await openMappingMode(mode);
 		if (mode === "manage")
 			fireEvent.click(screen.getByRole("button", {name: /Any%.*Second SRC/}));
-		const gameSelect = () =>
-			screen.getByLabelText("SRC Game（必須）") as HTMLSelectElement;
 		const categorySelect = () =>
-			screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement;
-		expect(gameSelect().value).toBe("g2");
+			screen.getByLabelText("カテゴリ") as HTMLSelectElement;
+		expect(
+			(screen.getByRole("radio", {name: "Second SRC"}) as HTMLInputElement)
+				.checked,
+		).toBe(true);
+		expect(
+			(screen.getByRole("radio", {name: "SRC Game"}) as HTMLInputElement)
+				.checked,
+		).toBe(false);
 		await waitFor(() => expect(categorySelect().disabled).toBe(false));
 		expect(categorySelect().value).toBe("c1");
-		fireEvent.click(screen.getByRole("button", {name: "Second SRC"}));
-		fireEvent.click(screen.getByRole("button", {name: "SRC Game"}));
-		expect(gameSelect().value).toBe("g2");
-		expect(categorySelect().value).toBe("c1");
+		fireEvent.click(screen.getByRole("radio", {name: "SRC Game"}));
+		expect(categorySelect().value).toBe("");
 	},
 );

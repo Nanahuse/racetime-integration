@@ -211,14 +211,18 @@ button.active,
 
 .list button {
 	width: 100%;
+	min-width: 0;
 	text-align: left;
 	display: flex;
 	flex-direction: column;
 	gap: 2px;
+	white-space: normal;
+	overflow-wrap: anywhere;
 }
 
 .list small {
 	color: var(--muted);
+	overflow-wrap: anywhere;
 }
 
 .allowed-origins li {
@@ -267,6 +271,18 @@ button.active,
 	margin: 8px 0;
 }
 
+.formrow input,
+.formrow select {
+	flex: 1 1 auto;
+	width: auto;
+	min-width: 0;
+}
+
+.formrow button {
+	flex: 0 0 auto;
+	white-space: nowrap;
+}
+
 .grid {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -287,6 +303,10 @@ button.active,
 	align-items: center;
 	flex-wrap: wrap;
 	margin-top: 12px;
+}
+
+.button-row button {
+	white-space: nowrap;
 }
 
 .callout {
@@ -516,9 +536,137 @@ input[readonly] {
 	color: var(--error);
 }
 
+.mapping-target {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin-bottom: 12px;
+	overflow-wrap: anywhere;
+}
+
+.mapping-target .muted,
+.mapping-goal .muted {
+	font-size: 12px;
+}
+
+.mapping-goal {
+	margin: 0 0 12px;
+	overflow-wrap: anywhere;
+}
+
+.mapping-summary {
+	width: 100%;
+	border-collapse: collapse;
+	margin-bottom: 8px;
+}
+
+.mapping-summary th,
+.mapping-summary td {
+	text-align: left;
+	padding: 8px;
+	border-bottom: 1px solid var(--border);
+	vertical-align: top;
+	overflow-wrap: anywhere;
+}
+
+.mapping-summary th {
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.src-game-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.src-game-row {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.src-game-main {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+}
+
+.src-game-choice {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.src-game-choice input {
+	width: auto;
+	flex: none;
+	margin-top: 4px;
+}
+
+.game-menu-button {
+	flex: none;
+	padding: 4px 10px;
+}
+
+.game-manage {
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	padding: 10px;
+}
+
+.danger-zone {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.mapping-actions .danger-zone {
+	margin-left: auto;
+}
+
+.mapping-conditions {
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	padding: 10px 12px;
+	margin: 12px 0;
+}
+
+.mapping-conditions summary {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+	cursor: pointer;
+	font-weight: 600;
+}
+
+.mapping-conditions[open] summary {
+	margin-bottom: 12px;
+}
+
+.summary-warning {
+	color: var(--warning);
+	font-size: 12px;
+	font-weight: 400;
+	overflow-wrap: anywhere;
+}
+
 @media (max-width: 900px) {
 	.layout-two {
 		grid-template-columns: 1fr;
+	}
+	.mapping-actions .danger-zone {
+		margin-left: 0;
 	}
 }
 

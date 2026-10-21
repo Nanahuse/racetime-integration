@@ -523,9 +523,11 @@ it("keeps the Mapping editor and save in place while an added race is reflected"
 	const view = render(<Overview races={races} />);
 	await selectFirstMonitored();
 	await openMappingEditor();
-	await editMappingDraft();
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
-	await screen.findByRole("button", {name: "保存中…"});
+	await fillMappingDraft();
+	fireEvent.click(gameSaveButton());
+	expect(
+		await screen.findAllByRole("button", {name: "保存中…"}),
+	).not.toHaveLength(0);
 	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
 		target: {value: raceTwo.url},
 	});
@@ -537,7 +539,7 @@ it("keeps the Mapping editor and save in place while an added race is reflected"
 	expect(screen.getByRole("button", {name: /game\/race/}).className).toContain(
 		"active",
 	);
-	expect(screen.getByRole("button", {name: "保存中…"})).toBeTruthy();
+	expect(screen.getAllByRole("button", {name: "保存中…"})).not.toHaveLength(0);
 	if (!submitted) throw new Error("Mapping save was not submitted");
 	const record: GameMappingRecord = {mapping: submitted, revision: "g-saved"};
 	games.push(record);
@@ -667,8 +669,10 @@ it("keeps a URL monitor when switching away is canceled for a dirty mapping", as
 	const view = render(<Overview races={races} />);
 	await selectFirstMonitored();
 	await openMappingEditor();
-	await editMappingDraft();
-	expect(await screen.findByText(/選択中: SRC Game/)).toBeTruthy();
+	await fillMappingDraft();
+	await waitFor(() =>
+		expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy(),
+	);
 	fireEvent.change(screen.getByLabelText("RaceTime race URL"), {
 		target: {value: raceTwo.url},
 	});
@@ -682,7 +686,11 @@ it("keeps a URL monitor when switching away is canceled for a dirty mapping", as
 	expect(
 		await screen.findByText(/未保存のマッピング変更があります/),
 	).toBeTruthy();
-	fireEvent.click(screen.getByRole("button", {name: "キャンセル"}));
+	fireEvent.click(
+		within(document.querySelector(".dialog")!).getByRole("button", {
+			name: "キャンセル",
+		}),
+	);
 	expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy();
 	expect(screen.getByRole("button", {name: /other\/race2/})).toBeTruthy();
 	expect(screen.getByRole("button", {name: /game\/race/}).className).toContain(
@@ -1062,14 +1070,31 @@ async function openMappingEditor() {
 	fireEvent.click(screen.getByRole("button", {name: "編集"}));
 }
 
-async function chooseCategoryGame(gameId = "g1") {
-	fireEvent.change(screen.getByLabelText("SRC Game（必須）"), {
-		target: {value: gameId},
-	});
+function gameForm() {
+	return document.querySelector("form.game-registration") as HTMLElement;
+}
+
+function categoryForm() {
+	return document.querySelector("form.category-editor") as HTMLElement;
+}
+
+function gameSaveButton() {
+	return within(gameForm()).getByRole("button", {
+		name: "保存",
+	}) as HTMLButtonElement;
+}
+
+function categorySaveButton() {
+	return within(categoryForm()).getByRole("button", {
+		name: "保存",
+	}) as HTMLButtonElement;
+}
+
+async function chooseCategoryGame(gameName = "SRC Game") {
+	fireEvent.click(screen.getByRole("radio", {name: gameName}));
 	await waitFor(() =>
 		expect(
-			(screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement)
-				.disabled,
+			(screen.getByLabelText("カテゴリ") as HTMLSelectElement).disabled,
 		).toBe(false),
 	);
 }
@@ -1077,12 +1102,19 @@ async function chooseCategoryGame(gameId = "g1") {
 const updatedRace: Race = {...race, category: {...race.category, goal: "100%"}};
 const updatedRaceState: RaceState = {...raceState, race: updatedRace};
 
-async function editMappingDraft() {
+async function fillMappingDraft() {
+	fireEvent.click(screen.getByRole("button", {name: "SRCゲームを追加"}));
 	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
 		target: {value: "src"},
 	});
 	fireEvent.click(screen.getByRole("button", {name: "検索"}));
 	fireEvent.click(await screen.findByRole("button", {name: /SRC Game/}));
+}
+
+async function editMappingDraft() {
+	await fillMappingDraft();
+	fireEvent.click(gameSaveButton());
+	expect(await screen.findByText("SRCゲームを追加しました。")).toBeTruthy();
 }
 
 async function selectFirstMonitored() {
@@ -1141,13 +1173,14 @@ it("loads Overview Leaderboards for the selected monitored race and after Mappin
 	expect(leaderboardRequests).toHaveLength(1);
 
 	await openMappingEditor();
+	fireEvent.click(screen.getByRole("button", {name: "SRCゲームを追加"}));
 	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
 		target: {value: "src"},
 	});
 	fireEvent.click(screen.getByRole("button", {name: "検索"}));
 	fireEvent.click(await screen.findByRole("button", {name: /SRC Game/}));
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
-	expect(await screen.findByText("Game Mappingを保存しました。")).toBeTruthy();
+	fireEvent.click(gameSaveButton());
+	expect(await screen.findByText("SRCゲームを追加しました。")).toBeTruthy();
 	await waitFor(() => expect(leaderboardRequests).toHaveLength(2));
 	expect(leaderboardRequests[1]).toEqual({
 		categorySlug: "game",
@@ -1205,51 +1238,49 @@ it("registers Game then Category mappings from Overview", async () => {
 	expect(await screen.findAllByText("未登録")).toHaveLength(2);
 
 	await openMappingEditor();
-	const slug = (await screen.findByDisplayValue("game")) as HTMLInputElement;
-	expect(slug.readOnly).toBe(true);
-	expect(screen.getByDisplayValue("Game")).toBeTruthy();
+	expect(screen.getByText("Goal")).toBeTruthy();
 	// Auto-filled RaceTime identifiers alone are not an unsaved change.
 	expect(
-		(screen.getByRole("button", {name: "Revert"}) as HTMLButtonElement)
-			.disabled,
+		(
+			within(categoryForm()).getByRole("button", {
+				name: "元に戻す",
+			}) as HTMLButtonElement
+		).disabled,
 	).toBe(true);
 
+	fireEvent.click(screen.getByRole("button", {name: "SRCゲームを追加"}));
 	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
 		target: {value: "src"},
 	});
 	fireEvent.click(screen.getByRole("button", {name: "検索"}));
 	fireEvent.click(await screen.findByRole("button", {name: /SRC Game/}));
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
-	expect(await screen.findByText("Game Mappingを保存しました。")).toBeTruthy();
+	fireEvent.click(gameSaveButton());
+	expect(await screen.findByText("SRCゲームを追加しました。")).toBeTruthy();
 	await waitFor(() => expect(leaderboardRequests).toBe(2));
 	await waitFor(() => expect(bestRequests).toHaveLength(2));
 	expect(bestRequests[1]?.refresh).toBe(false);
 
 	await chooseCategoryGame();
 	const categorySelect = (await screen.findByLabelText(
-		"SRC Category（必須）",
+		"カテゴリ",
 	)) as HTMLSelectElement;
 	await act(async () => {
 		fireEvent.change(categorySelect, {target: {value: "c1"}});
 	});
-	await waitFor(() =>
-		expect(
-			(
-				screen.getByRole("button", {
-					name: /Category Mappingを保存/,
-				}) as HTMLButtonElement
-			).disabled,
-		).toBe(false),
-	);
-	fireEvent.click(screen.getByRole("button", {name: /Category Mappingを保存/}));
+	await waitFor(() => expect(categorySaveButton().disabled).toBe(false));
+	fireEvent.click(categorySaveButton());
 	expect(
 		await screen.findByText("Category Mappingを保存しました。"),
 	).toBeTruthy();
 	await waitFor(() => expect(leaderboardRequests).toBe(3));
 	await waitFor(() => expect(bestRequests).toHaveLength(3));
 	expect(bestRequests[2]?.refresh).toBe(false);
-	expect(screen.getByText("登録済み: SRC Game")).toBeTruthy();
-	expect(screen.getByText("登録済み: Any%")).toBeTruthy();
+	expect(
+		within(document.querySelector(".mapping-summary")!).getByText("SRC Game"),
+	).toBeTruthy();
+	expect(
+		within(document.querySelector(".mapping-summary")!).getAllByText("Any%"),
+	).toHaveLength(2);
 	await openMappingEditor();
 	fireEvent.click(
 		within(document.querySelector("form.category-editor")!).getByRole(
@@ -1290,19 +1321,24 @@ it("shows existing mappings and updates with the saved revision", async () => {
 	);
 	render(<Overview races={races} />);
 	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
-	expect(await screen.findByText("登録済み: SRC Game")).toBeTruthy();
-	expect(screen.getByText("登録済み: Any%")).toBeTruthy();
+	expect(
+		await within(document.querySelector(".mapping-summary")!).findByText(
+			"SRC Game",
+		),
+	).toBeTruthy();
+	expect(
+		within(document.querySelector(".mapping-summary")!).getAllByText("Any%"),
+	).toHaveLength(2);
 
 	await openMappingEditor();
+	expect(screen.getByText("Goal")).toBeTruthy();
 	expect(
-		((await screen.findByDisplayValue("game")) as HTMLInputElement).readOnly,
+		(screen.getByRole("radio", {name: "SRC Game"}) as HTMLInputElement).checked,
 	).toBe(true);
-	expect(
-		(screen.getByLabelText("RaceTime Goal") as HTMLInputElement).readOnly,
-	).toBe(true);
+	expect(screen.queryByDisplayValue("game")).toBeNull();
 
 	const categorySelect = (await screen.findByLabelText(
-		"SRC Category（必須）",
+		"カテゴリ",
 	)) as HTMLSelectElement;
 	await waitFor(() => expect(categorySelect.disabled).toBe(false));
 	const platform = (await screen.findByLabelText(
@@ -1311,11 +1347,42 @@ it("shows existing mappings and updates with the saved revision", async () => {
 	await act(async () => {
 		fireEvent.change(platform, {target: {value: "p1"}});
 	});
-	fireEvent.click(screen.getByRole("button", {name: /Category Mappingを保存/}));
+	fireEvent.click(categorySaveButton());
 	expect(
 		await screen.findByText("Category Mappingを保存しました。"),
 	).toBeTruthy();
 	expect(savedExpected).toBe("c1r");
+});
+
+it("shows the RaceTime to Speedrun.com mapping table with other games", async () => {
+	const secondGame: GameMappingRecord = {
+		mapping: {
+			...gameRecord.mapping,
+			speedrunCom: {gameId: "g2", gameName: "Second SRC"},
+		},
+		revision: "g2r",
+	};
+	sendMessage.mockImplementation(
+		mappingHandler({
+			games: [gameRecord, secondGame],
+			categories: [categoryRecord],
+		}),
+	);
+	render(<Overview races={races} />);
+	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
+	const table = await waitFor(() => {
+		const found = document.querySelector(".mapping-summary");
+		expect(found).toBeTruthy();
+		return found as HTMLTableElement;
+	});
+	expect(
+		Array.from(table.querySelectorAll("th"), (cell) => cell.textContent),
+	).toEqual(["RaceTime", "Speedrun.com"]);
+	const rows = table.querySelectorAll("tbody tr");
+	expect(rows[0]?.textContent).toContain("Game (game)");
+	expect(rows[0]?.textContent).toContain("SRC Game");
+	expect(rows[1]?.textContent).toContain("Any%");
+	expect(screen.getByText(/その他のSRCゲーム: Second SRC/)).toBeTruthy();
 });
 
 it("selects Any from the Overview category editor like Mappings", async () => {
@@ -1367,7 +1434,7 @@ it("selects Any from the Overview category editor like Mappings", async () => {
 	await act(async () => {
 		fireEvent.change(ruleset, {target: {value: anyOption!.value}});
 	});
-	fireEvent.click(screen.getByRole("button", {name: /Category Mappingを保存/}));
+	fireEvent.click(categorySaveButton());
 	expect(
 		await screen.findByText("Category Mappingを保存しました。"),
 	).toBeTruthy();
@@ -1424,12 +1491,13 @@ it("surfaces a mapping save conflict in Overview", async () => {
 	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
 	await openMappingEditor();
 
+	fireEvent.click(screen.getByRole("button", {name: "SRCゲームを追加"}));
 	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
 		target: {value: "src"},
 	});
 	fireEvent.click(screen.getByRole("button", {name: "検索"}));
 	fireEvent.click(await screen.findByRole("button", {name: /SRC Game/}));
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	fireEvent.click(gameSaveButton());
 	expect(
 		await screen.findByRole("button", {name: /最新状態を採用/}),
 	).toBeTruthy();
@@ -1451,6 +1519,7 @@ it("asks before discarding unsaved mapping edits when switching races", async ()
 	emit(race.url, "race-a-runner");
 	await openMappingEditor();
 
+	fireEvent.click(screen.getByRole("button", {name: "SRCゲームを追加"}));
 	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
 		target: {value: "src"},
 	});
@@ -1470,7 +1539,11 @@ it("asks before discarding unsaved mapping edits when switching races", async ()
 		.parentElement?.querySelectorAll("li");
 	expect(eventRows).toHaveLength(1);
 	expect(eventRows?.[0]?.textContent).toContain("race-a-runner");
-	fireEvent.click(screen.getByRole("button", {name: "キャンセル"}));
+	fireEvent.click(
+		within(document.querySelector(".dialog")!).getByRole("button", {
+			name: "キャンセル",
+		}),
+	);
 	expect(screen.queryByText(/未保存のマッピング変更があります/)).toBeNull();
 
 	fireEvent.click(screen.getByRole("button", {name: /other\/race2/}));
@@ -1490,12 +1563,15 @@ it("keeps the mapping edit session when switching to a race with the same target
 	fireEvent.click(firstRace!);
 	await openMappingEditor();
 
+	fireEvent.click(screen.getByRole("button", {name: "SRCゲームを追加"}));
 	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
 		target: {value: "src"},
 	});
 	fireEvent.click(screen.getByRole("button", {name: "検索"}));
 	fireEvent.click(await screen.findByRole("button", {name: /SRC Game/}));
-	expect(await screen.findByText(/選択中: SRC Game/)).toBeTruthy();
+	await waitFor(() =>
+		expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy(),
+	);
 
 	fireEvent.click(screen.getByRole("button", {name: /game\/race-b/}));
 	expect(screen.queryByText(/未保存のマッピング変更があります/)).toBeNull();
@@ -1527,12 +1603,13 @@ it("does not switch the mapping target while a save is in progress", async () =>
 	fireEvent.click(firstRace!);
 	await openMappingEditor();
 
+	fireEvent.click(screen.getByRole("button", {name: "SRCゲームを追加"}));
 	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
 		target: {value: "src"},
 	});
 	fireEvent.click(screen.getByRole("button", {name: "検索"}));
 	fireEvent.click(await screen.findByRole("button", {name: /SRC Game/}));
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	fireEvent.click(gameSaveButton());
 
 	fireEvent.click(screen.getByRole("button", {name: /other\/race2/}));
 	expect(screen.queryByText(/未保存のマッピング変更があります/)).toBeNull();
@@ -1541,7 +1618,7 @@ it("does not switch the mapping target while a save is in progress", async () =>
 	await act(async () => {
 		finishSave();
 	});
-	expect(await screen.findByText("Game Mappingを保存しました。")).toBeTruthy();
+	expect(await screen.findByText("SRCゲームを追加しました。")).toBeTruthy();
 });
 
 it("reports unsaved mapping edits through onStateChange", async () => {
@@ -1556,6 +1633,7 @@ it("reports unsaved mapping edits through onStateChange", async () => {
 	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
 	await openMappingEditor();
 
+	fireEvent.click(screen.getByRole("button", {name: "SRCゲームを追加"}));
 	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
 		target: {value: "src"},
 	});
@@ -1576,12 +1654,15 @@ it("keeps the mapping draft when the monitored race refreshes", async () => {
 	fireEvent.click(firstRace!);
 	await openMappingEditor();
 
+	fireEvent.click(screen.getByRole("button", {name: "SRCゲームを追加"}));
 	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
 		target: {value: "src"},
 	});
 	fireEvent.click(screen.getByRole("button", {name: "検索"}));
 	fireEvent.click(await screen.findByRole("button", {name: /SRC Game/}));
-	expect(await screen.findByText(/選択中: SRC Game/)).toBeTruthy();
+	await waitFor(() =>
+		expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy(),
+	);
 
 	const refreshed: RacesState = {
 		schemaVersion: 1,
@@ -1616,6 +1697,7 @@ it("cannot confirm a pending race switch while a save is in progress", async () 
 	fireEvent.click(firstRace!);
 	await openMappingEditor();
 
+	fireEvent.click(screen.getByRole("button", {name: "SRCゲームを追加"}));
 	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
 		target: {value: "src"},
 	});
@@ -1627,9 +1709,11 @@ it("cannot confirm a pending race switch while a save is in progress", async () 
 		await screen.findByText(/未保存のマッピング変更があります/),
 	).toBeTruthy();
 
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	fireEvent.click(gameSaveButton());
 	await waitFor(() =>
-		expect(screen.getByRole("button", {name: "保存中…"})).toBeTruthy(),
+		expect(screen.getAllByRole("button", {name: "保存中…"})).not.toHaveLength(
+			0,
+		),
 	);
 
 	fireEvent.click(screen.getByRole("button", {name: "破棄して移動"}));
@@ -1646,8 +1730,10 @@ it("protects unsaved mapping edits when the monitored race target changes", asyn
 	const {rerender} = render(<Overview races={races} />);
 	await selectFirstMonitored();
 	await openMappingEditor();
-	await editMappingDraft();
-	expect(await screen.findByText(/選択中: SRC Game/)).toBeTruthy();
+	await fillMappingDraft();
+	await waitFor(() =>
+		expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy(),
+	);
 
 	rerender(<Overview races={{schemaVersion: 1, races: [updatedRaceState]}} />);
 	expect(
@@ -1691,8 +1777,10 @@ it("keeps the timer on the latest race snapshot while mapping edits are unsaved"
 	);
 	await selectFirstMonitored();
 	await openMappingEditor();
-	await editMappingDraft();
-	expect(await screen.findByText(/選択中: SRC Game/)).toBeTruthy();
+	await fillMappingDraft();
+	await waitFor(() =>
+		expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy(),
+	);
 
 	rerender(
 		<Overview
@@ -1730,8 +1818,10 @@ it("protects unsaved mapping edits when force-release removes the monitored race
 	const {rerender} = render(<Overview races={races} />);
 	await selectFirstMonitored();
 	await openMappingEditor();
-	await editMappingDraft();
-	expect(await screen.findByText(/選択中: SRC Game/)).toBeTruthy();
+	await fillMappingDraft();
+	await waitFor(() =>
+		expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy(),
+	);
 
 	fireEvent.click(screen.getByRole("button", {name: "監視を停止"}));
 	fireEvent.click(
@@ -1766,8 +1856,10 @@ it("keeps the draft on ordinary monitored updates without prompting", async () =
 	const {rerender} = render(<Overview races={races} />);
 	await selectFirstMonitored();
 	await openMappingEditor();
-	await editMappingDraft();
-	expect(await screen.findByText(/選択中: SRC Game/)).toBeTruthy();
+	await fillMappingDraft();
+	await waitFor(() =>
+		expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy(),
+	);
 
 	rerender(
 		<Overview
@@ -1821,12 +1913,16 @@ it("does not switch the mapping target during a save triggered by an external up
 	const {rerender} = render(<Overview races={races} />);
 	await selectFirstMonitored();
 	await openMappingEditor();
-	await editMappingDraft();
-	expect(await screen.findByText(/選択中: SRC Game/)).toBeTruthy();
-
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	await fillMappingDraft();
 	await waitFor(() =>
-		expect(screen.getByRole("button", {name: "保存中…"})).toBeTruthy(),
+		expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy(),
+	);
+
+	fireEvent.click(gameSaveButton());
+	await waitFor(() =>
+		expect(screen.getAllByRole("button", {name: "保存中…"})).not.toHaveLength(
+			0,
+		),
 	);
 
 	rerender(<Overview races={{schemaVersion: 1, races: [updatedRaceState]}} />);
@@ -1837,7 +1933,9 @@ it("does not switch the mapping target during a save triggered by an external up
 		finishSave?.();
 	});
 	expect(await screen.findByText("100%")).toBeTruthy();
-	expect(screen.getByText("登録済み: SRC Game")).toBeTruthy();
+	expect(
+		within(document.querySelector(".mapping-summary")!).getByText("SRC Game"),
+	).toBeTruthy();
 });
 
 it("preserves an in-flight mapping save when force-release removes the selected race", async () => {
@@ -1860,9 +1958,11 @@ it("preserves an in-flight mapping save when force-release removes the selected 
 	const view = render(<Overview races={races} />);
 	await selectFirstMonitored();
 	await openMappingEditor();
-	await editMappingDraft();
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
-	await screen.findByRole("button", {name: "保存中…"});
+	await fillMappingDraft();
+	fireEvent.click(gameSaveButton());
+	expect(
+		await screen.findAllByRole("button", {name: "保存中…"}),
+	).not.toHaveLength(0);
 	fireEvent.click(screen.getByRole("button", {name: "監視を停止"}));
 	fireEvent.click(
 		within(screen.getByRole("dialog")).getByRole("button", {
@@ -1871,7 +1971,7 @@ it("preserves an in-flight mapping save when force-release removes the selected 
 	);
 	await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 	view.rerender(<Overview races={{schemaVersion: 1, races: []}} />);
-	expect(screen.getByRole("button", {name: "保存中…"})).toBeTruthy();
+	expect(screen.getAllByRole("button", {name: "保存中…"})).not.toHaveLength(0);
 	expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy();
 	expect(screen.queryByText(/未保存の変更を破棄して/)).toBeNull();
 	if (!submitted) throw new Error("Mapping save was not submitted");
@@ -1951,7 +2051,7 @@ it("keeps the race and draft when editing continues after removal", async () => 
 	const {rerender} = render(<Overview races={races} />);
 	await selectFirstMonitored();
 	await openMappingEditor();
-	await editMappingDraft();
+	await fillMappingDraft();
 	fireEvent.click(await screen.findByRole("button", {name: "登録・紐付け"}));
 
 	rerender(<Overview races={{schemaVersion: 1, races: []}} />);
@@ -1987,7 +2087,7 @@ it("invalidates the registration after dismissing a removed race", async () => {
 	const {rerender} = render(<Overview races={races} />);
 	await selectFirstMonitored();
 	await openMappingEditor();
-	await editMappingDraft();
+	await fillMappingDraft();
 	fireEvent.click(await screen.findByRole("button", {name: "登録・紐付け"}));
 
 	rerender(<Overview races={{schemaVersion: 1, races: []}} />);
@@ -2065,8 +2165,10 @@ it("keeps the display when the latest race snapshot is temporarily missing", asy
 	const {rerender} = render(<Overview races={races} />);
 	await selectFirstMonitored();
 	await openMappingEditor();
-	await editMappingDraft();
-	expect(await screen.findByText(/選択中: SRC Game/)).toBeTruthy();
+	await fillMappingDraft();
+	await waitFor(() =>
+		expect(screen.getByText(/選択中: SRC Game/)).toBeTruthy(),
+	);
 
 	// The goal changed externally, so the confirm dialog is shown.
 	rerender(<Overview races={{schemaVersion: 1, races: [updatedRaceState]}} />);
@@ -2346,30 +2448,28 @@ it("keeps editing after Game Mapping save and closes after Category Mapping save
 	render(<Overview races={races} />);
 	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
 	await openMappingEditor();
-	await editMappingDraft();
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
-	expect(await screen.findByText("Game Mappingを保存しました。")).toBeTruthy();
+	await fillMappingDraft();
+	fireEvent.click(gameSaveButton());
+	expect(await screen.findByText("SRCゲームを追加しました。")).toBeTruthy();
 	expect(
-		(screen.getByLabelText("SRC Game（必須）") as HTMLSelectElement).value,
-	).toBe("");
-	expect(
-		(screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement)
-			.disabled,
+		(screen.getByRole("radio", {name: "SRC Game"}) as HTMLInputElement).checked,
 	).toBe(true);
-	await chooseCategoryGame();
+	await waitFor(() =>
+		expect(
+			(screen.getByLabelText("カテゴリ") as HTMLSelectElement).disabled,
+		).toBe(false),
+	);
 	await act(async () =>
-		fireEvent.change(screen.getByLabelText("SRC Category（必須）"), {
+		fireEvent.change(screen.getByLabelText("カテゴリ"), {
 			target: {value: "c1"},
 		}),
 	);
 	await screen.findByText("このカテゴリにVariablesはありません。");
-	fireEvent.click(screen.getByRole("button", {name: /Category Mappingを保存/}));
+	fireEvent.click(categorySaveButton());
 	expect(
 		await screen.findByText("Category Mappingを保存しました。"),
 	).toBeTruthy();
-	await waitFor(() =>
-		expect(screen.queryByLabelText("SRC Category（必須）")).toBeNull(),
-	);
+	await waitFor(() => expect(screen.queryByLabelText("カテゴリ")).toBeNull());
 	expect(screen.getByRole("button", {name: "編集"})).toBeTruthy();
 });
 
@@ -2411,12 +2511,10 @@ it("keeps a successful Game Mapping save when the follow-up reload fails", async
 	fireEvent.click(screen.getByRole("button", {name: /game\/race/}));
 	await openMappingEditor();
 	await editMappingDraft();
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
-	expect(await screen.findByText("Game Mappingを保存しました。")).toBeTruthy();
 	expect(
 		await screen.findByText(/マッピング情報を取得できませんでした/),
 	).toBeTruthy();
-	expect(screen.getByLabelText("SRC Category（必須）")).toBeTruthy();
+	expect(screen.getByLabelText("カテゴリ")).toBeTruthy();
 });
 
 it("shows five participant columns, row resolution and origin-aware account links", () => {
@@ -2603,23 +2701,22 @@ it("keeps Category save notification after closing even when the follow-up reloa
 	await chooseCategoryGame();
 	await waitFor(() =>
 		expect(
-			(screen.getByLabelText("SRC Category（必須）") as HTMLSelectElement)
-				.disabled,
+			(screen.getByLabelText("カテゴリ") as HTMLSelectElement).disabled,
 		).toBe(false),
 	);
 	await act(async () =>
-		fireEvent.change(screen.getByLabelText("SRC Category（必須）"), {
+		fireEvent.change(screen.getByLabelText("カテゴリ"), {
 			target: {value: "c1"},
 		}),
 	);
 	await screen.findByText("このカテゴリにVariablesはありません。");
-	fireEvent.click(screen.getByRole("button", {name: /Category Mappingを保存/}));
+	fireEvent.click(categorySaveButton());
 	expect(
 		await screen.findByText("Category Mappingを保存しました。"),
 	).toBeTruthy();
 	expect(
 		await screen.findByText(/マッピング情報を取得できませんでした/),
 	).toBeTruthy();
-	expect(screen.queryByLabelText("SRC Category（必須）")).toBeNull();
+	expect(screen.queryByLabelText("カテゴリ")).toBeNull();
 	expect(screen.queryByText(/他の変更と競合しました/)).toBeNull();
 });
