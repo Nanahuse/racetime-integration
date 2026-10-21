@@ -1071,7 +1071,7 @@ async function openMappingEditor() {
 }
 
 function gameForm() {
-	return document.querySelector("form.game-registration") as HTMLElement;
+	return document.querySelector(".game-registration") as HTMLElement;
 }
 
 function categoryForm() {
