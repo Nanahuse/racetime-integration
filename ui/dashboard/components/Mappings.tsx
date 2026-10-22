@@ -659,8 +659,11 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 	};
 
 	const requestCloseGameEdit = () => {
-		if (gameDirty) setPendingAction(() => closeGameEdit);
-		else closeGameEdit();
+		if (newGoalOpen || !gameDirty) {
+			closeGameEdit();
+			return;
+		}
+		setPendingAction(() => closeGameEdit);
 	};
 
 	const beginGameEdit = (
@@ -682,7 +685,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 				),
 			);
 		};
-		if (gameDirty) setPendingAction(() => action);
+		if (!newGoalOpen && gameDirty) setPendingAction(() => action);
 		else action();
 	};
 
@@ -730,6 +733,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 	const openNewGoal = () => {
 		if (gameMode === "add") return;
 		const action = () => {
+			closeGameEdit();
 			setCategorySession((session) =>
 				session
 					? {
@@ -744,7 +748,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 			setNewGoalSession(makeCategorySession(null));
 			setNewGoalOpen(true);
 		};
-		if (categoryDirty) setPendingAction(() => action);
+		if (gameDirty || categoryDirty) setPendingAction(() => action);
 		else action();
 	};
 
@@ -933,12 +937,8 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 	const saveGame = async () => {
 		if (mutating || !gameSession || gameSession.status !== "normal") return;
 		const draft = gameSession.draft;
-		if (
-			!draft.racetime.categorySlug.trim() ||
-			!draft.racetime.categoryName.trim() ||
-			!draft.speedrunCom.gameId
-		) {
-			setError("RaceTime category slug、表示名、SRCゲームを入力してください。");
+		if (!draft.racetime.categorySlug.trim() || !draft.speedrunCom.gameId) {
+			setError("RaceTime category slugとSRCゲームを入力してください。");
 			return;
 		}
 		const adding = gameMode === "add";
@@ -1521,7 +1521,6 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 							mutating ||
 							gameBlocked ||
 							!gameSession.draft.racetime.categorySlug.trim() ||
-							!gameSession.draft.racetime.categoryName.trim() ||
 							!gameSession.draft.speedrunCom.gameId
 						}
 						onClick={() => void saveGame()}

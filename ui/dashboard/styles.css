@@ -661,6 +661,26 @@ input[readonly] {
 	flex-wrap: wrap;
 	cursor: pointer;
 	font-weight: 600;
+	list-style: none;
+}
+
+.mapping-conditions summary::-webkit-details-marker {
+	display: none;
+}
+
+.mapping-conditions summary::before {
+	content: "";
+	width: 0.5em;
+	height: 0.5em;
+	flex: none;
+	border-right: 2px solid var(--muted);
+	border-bottom: 2px solid var(--muted);
+	transform: rotate(-45deg);
+	transition: transform 0.15s ease;
+}
+
+.mapping-conditions[open] summary::before {
+	transform: rotate(45deg);
 }
 
 .mapping-conditions[open] summary {

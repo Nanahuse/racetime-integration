@@ -338,6 +338,66 @@ it("asks before discarding an existing Goal draft for a new Goal", async () => {
 	).toBe("");
 });
 
+it("asks before discarding SRC game edits for a new Goal", async () => {
+	games = [gameRecord];
+	render(<Mappings />);
+	await selectFirstGame();
+	openRename();
+	fireEvent.change(screen.getByLabelText("SRC Game の表示名"), {
+		target: {value: "Unsaved Game"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: /Goalを追加/}));
+	expect(await screen.findByText(/未保存の変更があります/)).toBeTruthy();
+	expect(screen.queryByRole("dialog")).toBeNull();
+	fireEvent.click(screen.getByRole("button", {name: "破棄して移動"}));
+	expect(await screen.findByRole("dialog")).toBeTruthy();
+	fireEvent.click(
+		within(screen.getByRole("dialog")).getByRole("button", {
+			name: "キャンセル",
+		}),
+	);
+	await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+	expect(screen.queryByDisplayValue("Unsaved Game")).toBeNull();
+	expect(screen.getAllByText("SRC Game").length).toBeGreaterThan(0);
+});
+
+it("allows registering an SRC game without a RaceTime display name", async () => {
+	games = [];
+	let savedName: string | null = null;
+	const handler = sendMessage.getMockImplementation()!;
+	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
+		if (name === "racetime.v5.searchSpeedrunGames")
+			return {
+				ok: true,
+				data: {games: [{id: "g1", name: "SRC Game", abbreviation: "S"}]},
+			};
+		if (name === "racetime.v5.saveGameMapping") {
+			const mapping = (data as {mapping: GameMappingRecord["mapping"]}).mapping;
+			savedName = mapping.racetime.categoryName;
+			const record: GameMappingRecord = {mapping, revision: "g1r"};
+			games = [record];
+			return {
+				ok: true,
+				data: {record, action: "created", settingsRevision: 0},
+			};
+		}
+		return handler(name, data);
+	});
+	render(<Mappings />);
+	await openNewGame();
+	fireEvent.change(screen.getByLabelText("RaceTime category slug"), {
+		target: {value: "blank-name"},
+	});
+	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
+		target: {value: "SRC"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "検索"}));
+	fireEvent.click(await screen.findByRole("button", {name: "SRC Game (S)"}));
+	fireEvent.click(gameSaveButton());
+	expect(await screen.findByText("SRCゲームを追加しました。")).toBeTruthy();
+	expect(savedName).toBe("");
+});
+
 it("opens the new Goal dialog, focuses it, and traps keyboard focus", async () => {
 	games = [gameRecord];
 	render(<Mappings />);
@@ -555,9 +615,9 @@ function gameSaveButton() {
 }
 
 function categorySaveButton() {
-	return within(categoryForm()).getByRole("button", {
-		name: goalDialog() ? "登録" : "保存",
-	}) as HTMLButtonElement;
+	return categoryForm().querySelector<HTMLButtonElement>(
+		'button[type="submit"]',
+	) as HTMLButtonElement;
 }
 
 function openAddGame() {
@@ -1219,15 +1279,24 @@ it.each([
 				data: {record: childRecord, action: "created", settingsRevision: 0},
 			};
 		};
+		categories = [childRecord];
 		render(<Mappings />);
 		await selectFirstGame();
+		fireEvent.click(
+			await screen.findByRole("button", {name: /Any%.*SRC Game.*Any%/}),
+		);
+		await waitFor(() =>
+			expect(
+				(screen.getByLabelText("カテゴリ") as HTMLSelectElement).disabled,
+			).toBe(false),
+		);
 		if (gameDirty) {
 			openRename();
 			fireEvent.change(screen.getByLabelText("SRC Game の表示名"), {
 				target: {value: "Unsaved Game"},
 			});
 		}
-		await editNewCategory();
+		await waitFor(() => expect(categorySaveButton().disabled).toBe(false));
 		fireEvent.click(categorySaveButton());
 		expect(
 			await screen.findByText("Category Mappingを保存しました。"),
