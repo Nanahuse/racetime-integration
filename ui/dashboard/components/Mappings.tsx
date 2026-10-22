@@ -504,6 +504,20 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 	const [newGoalSession, setNewGoalSession] = useState<CategorySession | null>(
 		null,
 	);
+	const setNewGoalDraft: typeof setNewGoalSession = (value) => {
+		setNewGoalSession((session) => {
+			const next =
+				typeof value === "function"
+					? (
+							value as (
+								previous: CategorySession | null,
+							) => CategorySession | null
+						)(session)
+					: value;
+			if (next?.status !== "conflict") return next;
+			return {...next, status: "normal", conflict: null};
+		});
+	};
 
 	const [busy, setBusy] = useState(false);
 	// True only while a save/delete/reload replaces the editing state, so form
@@ -918,9 +932,6 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		setCategorySession((session) =>
 			session ? adoptCategory(session) : session,
 		);
-		setNewGoalSession((session) =>
-			session ? adoptCategory(session) : session,
-		);
 		setError(null);
 	};
 
@@ -928,17 +939,31 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		setCategorySession((session) =>
 			session ? reEditCategory(session) : session,
 		);
-		setNewGoalSession((session) =>
-			session ? reEditCategory(session) : session,
-		);
 		setError(null);
+	};
+
+	const editConflictingGoal = () => {
+		const record = newGoalSession?.conflict;
+		if (!record) return;
+		if (gameMode === "add") closeGameEdit();
+		setNewGoalOpen(false);
+		setNewGoalSession(null);
+		setError(null);
+		setMessage(null);
+		setCategorySession(makeCategorySession(record));
 	};
 
 	const saveGame = async () => {
 		if (mutating || !gameSession || gameSession.status !== "normal") return;
 		const draft = gameSession.draft;
-		if (!draft.racetime.categorySlug.trim() || !draft.speedrunCom.gameId) {
-			setError("RaceTime category slugとSRCゲームを入力してください。");
+		if (
+			!draft.racetime.categorySlug.trim() ||
+			!draft.speedrunCom.gameId ||
+			!draft.speedrunCom.gameName.trim()
+		) {
+			setError(
+				"RaceTime category slug、SRCゲーム、SRCゲーム名を入力してください。",
+			);
 			return;
 		}
 		const adding = gameMode === "add";
@@ -984,7 +1009,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 					};
 				};
 				if (newGoalOpen)
-					setNewGoalSession((session) =>
+					setNewGoalDraft((session) =>
 						session ? applySavedGame(session) : session,
 					);
 				else if (categorySession)
@@ -1076,7 +1101,9 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		try {
 			const result = await request("saveCategoryMapping", {
 				mapping: session.draft,
-				expectedRevision: session.baselineRevision,
+				// A new Goal must never update an existing row; duplicates are
+				// reported as conflicts and resolved by editing the existing Goal.
+				expectedRevision: source === "new" ? null : session.baselineRevision,
 				settingsRevision: session.settingsRevision,
 			});
 			const savedSession: CategorySession = {
@@ -1217,7 +1244,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 	};
 
 	const chooseNewGoalGame = (gameId: string) => {
-		setNewGoalSession((session) =>
+		setNewGoalDraft((session) =>
 			session ? withGoalGame(session, gameId) : session,
 		);
 	};
@@ -1249,7 +1276,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		chooseCategoryIn(setCategorySession, option);
 
 	const chooseNewGoalCategory = (option: SpeedrunCategoryOption) =>
-		chooseCategoryIn(setNewGoalSession, option);
+		chooseCategoryIn(setNewGoalDraft, option);
 
 	const setFieldIn = <K extends keyof CategoryMapping["speedrunCom"]>(
 		setSession: typeof setCategorySession,
@@ -1277,7 +1304,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 	const setNewGoalField = <K extends keyof CategoryMapping["speedrunCom"]>(
 		key: K,
 		value: CategoryMapping["speedrunCom"][K],
-	) => setFieldIn(setNewGoalSession, key, value);
+	) => setFieldIn(setNewGoalDraft, key, value);
 
 	const removeVariableIn = (
 		setSession: typeof setCategorySession,
@@ -1301,7 +1328,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 		removeVariableIn(setCategorySession, id);
 
 	const removeNewGoalVariable = (id: string) =>
-		removeVariableIn(setNewGoalSession, id);
+		removeVariableIn(setNewGoalDraft, id);
 
 	const matchingGames = games.filter((record) =>
 		stringify(record.mapping).toLowerCase().includes(gameQuery.toLowerCase()),
@@ -1521,7 +1548,8 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 							mutating ||
 							gameBlocked ||
 							!gameSession.draft.racetime.categorySlug.trim() ||
-							!gameSession.draft.speedrunCom.gameId
+							!gameSession.draft.speedrunCom.gameId ||
+							!gameSession.draft.speedrunCom.gameName.trim()
 						}
 						onClick={() => void saveGame()}
 					>
@@ -1610,7 +1638,12 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 				<div className='button-row'>
 					<button
 						type='button'
-						disabled={busy || mutating || gameBlocked}
+						disabled={
+							busy ||
+							mutating ||
+							gameBlocked ||
+							!gameSession.draft.speedrunCom.gameName.trim()
+						}
 						onClick={() => void saveGame()}
 					>
 						{busy ? "保存中…" : "保存"}
@@ -1942,17 +1975,37 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 					)}
 					{listsError && <Callout tone='error'>{listsError}</Callout>}
 					{message && <Callout tone='success'>{message}</Callout>}
-					<CategorySessionNotices
-						session={newGoalSession}
-						busy={busy}
-						onAdopt={adoptCategoryLatest}
-						onReEdit={reEditCategoryLatest}
-						onCloseComparison={() =>
-							setNewGoalSession((session) =>
-								session ? {...session, comparison: null} : session,
-							)
-						}
-					/>
+					{newGoalSession.status === "conflict" ? (
+						<>
+							<Callout tone='error'>
+								同じRaceTime
+								Goalが既に登録されています。既存のGoalを編集するか、別のGoal名を入力してください。
+							</Callout>
+							{newGoalSession.conflict && (
+								<div className='button-row'>
+									<button
+										type='button'
+										disabled={busy || mutating}
+										onClick={editConflictingGoal}
+									>
+										既存Goalを編集
+									</button>
+								</div>
+							)}
+						</>
+					) : (
+						<CategorySessionNotices
+							session={newGoalSession}
+							busy={busy}
+							onAdopt={adoptCategoryLatest}
+							onReEdit={reEditCategoryLatest}
+							onCloseComparison={() =>
+								setNewGoalSession((session) =>
+									session ? {...session, comparison: null} : session,
+								)
+							}
+						/>
+					)}
 					<form
 						className='category-editor'
 						onSubmit={(event) => {
@@ -1966,7 +2019,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 								value={newGoalSession.draft.racetime.goal}
 								disabled={mutating}
 								onChange={(event) =>
-									setNewGoalSession((session) =>
+									setNewGoalDraft((session) =>
 										session
 											? {
 													...session,

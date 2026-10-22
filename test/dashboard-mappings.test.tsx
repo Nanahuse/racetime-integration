@@ -338,6 +338,53 @@ it("asks before discarding an existing Goal draft for a new Goal", async () => {
 	).toBe("");
 });
 
+it("blocks saving when the SRC game name is blank", async () => {
+	games = [gameRecord];
+	render(<Mappings />);
+	await selectFirstGame();
+	openRename();
+	fireEvent.change(screen.getByLabelText("SRC Game の表示名"), {
+		target: {value: "   "},
+	});
+	expect(renameSaveButton().disabled).toBe(true);
+	fireEvent.click(renameSaveButton());
+	expect(
+		sendMessage.mock.calls.filter(
+			([name]) => name === "racetime.v5.saveGameMapping",
+		),
+	).toHaveLength(0);
+});
+
+it("blocks adding a game with a blank SRC name", async () => {
+	games = [];
+	const handler = sendMessage.getMockImplementation()!;
+	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
+		if (name === "racetime.v5.searchSpeedrunGames")
+			return {
+				ok: true,
+				data: {games: [{id: "g1", name: "   ", abbreviation: "E"}]},
+			};
+		return handler(name, data);
+	});
+	render(<Mappings />);
+	await openNewGame();
+	fireEvent.change(screen.getByLabelText("RaceTime category slug"), {
+		target: {value: "blank-src"},
+	});
+	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
+		target: {value: "blank"},
+	});
+	fireEvent.click(screen.getByRole("button", {name: "検索"}));
+	fireEvent.click(await screen.findByRole("button", {name: /E\)/}));
+	expect(gameSaveButton().disabled).toBe(true);
+	fireEvent.click(gameSaveButton());
+	expect(
+		sendMessage.mock.calls.filter(
+			([name]) => name === "racetime.v5.saveGameMapping",
+		),
+	).toHaveLength(0);
+});
+
 it("asks before discarding SRC game edits for a new Goal", async () => {
 	games = [gameRecord];
 	render(<Mappings />);
@@ -561,7 +608,7 @@ it("prevents duplicate Goal registration and closing while saving", async () => 
 	await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
 
-it("keeps the new Goal dialog open on a save conflict", async () => {
+it("does not update an existing Goal from the new Goal dialog", async () => {
 	games = [gameRecord];
 	saveCategory = () => ({
 		ok: false,
@@ -573,12 +620,82 @@ it("keeps the new Goal dialog open on a save conflict", async () => {
 	categories = [childRecord];
 	fireEvent.click(categorySaveButton());
 	expect(
-		await screen.findByRole("button", {name: /最新状態を採用/}),
+		await screen.findByText(/同じRaceTime\s*Goalが既に登録されています/),
 	).toBeTruthy();
 	expect(screen.getByRole("dialog")).toBeTruthy();
 	expect(
 		(screen.getByLabelText("RaceTime Goal") as HTMLInputElement).value,
 	).toBe("Any%");
+	expect(screen.queryByRole("button", {name: /最新状態を採用/})).toBeNull();
+	expect(screen.queryByRole("button", {name: /最新状態から再編集/})).toBeNull();
+	const saves = sendMessage.mock.calls.filter(
+		([name]) => name === "racetime.v5.saveCategoryMapping",
+	);
+	expect(saves).toHaveLength(1);
+	expect(saves[0]?.[1]).toMatchObject({expectedRevision: null});
+
+	fireEvent.click(screen.getByRole("button", {name: "既存Goalを編集"}));
+	await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+	await waitFor(() =>
+		expect((screen.getByLabelText("カテゴリ") as HTMLSelectElement).value).toBe(
+			"c1",
+		),
+	);
+	expect(
+		sendMessage.mock.calls.filter(
+			([name]) => name === "racetime.v5.saveCategoryMapping",
+		),
+	).toHaveLength(1);
+});
+
+it("allows retrying a duplicate new Goal as a new registration", async () => {
+	games = [gameRecord];
+	let attempts = 0;
+	const handler = sendMessage.getMockImplementation()!;
+	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
+		if (name === "racetime.v5.saveCategoryMapping") {
+			attempts += 1;
+			const mapping = (data as {mapping: CategoryMappingRecord["mapping"]})
+				.mapping;
+			if (attempts === 1)
+				return {
+					ok: false,
+					error: {code: "mapping_conflict", message: "conflict"},
+				};
+			const record = {mapping, revision: "unique-goal"};
+			categories = [record];
+			return {
+				ok: true,
+				data: {record, action: "created", settingsRevision: 0},
+			};
+		}
+		return handler(name, data);
+	});
+	render(<Mappings />);
+	await selectFirstGame();
+	await editNewCategory();
+	categories = [childRecord];
+	fireEvent.click(categorySaveButton());
+	expect(
+		await screen.findByText(/同じRaceTime\s*Goalが既に登録されています/),
+	).toBeTruthy();
+	fireEvent.change(screen.getByLabelText("RaceTime Goal"), {
+		target: {value: "Unique Goal"},
+	});
+	expect(
+		screen.queryByText(/同じRaceTime\s*Goalが既に登録されています/),
+	).toBeNull();
+	fireEvent.click(categorySaveButton());
+	expect(
+		await screen.findByText("Category Mappingを保存しました。"),
+	).toBeTruthy();
+	await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+	const saves = sendMessage.mock.calls.filter(
+		([name]) => name === "racetime.v5.saveCategoryMapping",
+	);
+	expect(saves).toHaveLength(2);
+	for (const call of saves)
+		expect(call[1]).toMatchObject({expectedRevision: null});
 });
 
 async function selectFirstGame() {
