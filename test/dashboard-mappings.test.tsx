@@ -633,6 +633,15 @@ it("does not update an existing Goal from the new Goal dialog", async () => {
 	);
 	expect(saves).toHaveLength(1);
 	expect(saves[0]?.[1]).toMatchObject({expectedRevision: null});
+	expect(screen.queryByText(/他の変更と競合しました/)).toBeNull();
+
+	fireEvent.change(screen.getByLabelText("カテゴリ"), {
+		target: {value: "c2"},
+	});
+	expect(
+		screen.getByText(/同じRaceTime\s*Goalが既に登録されています/),
+	).toBeTruthy();
+	expect(categorySaveButton().disabled).toBe(true);
 
 	fireEvent.click(screen.getByRole("button", {name: "既存Goalを編集"}));
 	await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -646,6 +655,36 @@ it("does not update an existing Goal from the new Goal dialog", async () => {
 			([name]) => name === "racetime.v5.saveCategoryMapping",
 		),
 	).toHaveLength(1);
+});
+
+it("keeps conflict resolution for existing Goal edits", async () => {
+	games = [gameRecord];
+	categories = [childRecord];
+	saveCategory = () => ({
+		ok: false,
+		error: {code: "mapping_conflict", message: "conflict"},
+	});
+	render(<Mappings />);
+	await selectFirstGame();
+	fireEvent.click(
+		await screen.findByRole("button", {name: /Any%.*SRC Game.*Any%/}),
+	);
+	await waitFor(() =>
+		expect(
+			(screen.getByLabelText("カテゴリ") as HTMLSelectElement).disabled,
+		).toBe(false),
+	);
+	fireEvent.change(screen.getByLabelText("カテゴリ"), {
+		target: {value: "c2"},
+	});
+	await waitFor(() => expect(categorySaveButton().disabled).toBe(false));
+	categories = [{...childRecord, revision: "c1r2"}];
+	fireEvent.click(categorySaveButton());
+	expect(
+		await screen.findByRole("button", {name: /最新状態を採用/}),
+	).toBeTruthy();
+	expect(screen.getByRole("button", {name: /最新状態から再編集/})).toBeTruthy();
+	expect(screen.getByText(/他の変更と競合しました/)).toBeTruthy();
 });
 
 it("allows retrying a duplicate new Goal as a new registration", async () => {
@@ -679,12 +718,15 @@ it("allows retrying a duplicate new Goal as a new registration", async () => {
 	expect(
 		await screen.findByText(/同じRaceTime\s*Goalが既に登録されています/),
 	).toBeTruthy();
+	expect(screen.queryByText(/他の変更と競合しました/)).toBeNull();
 	fireEvent.change(screen.getByLabelText("RaceTime Goal"), {
 		target: {value: "Unique Goal"},
 	});
 	expect(
 		screen.queryByText(/同じRaceTime\s*Goalが既に登録されています/),
 	).toBeNull();
+	expect(screen.queryByText(/他の変更と競合しました/)).toBeNull();
+	expect(categorySaveButton().disabled).toBe(false);
 	fireEvent.click(categorySaveButton());
 	expect(
 		await screen.findByText("Category Mappingを保存しました。"),
@@ -696,6 +738,41 @@ it("allows retrying a duplicate new Goal as a new registration", async () => {
 	expect(saves).toHaveLength(2);
 	for (const call of saves)
 		expect(call[1]).toMatchObject({expectedRevision: null});
+});
+
+it("keeps the new Goal draft when conflict reload fails", async () => {
+	games = [gameRecord];
+	let failReload = false;
+	const handler = sendMessage.getMockImplementation()!;
+	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
+		if (name === "racetime.v5.saveCategoryMapping")
+			return {
+				ok: false,
+				error: {code: "mapping_conflict", message: "conflict"},
+			};
+		if (failReload && /list(Game|Category)Mappings$/.test(name))
+			return {
+				ok: false,
+				error: {code: "spreadsheet_unavailable", message: "reload failed"},
+			};
+		return handler(name, data);
+	});
+	render(<Mappings />);
+	await selectFirstGame();
+	await editNewCategory();
+	failReload = true;
+	fireEvent.click(categorySaveButton());
+	expect(
+		await screen.findByText(/最新状態を確認できませんでした/),
+	).toBeTruthy();
+	expect(screen.getByRole("dialog")).toBeTruthy();
+	expect(
+		(screen.getByLabelText("RaceTime Goal") as HTMLInputElement).value,
+	).toBe("Any%");
+	expect(
+		screen.queryByText(/同じRaceTime\s*Goalが既に登録されています/),
+	).toBeNull();
+	expect(categorySaveButton().disabled).toBe(false);
 });
 
 async function selectFirstGame() {
