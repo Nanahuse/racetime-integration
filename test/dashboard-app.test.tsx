@@ -7,6 +7,7 @@ import {
 	render,
 	screen,
 	waitFor,
+	within,
 } from "@testing-library/react";
 import {afterEach, beforeEach, expect, it, vi} from "vitest";
 import {App} from "../ui/dashboard/App";
@@ -142,7 +143,8 @@ it("asks before discarding unsaved edits when switching tabs", async () => {
 	await act(async () => {
 		fireEvent.click(item);
 	});
-	fireEvent.change(screen.getByDisplayValue("Game One"), {
+	fireEvent.click(screen.getByRole("button", {name: "SRC Game の管理"}));
+	fireEvent.change(screen.getByLabelText("SRC Game の表示名"), {
 		target: {value: "Edited"},
 	});
 
@@ -236,14 +238,19 @@ it("cannot discard edits to switch tabs while a mapping save is in progress", as
 	await act(async () => {
 		fireEvent.click(item);
 	});
-	fireEvent.change(screen.getByDisplayValue("Game One"), {
+	fireEvent.click(screen.getByRole("button", {name: "SRC Game の管理"}));
+	fireEvent.change(screen.getByLabelText("SRC Game の表示名"), {
 		target: {value: "Edited"},
 	});
 
 	// Ask to switch tabs, then start a save while the confirmation is open.
 	fireEvent.click(screen.getByRole("button", {name: "Settings"}));
 	expect(await screen.findByText(/未保存の変更があります/)).toBeTruthy();
-	fireEvent.click(screen.getByRole("button", {name: /Game Mappingを保存/}));
+	fireEvent.click(
+		within(document.querySelector(".game-manage")!).getByRole("button", {
+			name: "保存",
+		}),
+	);
 	await waitFor(() =>
 		expect(screen.getByRole("button", {name: "保存中…"})).toBeTruthy(),
 	);
