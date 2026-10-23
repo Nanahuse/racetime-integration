@@ -1717,12 +1717,55 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 			</div>
 		) : null;
 
-	const afterGames = (
+	const dialogAfterGames = (
 		<>
+			{addGameButton}
+			{gameRegistrationForm}
+		</>
+	);
+
+	const srcGameManagementBlock = (
+		<div className='subpanel'>
+			<h3>登録済みSRCゲーム</h3>
+			{registeredGames.length === 0 ? (
+				<p className='muted'>未登録</p>
+			) : (
+				<ul className='src-game-list'>
+					{registeredGames.map((record) => {
+						const gameId = record.mapping.speedrunCom.gameId;
+						const gameName = record.mapping.speedrunCom.gameName;
+						const editingThisGame =
+							gameMode === "rename" &&
+							gameSession?.draft.speedrunCom.gameId === gameId;
+						return (
+							<li
+								key={gameId}
+								className='src-game-row'
+							>
+								<div className='src-game-main'>
+									<span className='src-game-choice'>{gameName}</span>
+									<button
+										type='button'
+										className='game-menu-button'
+										aria-label={`${gameName} の管理`}
+										disabled={busy || mutating}
+										onClick={() => {
+											if (editingThisGame) requestCloseGameEdit();
+											else beginGameEdit("rename", record);
+										}}
+									>
+										⋯
+									</button>
+								</div>
+							</li>
+						);
+					})}
+				</ul>
+			)}
 			{manageGamePanel}
 			{addGameButton}
-			{!newGoalOpen && gameRegistrationForm}
-		</>
+			{gameRegistrationForm}
+		</div>
 	);
 
 	return (
@@ -1820,6 +1863,10 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 							</div>
 						)}
 
+						{!newGoalOpen &&
+							(mode === "race" || selectedSlug !== null) &&
+							srcGameManagementBlock}
+
 						{mode === "manage" && selectedSlug !== null && (
 							<div className='subpanel'>
 								<h3>Goals</h3>
@@ -1889,25 +1936,10 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 								blocked={categoryBlocked}
 								hasGame={hasCategoryGame}
 								radioName={`goal-src-game-${activeSlug}`}
-								afterGames={afterGames}
-								managingGameId={
-									gameMode === "rename"
-										? (gameSession?.draft.speedrunCom.gameId ?? null)
-										: null
-								}
 								onGame={chooseGoalGame}
 								onChooseCategory={chooseCategory}
 								onField={setCategoryField}
 								onRemoveVariable={removeVariable}
-								onManageGame={(record) => {
-									if (
-										gameMode === "rename" &&
-										gameSession?.draft.speedrunCom.gameId ===
-											record.mapping.speedrunCom.gameId
-									)
-										requestCloseGameEdit();
-									else beginGameEdit("rename", record);
-								}}
 								onSave={() => void saveCategory("edit")}
 								onRevert={() =>
 									setCategorySession((session) =>
@@ -1933,42 +1965,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 								}
 							/>
 						) : !newGoalOpen && mode === "manage" && selectedSlug !== null ? (
-							<>
-								<p className='muted'>
-									Goalを選択するかGoalを追加してください。
-								</p>
-								<div className='subpanel'>
-									<h3>登録済みSRCゲーム</h3>
-									{registeredGames.length === 0 ? (
-										<p className='muted'>未登録</p>
-									) : (
-										<ul className='src-game-list'>
-											{registeredGames.map((record) => (
-												<li
-													key={record.mapping.speedrunCom.gameId}
-													className='src-game-row'
-												>
-													<div className='src-game-main'>
-														<span className='src-game-choice'>
-															{record.mapping.speedrunCom.gameName}
-														</span>
-														<button
-															type='button'
-															className='game-menu-button'
-															aria-label={`${record.mapping.speedrunCom.gameName} の管理`}
-															disabled={busy || mutating}
-															onClick={() => beginGameEdit("rename", record)}
-														>
-															⋯
-														</button>
-													</div>
-												</li>
-											))}
-										</ul>
-									)}
-									{afterGames}
-								</div>
-							</>
+							<p className='muted'>Goalを選択するかGoalを追加してください。</p>
 						) : null}
 					</>
 				)}
@@ -2085,12 +2082,7 @@ export function MappingWorkspace(props: MappingWorkspaceProps) {
 							onChooseCategory={chooseNewGoalCategory}
 							onField={setNewGoalField}
 							onRemoveVariable={removeNewGoalVariable}
-							afterGames={
-								<>
-									{addGameButton}
-									{gameRegistrationForm}
-								</>
-							}
+							afterGames={dialogAfterGames}
 						/>
 						<div className='button-row mapping-actions'>
 							<button
@@ -2389,8 +2381,6 @@ function MappingFields({
 	onField,
 	onRemoveVariable,
 	afterGames,
-	managingGameId,
-	onManageGame,
 }: {
 	draft: CategoryMapping;
 	games: GameMappingRecord[];
@@ -2411,8 +2401,6 @@ function MappingFields({
 	) => void;
 	onRemoveVariable: (id: string) => void;
 	afterGames?: ReactNode;
-	managingGameId?: string | null;
-	onManageGame?: (record: GameMappingRecord) => void;
 }) {
 	const selectedCategory = options?.categories.find(
 		(option) => option.id === draft.speedrunCom.categoryId,
@@ -2453,17 +2441,6 @@ function MappingFields({
 											/>
 											<span>{gameName}</span>
 										</label>
-										{onManageGame && (
-											<button
-												type='button'
-												className='game-menu-button'
-												aria-label={`${gameName} の管理`}
-												disabled={disabled}
-												onClick={() => onManageGame(record)}
-											>
-												{managingGameId === gameId ? "閉じる" : "⋯"}
-											</button>
-										)}
 									</div>
 								</li>
 							);
@@ -2742,13 +2719,10 @@ function CategoryEditor({
 	blocked,
 	hasGame,
 	radioName,
-	afterGames,
-	managingGameId,
 	onGame,
 	onChooseCategory,
 	onField,
 	onRemoveVariable,
-	onManageGame,
 	onSave,
 	onRevert,
 	onDeleteRequest,
@@ -2772,8 +2746,6 @@ function CategoryEditor({
 	blocked: boolean;
 	hasGame: boolean;
 	radioName: string;
-	afterGames?: ReactNode;
-	managingGameId?: string | null;
 	onGame: (gameId: string) => void;
 	onChooseCategory: (option: SpeedrunCategoryOption) => void;
 	onField: <K extends keyof CategoryMapping["speedrunCom"]>(
@@ -2781,7 +2753,6 @@ function CategoryEditor({
 		value: CategoryMapping["speedrunCom"][K],
 	) => void;
 	onRemoveVariable: (id: string) => void;
-	onManageGame: (record: GameMappingRecord) => void;
 	onSave: () => void;
 	onRevert: () => void;
 	onDeleteRequest: () => void;
@@ -2835,9 +2806,6 @@ function CategoryEditor({
 				onChooseCategory={onChooseCategory}
 				onField={onField}
 				onRemoveVariable={onRemoveVariable}
-				afterGames={afterGames}
-				managingGameId={managingGameId}
-				onManageGame={onManageGame}
 			/>
 			<div className='button-row mapping-actions'>
 				<button

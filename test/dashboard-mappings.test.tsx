@@ -293,21 +293,95 @@ it("saves, reverts, and deletes an existing Goal inline", async () => {
 	).toBeTruthy();
 });
 
-it("orders the Goal list before the SRC game fields", async () => {
+it("places SRC game management above Goals and outside the Goal editor", async () => {
 	games = [gameRecord];
 	categories = [childRecord];
+	render(<Mappings />);
+	await selectFirstGame();
+	const management = screen.getByRole("heading", {
+		name: "登録済みSRCゲーム",
+	});
+	const goals = screen.getByRole("heading", {name: "Goals"});
+	expect(
+		management.compareDocumentPosition(goals) &
+			Node.DOCUMENT_POSITION_FOLLOWING,
+	).toBeTruthy();
+	expect(screen.queryByRole("heading", {name: "対応するSRCゲーム"})).toBeNull();
+
+	fireEvent.click(
+		await screen.findByRole("button", {name: /Any%.*SRC Game.*Any%/}),
+	);
+	expect(screen.getByRole("heading", {name: "登録済みSRCゲーム"})).toBeTruthy();
+	const srcGames = screen.getByRole("heading", {
+		name: "対応するSRCゲーム",
+	});
+	expect(
+		screen
+			.getByRole("heading", {name: "登録済みSRCゲーム"})
+			.compareDocumentPosition(goals) & Node.DOCUMENT_POSITION_FOLLOWING,
+	).toBeTruthy();
+	expect(
+		goals.compareDocumentPosition(srcGames) & Node.DOCUMENT_POSITION_FOLLOWING,
+	).toBeTruthy();
+	expect(
+		categoryForm().contains(
+			screen.getByRole("heading", {name: "登録済みSRCゲーム"}),
+		),
+	).toBe(false);
+	expect(categoryForm().querySelector('[aria-label$="の管理"]')).toBeNull();
+	expect(screen.getAllByRole("button", {name: /の管理$/})).toHaveLength(1);
+});
+
+it("adds an SRC game from the management area to the editing Goal", async () => {
+	games = [gameRecord];
+	categories = [childRecord];
+	const handler = sendMessage.getMockImplementation()!;
+	sendMessage.mockImplementation(async (name: string, data?: unknown) => {
+		if (name === "racetime.v5.searchSpeedrunGames")
+			return {
+				ok: true,
+				data: {games: [{id: "g2", name: "Second SRC", abbreviation: "S"}]},
+			};
+		if (name === "racetime.v5.saveGameMapping") {
+			const mapping = (data as {mapping: GameMappingRecord["mapping"]}).mapping;
+			const record: GameMappingRecord = {mapping, revision: "g2r"};
+			games = [...games, record];
+			return {
+				ok: true,
+				data: {record, action: "created", settingsRevision: 0},
+			};
+		}
+		return handler(name, data);
+	});
 	render(<Mappings />);
 	await selectFirstGame();
 	fireEvent.click(
 		await screen.findByRole("button", {name: /Any%.*SRC Game.*Any%/}),
 	);
-	const goals = screen.getByRole("heading", {name: "Goals"});
-	const srcGames = screen.getByRole("heading", {
-		name: "対応するSRCゲーム",
+	await waitFor(() =>
+		expect(
+			(screen.getByRole("radio", {name: "SRC Game"}) as HTMLInputElement)
+				.checked,
+		).toBe(true),
+	);
+	fireEvent.click(screen.getByRole("button", {name: "SRCゲームを追加"}));
+	fireEvent.change(screen.getByLabelText("SRCゲーム検索"), {
+		target: {value: "Second"},
 	});
-	expect(
-		goals.compareDocumentPosition(srcGames) & Node.DOCUMENT_POSITION_FOLLOWING,
-	).toBeTruthy();
+	fireEvent.click(screen.getByRole("button", {name: "検索"}));
+	fireEvent.click(await screen.findByRole("button", {name: "Second SRC (S)"}));
+	fireEvent.click(gameSaveButton());
+	expect(await screen.findByText("SRCゲームを追加しました。")).toBeTruthy();
+	await waitFor(() =>
+		expect(
+			(screen.getByRole("radio", {name: "Second SRC"}) as HTMLInputElement)
+				.checked,
+		).toBe(true),
+	);
+	expect((screen.getByLabelText("カテゴリ") as HTMLSelectElement).value).toBe(
+		"",
+	);
+	expect(screen.getByRole("heading", {name: "登録済みSRCゲーム"})).toBeTruthy();
 });
 
 it("asks before discarding an existing Goal draft for a new Goal", async () => {
